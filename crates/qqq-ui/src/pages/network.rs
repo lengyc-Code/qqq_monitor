@@ -42,7 +42,7 @@ impl DesktopApp {
                 theme::CYAN,
             );
         });
-        ui.add_space(8.0);
+        ui.add_space(theme::SECTION_GAP);
         history_chart(
             ui,
             view,
@@ -54,7 +54,7 @@ impl DesktopApp {
                 (&receive, "接收", theme::GREEN),
                 (&send, "发送", theme::CYAN),
             ],
-            200.0,
+            180.0,
         );
         ui.label(format!(
             "本次会话观测流量：接收 {} · 发送 {}",

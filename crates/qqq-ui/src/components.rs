@@ -37,8 +37,8 @@ pub fn format_value(value: Option<f64>, unit: Unit) -> String {
 pub fn state_label(view: &MonitorView, reading: Option<&MetricReading>) -> (&'static str, Color32) {
     match reading.map(|r| r.effective_state(view.now)) {
         Some(SampleState::Ready) => ("实时", theme::GREEN),
-        Some(SampleState::Stale) => ("数据过期", Color32::YELLOW),
-        Some(SampleState::Failed) => ("采集失败", Color32::LIGHT_RED),
+        Some(SampleState::Stale) => ("数据过期", theme::WARNING),
+        Some(SampleState::Failed) => ("采集失败", theme::ERROR),
         Some(SampleState::Unsupported) => ("不支持", theme::MUTED),
         Some(SampleState::Offline) => ("已断开", theme::MUTED),
         _ => ("采集中", theme::MUTED),
@@ -78,9 +78,10 @@ pub fn metric_card(
     let reading = view.metrics.get(key);
     let (status, status_color) = state_label(view, reading);
     let frame = theme::card().show(ui, |ui| {
-        ui.set_min_height(140.0);
+        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.set_min_height(100.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new(title).size(16.0).color(color));
+            ui.label(RichText::new(title).size(theme::SECTION_TITLE).color(color));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(RichText::new(status).size(11.0).color(status_color));
             });
@@ -88,7 +89,7 @@ pub fn metric_card(
         let unit = reading.map(|r| r.descriptor.unit).unwrap_or(Unit::Percent);
         ui.label(
             RichText::new(format_value(reading.and_then(|r| r.value), unit))
-                .size(30.0)
+                .size(26.0)
                 .strong(),
         );
         ui.label(RichText::new(subtitle).size(11.0).color(theme::MUTED));
@@ -103,7 +104,7 @@ pub fn metric_card(
 
 fn sparkline(ui: &mut egui::Ui, view: &MonitorView, key: &MetricKey, color: Color32) {
     let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 38.0), egui::Sense::hover());
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::hover());
     let Some(points) = view.history.get(key) else {
         return;
     };
@@ -155,12 +156,15 @@ pub fn history_chart(
         .available_width()
         .min(ui.clip_rect().right() - ui.cursor().left());
     theme::card().show(ui, |ui| {
-        ui.set_width((width - 36.0).max(120.0));
-        ui.label(RichText::new(title).size(16.0).strong());
+        ui.set_width((width - f32::from(theme::CARD_PADDING) * 2.0 - 1.6).max(120.0));
+        ui.label(RichText::new(title).size(theme::SECTION_TITLE).strong());
         let mut plot = Plot::new(id)
             .width(ui.available_width())
             .height(height)
             .legend(Legend::default())
+            .show_background(false)
+            .grid_color(theme::GRID)
+            .grid_spacing(egui::Rangef::new(45.0, 180.0))
             .include_y(0.0)
             .include_x(-(range as f64))
             .include_x(0.0)
@@ -217,16 +221,38 @@ pub fn history_chart(
 
 pub fn device_details(ui: &mut egui::Ui, view: &MonitorView, device: &str) {
     if let Some(device) = view.devices.get(device) {
-        ui.label(RichText::new(&device.name).size(16.0).strong());
-        if !device.online {
-            ui.label(RichText::new("设备已断开").color(theme::MUTED));
-        }
-        for (name, value) in &device.details {
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.label(
+                RichText::new(&device.name)
+                    .size(theme::SECTION_TITLE)
+                    .strong(),
+            );
+            if !device.online {
+                ui.label(RichText::new("设备已断开").size(12.0).color(theme::MUTED));
+            }
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(name).color(theme::MUTED));
-                ui.label(value);
+                ui.spacing_mut().item_spacing.x = 16.0;
+                for (name, value) in &device.details {
+                    let mut text = egui::text::LayoutJob::default();
+                    for (part, color) in [
+                        (format!("{name}  "), theme::MUTED),
+                        (value.clone(), theme::TEXT),
+                    ] {
+                        text.append(
+                            &part,
+                            0.0,
+                            egui::TextFormat {
+                                font_id: egui::FontId::proportional(12.0),
+                                color,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    ui.label(text);
+                }
             });
-        }
+        });
     }
 }
 
@@ -244,7 +270,7 @@ pub fn device_selector(
         .map(|d| format!("{}{}", d.name, if d.online { "" } else { "（已断开）" }))
         .unwrap_or_else(|| "等待发现设备".into());
     egui::ComboBox::from_id_salt(id)
-        .width(360.0)
+        .width(300.0_f32.min(ui.available_width()))
         .selected_text(text)
         .show_ui(ui, |ui| {
             for device in view.devices.values().filter(|d| d.kind == kind) {

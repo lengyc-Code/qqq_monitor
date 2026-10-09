@@ -31,10 +31,10 @@ impl DesktopApp {
                 (&read, "读取", theme::BLUE),
                 (&write, "写入", theme::PURPLE),
             ],
-            200.0,
+            176.0,
         );
-        ui.add_space(12.0);
-        ui.label(RichText::new("本地卷容量").size(18.0));
+        ui.add_space(theme::SECTION_GAP);
+        ui.label(RichText::new("本地卷容量").size(theme::SECTION_TITLE));
         device_selector(
             ui,
             view,

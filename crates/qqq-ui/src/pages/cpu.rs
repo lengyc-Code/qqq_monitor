@@ -21,10 +21,10 @@ impl DesktopApp {
             Unit::Percent,
             self.range,
             &series,
-            220.0,
+            180.0,
         );
-        ui.add_space(8.0);
-        ui.label(RichText::new("逻辑核心 · 点击查看历史").size(16.0));
+        ui.add_space(theme::SECTION_GAP);
+        ui.label(RichText::new("逻辑核心 · 点击查看历史").size(theme::SECTION_TITLE));
         let mut cores: Vec<_> = view
             .devices
             .values()
@@ -35,22 +35,17 @@ impl DesktopApp {
                 .and_then(|s| s.parse::<usize>().ok())
                 .unwrap_or(0)
         });
-        let columns = ((ui.available_width() / 110.0) as usize).clamp(2, 8);
+        let columns = ((ui.available_width() / 96.0) as usize).clamp(2, 8);
         for row in cores.chunks(columns) {
             ui.columns(columns, |uis| {
                 for (index, device) in row.iter().enumerate() {
                     let value = view.value(&device.id, "usage");
                     let text = format!("{}\n{}", device.name, format_value(value, Unit::Percent));
-                    let intensity = (value.unwrap_or(0.0) / 100.0) as f32;
-                    let fill = egui::Color32::from_rgb(
-                        20,
-                        (35.0 + intensity * 60.0) as u8,
-                        (55.0 + intensity * 90.0) as u8,
-                    );
+                    let fill = theme::core_fill(value.unwrap_or(0.0));
                     if uis[index]
                         .add_sized(
-                            [uis[index].available_width(), 64.0],
-                            egui::Button::new(text)
+                            [uis[index].available_width(), 50.0],
+                            egui::Button::new(RichText::new(text).size(12.0).color(theme::TEXT))
                                 .fill(fill)
                                 .selected(self.core == device.id),
                         )
@@ -60,7 +55,6 @@ impl DesktopApp {
                     }
                 }
             });
-            ui.add_space(4.0);
         }
     }
 }

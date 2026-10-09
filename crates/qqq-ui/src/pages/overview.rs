@@ -36,7 +36,7 @@ impl DesktopApp {
                 Page::Network,
             ),
         ];
-        let columns = if ui.available_width() >= 920.0 { 4 } else { 2 };
+        let columns = if ui.available_width() >= 840.0 { 4 } else { 2 };
         for row in cards.chunks(columns) {
             ui.columns(columns, |uis| {
                 for (index, (key, title, hint, color, page)) in row.iter().enumerate() {
@@ -45,7 +45,7 @@ impl DesktopApp {
                     }
                 }
             });
-            ui.add_space(8.0);
+            ui.add_space(theme::SECTION_GAP);
         }
         let cpu = MetricKey::new("cpu", "usage");
         let memory = MetricKey::new("memory", "usage");
@@ -57,11 +57,15 @@ impl DesktopApp {
             Unit::Percent,
             self.range,
             &[(&cpu, "CPU", theme::CYAN), (&memory, "内存", theme::PURPLE)],
-            170.0,
+            156.0,
         );
-        ui.add_space(8.0);
+        ui.add_space(theme::SECTION_GAP);
         theme::card().show(ui, |ui| {
-            ui.label(RichText::new("设备概览").size(16.0).strong());
+            ui.label(
+                RichText::new("设备概览")
+                    .size(theme::SECTION_TITLE)
+                    .strong(),
+            );
             ui.columns(2, |uis| {
                 device_details(&mut uis[0], view, "cpu");
                 uis[0].label(format!(

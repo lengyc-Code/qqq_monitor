@@ -19,13 +19,13 @@ impl DesktopApp {
                     ui.label(RichText::new(*title).color(theme::MUTED));
                     ui.label(
                         RichText::new(format_value(view.value("memory", metric), Unit::Bytes))
-                            .size(30.0)
+                            .size(26.0)
                             .color(theme::PURPLE),
                     );
                 });
             }
         });
-        ui.add_space(12.0);
+        ui.add_space(theme::SECTION_GAP);
         let key = MetricKey::new("memory", "usage");
         history_chart(
             ui,
@@ -35,7 +35,7 @@ impl DesktopApp {
             Unit::Percent,
             self.range,
             &[(&key, "内存使用率", theme::PURPLE)],
-            280.0,
+            220.0,
         );
         ui.label(
             RichText::new("统计系统可用物理内存；已用内存与提交量属于不同指标。")

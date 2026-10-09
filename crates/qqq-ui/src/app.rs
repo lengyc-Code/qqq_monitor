@@ -214,24 +214,20 @@ impl DesktopApp {
     }
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("navigation")
-            .default_size(188.0)
+            .default_size(156.0)
             .resizable(false)
-            .frame(
-                egui::Frame::new()
-                    .fill(egui::Color32::from_rgb(13, 21, 37))
-                    .inner_margin(20),
-            )
+            .frame(egui::Frame::new().fill(theme::BACKGROUND).inner_margin(14))
             .show(ui, |ui| {
-                ui.add_space(14.0);
-                ui.label(RichText::new("QQQ").size(36.0).strong().color(theme::CYAN));
+                ui.add_space(6.0);
+                ui.label(RichText::new("QQQ").size(28.0).strong().color(theme::CYAN));
                 ui.label(
                     RichText::new("M O N I T O R")
-                        .size(12.0)
+                        .size(10.0)
                         .color(theme::MUTED),
                 );
-                ui.add_space(36.0);
+                ui.add_space(22.0);
                 ui.label(RichText::new("性能监控").size(11.0).color(theme::MUTED));
-                ui.add_space(8.0);
+                ui.add_space(4.0);
                 for (page, symbol, name) in [
                     (Page::Overview, "●", "总览"),
                     (Page::Cpu, "▤", "CPU"),
@@ -241,20 +237,19 @@ impl DesktopApp {
                     (Page::Settings, "⚙", "设置"),
                 ] {
                     let selected = self.page == page;
-                    let text = RichText::new(format!("{symbol}    {name}"))
-                        .size(15.0)
-                        .color(if selected { theme::CYAN } else { theme::MUTED });
-                    if ui
-                        .add_sized(
-                            [ui.available_width(), 44.0],
-                            egui::Button::new(text).selected(selected),
-                        )
-                        .clicked()
+                    let text = format!("{symbol}    {name}");
+                    if theme::soft_button(
+                        ui,
+                        &text,
+                        selected,
+                        egui::vec2(ui.available_width(), 36.0),
+                    )
+                    .clicked()
                     {
                         self.page = page;
                     }
                 }
-                ui.add_space(30.0);
+                ui.add_space(20.0);
                 ui.separator();
                 ui.label(
                     RichText::new("WINDOWS / LIVE")
@@ -333,8 +328,8 @@ impl eframe::App for DesktopApp {
             .resizable(false)
             .frame(
                 egui::Frame::new()
-                    .fill(theme::SURFACE)
-                    .inner_margin(egui::Margin::symmetric(20, 8)),
+                    .fill(theme::BACKGROUND)
+                    .inner_margin(egui::Margin::symmetric(14, 6)),
             )
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -345,10 +340,11 @@ impl eframe::App for DesktopApp {
                         } else {
                             "●  部分采集不可用"
                         })
+                        .size(12.0)
                         .color(if errors == 0 {
                             theme::GREEN
                         } else {
-                            egui::Color32::YELLOW
+                            theme::WARNING
                         }),
                     );
                     ui.label(
@@ -364,17 +360,18 @@ impl eframe::App for DesktopApp {
                         ui.label(
                             RichText::new(&self.message)
                                 .size(12.0)
-                                .color(egui::Color32::YELLOW),
+                                .color(theme::WARNING),
                         );
                     }
                 });
             });
         self.sidebar(ui);
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(theme::BACKGROUND).inner_margin(24))
+            .frame(egui::Frame::new().fill(theme::BACKGROUND).inner_margin(16))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
                         ui.heading(self.page.title());
                         ui.label(
                             RichText::new(self.page.hint())
@@ -389,7 +386,7 @@ impl eframe::App for DesktopApp {
                         }
                     });
                 });
-                ui.add_space(16.0);
+                ui.add_space(8.0);
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| match self.page {
