@@ -11,3 +11,6 @@ qqq-engine.workspace = true
 eframe.workspace = true
 egui_plot.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+[build-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }

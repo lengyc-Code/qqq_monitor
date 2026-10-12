@@ -50,7 +50,7 @@ impl DesktopApp {
                 ui.horizontal(|ui| {
                     row_label(ui, "界面动效");
                     if ui
-                        .checkbox(&mut self.config.animations, "启用轻量动效与看板娘眨眼")
+                        .checkbox(&mut self.config.animations, "启用轻量动效与看板娘晃动")
                         .changed()
                     {
                         theme::apply(ui.ctx(), self.config.animations);
@@ -135,7 +135,7 @@ fn about(ui: &mut egui::Ui, view: &MonitorView) {
     theme::card().show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 18.0;
-            mascot::portrait(ui, view, 3.0);
+            mascot::portrait(ui, view, 2.0);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 ui.horizontal(|ui| {
@@ -154,10 +154,10 @@ fn about(ui: &mut egui::Ui, view: &MonitorView) {
                         pixel::Effect::Plain,
                     );
                 });
-                ui.label("看板娘 Q 酱会根据 CPU 与内存负载切换表情：悠闲、平静、忙碌和超载。");
+                ui.label("看板娘 MINT 酱会根据 CPU 与内存负载切换表情：悠闲、平静、忙碌和超载。");
                 ui.label(
                     RichText::new(
-                        "关闭界面动效后表情仍会随负载变化，但不再眨眼与晃动，也不会额外刷新界面。",
+                        "关闭界面动效后表情仍会随负载变化，但不再晃动，也不会额外刷新界面。",
                     )
                     .size(12.0)
                     .color(theme::MUTED),

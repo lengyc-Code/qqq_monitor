@@ -3,6 +3,7 @@
 
 mod bootstrap;
 
+use eframe::wgpu::rwh::{HasWindowHandle, RawWindowHandle};
 use qqq_domain::{DeviceKind, SampleState};
 use qqq_engine::{ConfigStore, DockEdge, MonitorRuntime};
 use qqq_ui::{CaptureOptions, Desktop, DesktopApp, Page};
@@ -71,7 +72,9 @@ fn run() -> Result<(), String> {
     } else {
         None
     };
-    let viewport = qqq_ui::viewport(&config);
+    // An empty icon keeps eframe's default icon off the window; the embedded resource icon
+    // is applied once the window exists.
+    let viewport = qqq_ui::viewport(&config).with_icon(eframe::egui::IconData::default());
     let mut options = eframe::NativeOptions {
         centered: viewport.position.is_none(),
         viewport,
@@ -91,6 +94,11 @@ fn run() -> Result<(), String> {
         "QQQ Monitor · 性能监控",
         options,
         Box::new(move |cc| {
+            if let Ok(handle) = cc.window_handle()
+                && let RawWindowHandle::Win32(handle) = handle.as_raw()
+            {
+                qqq_platform_windows::set_window_icon(handle.hwnd.get());
+            }
             Ok(Box::new(DesktopApp::new(
                 cc, client, config, capture, desktop,
             )))

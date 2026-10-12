@@ -8,6 +8,8 @@ mod network;
 use qqq_domain::*;
 use std::{sync::Arc, time::Duration};
 
+/// Window icons from the icon resource embedded in the executable.
+pub use native::set_window_icon;
 /// Screen geometry and pointer state for docking the window, in physical pixels.
 pub use native::{covers_point, monitor_at, mouse_button_held};
 

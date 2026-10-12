@@ -2,7 +2,7 @@ use qqq_domain::CollectorError;
 use std::{collections::BTreeMap, mem::size_of, ptr};
 use windows::{
     Win32::{
-        Foundation::{POINT, RECT},
+        Foundation::{HWND, LPARAM, POINT, RECT, WPARAM},
         Graphics::{
             Dxgi::{
                 CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_ERROR_NOT_FOUND, IDXGIFactory1,
@@ -14,10 +14,14 @@ use windows::{
         },
         NetworkManagement::{IpHelper::*, Ndis::IfOperStatusUp},
         Storage::FileSystem::{GetDriveTypeW, GetVolumeNameForVolumeMountPointW},
-        System::Performance::*,
+        System::{LibraryLoader::GetModuleHandleW, Performance::*},
         UI::{
+            HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi},
             Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON},
-            WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW},
+            WindowsAndMessaging::{
+                ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, MB_ICONERROR, MB_OK,
+                MessageBoxW, SM_CXICON, SM_CXSMICON, SendMessageW, WM_SETICON,
+            },
         },
     },
     core::{HSTRING, PCWSTR, w},
@@ -329,4 +333,51 @@ pub fn mouse_button_held() -> bool {
         .iter()
         // SAFETY: reads the asynchronous key state of a valid virtual-key code.
         .any(|key| unsafe { GetAsyncKeyState(key.0 as i32) } < 0)
+}
+
+/// Resource ID of the application icon that `build.rs` embeds from `assets/qqq_monitor.rc`.
+const APP_ICON: u16 = 1;
+
+/// Sets the title-bar and taskbar icons of a window from the icon embedded in the executable,
+/// loading for each the size the system uses at the window's DPI.
+pub fn set_window_icon(hwnd: isize) {
+    let hwnd = HWND(hwnd as *mut _);
+    // SAFETY: only reads the handle; an invalid window yields 0.
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    if dpi == 0 {
+        return;
+    }
+    // SAFETY: a null module name returns the running executable, which outlives the window.
+    let Ok(module) = (unsafe { GetModuleHandleW(PCWSTR::null()) }) else {
+        return;
+    };
+    for (kind, metric) in [(ICON_BIG, SM_CXICON), (ICON_SMALL, SM_CXSMICON)] {
+        // SAFETY: plain value arguments.
+        let size = unsafe { GetSystemMetricsForDpi(metric, dpi) };
+        // SAFETY: the integer resource ID is passed as MAKEINTRESOURCE; Win32 picks the closest
+        // embedded size and scales it to `size`.
+        let Ok(icon) = (unsafe {
+            LoadImageW(
+                Some(module.into()),
+                PCWSTR(APP_ICON as usize as *const u16),
+                IMAGE_ICON,
+                size,
+                size,
+                LR_DEFAULTCOLOR,
+            )
+        }) else {
+            continue;
+        };
+        // The window shows the icon for the rest of the process, so the handle stays alive
+        // and is reclaimed at exit.
+        // SAFETY: WM_SETICON only stores the icon handle on the window.
+        unsafe {
+            SendMessageW(
+                hwnd,
+                WM_SETICON,
+                Some(WPARAM(kind as usize)),
+                Some(LPARAM(icon.0 as isize)),
+            )
+        };
+    }
 }

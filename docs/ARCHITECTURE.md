@@ -20,10 +20,10 @@ flowchart TD
 | 模块 | 当前职责 | 对外接口 |
 | --- | --- | --- |
 | `qqq-domain` | 设备、指标、单位、读数状态、采集工厂 | `Collector`、`CollectorFactory` 和模型 |
-| `qqq-platform-windows` | sysinfo、IP Helper、PDH、DXGI、卷 GUID、显示器工作区、原生句柄 RAII | `collectors()`、显示器与鼠标状态查询、安全的启动错误提示 |
+| `qqq-platform-windows` | sysinfo、IP Helper、PDH、DXGI、卷 GUID、显示器工作区、原生句柄 RAII | `collectors()`、显示器与鼠标状态查询、窗口图标、安全的启动错误提示 |
 | `qqq-engine` | 采样调度、差分、历史、查询投影、配置、命令确认 | `MonitorRuntime`、`MonitorClient`、`MonitorView`、`ConfigStore` |
-| `qqq-ui` | 七个独立页面、边缘吸附与迷你状态栏、图表、设备选择、主题、中文字体 | `DesktopApp`、`Page`、截图选项、`Desktop` 显示器查询接口、`viewport()` 初始窗口 |
-| 根包 | 日志、组装、DX12 窗口、CLI 冒烟和关闭 | Windows EXE |
+| `qqq-ui` | 七个独立页面、边缘吸附与迷你状态栏、图表、设备选择、主题、中文字体、看板娘精灵 | `DesktopApp`、`Page`、截图选项、`Desktop` 显示器查询接口、`viewport()` 初始窗口 |
+| 根包 | 日志、组装、DX12 窗口、程序图标资源、CLI 冒烟和关闭 | Windows EXE |
 
 领域、引擎、GUI 和启动包禁止 `unsafe`。Windows 必要的 FFI 集中在 `native.rs`，说明每个调用的句柄、缓冲区和生命周期条件；调用方只看到安全接口。
 
@@ -33,6 +33,10 @@ flowchart TD
 qqq_monitor/
 ├── Cargo.toml                       # Workspace、依赖和 Rust 版本
 ├── Cargo.lock
+├── build.rs                         # 编译并嵌入图标资源
+├── assets/
+│   ├── qqq_monitor.ico              # 多尺寸程序图标
+│   └── qqq_monitor.rc               # Windows 资源脚本
 ├── src/
 │   ├── main.rs                      # GUI、冒烟、截图、关闭
 │   └── bootstrap.rs                 # 日志初始化
@@ -60,6 +64,7 @@ qqq_monitor/
 │   │   │   └── config.rs            # 校验、恢复和后台保存
 │   │   └── tests/runtime_flow.rs    # 可控假采集器的运行时测试
 │   └── qqq-ui/
+│       ├── build.rs                 # 由看板娘插画生成像素精灵
 │       ├── assets/fonts/            # Noto Sans CJK SC 和 OFL 许可
 │       └── src/
 │           ├── lib.rs
@@ -68,7 +73,7 @@ qqq_monitor/
 │           ├── minibar.rs           # 吸附时的迷你状态栏
 │           ├── theme.rs             # 配色、字体、控件和卡片
 │           ├── pixel.rs             # 像素图标、位图字体与精灵
-│           ├── mascot.rs            # 看板娘
+│           ├── mascot.rs            # 看板娘表情、精灵纹理与角色卡
 │           ├── components.rs        # 格式、图表、状态、设备选择
 │           └── pages/
 │               ├── mod.rs
@@ -83,7 +88,8 @@ qqq_monitor/
     ├── TECHNICAL_PLAN.md
     ├── ARCHITECTURE.md
     ├── IMPLEMENTATION_PLAN.md
-    └── VALIDATION.md
+    └── images/                      # README 截图、标志与看板娘图
+        └── assets/                  # 看板娘插画 mint-0 至 mint-6
 ```
 
 调度、命令与客户端暂集中在 `runtime.rs`，历史与投影集中在 `history.rs`；继续增长时可在原 crate 内拆分普通模块。页面已独立分文件，页面模块是 `app` 的内部子模块，可以访问必要的 UI 状态，无需将状态字段暴露为公共 API。
@@ -199,7 +205,7 @@ GUI 复用指标卡片、历史图表、状态和设备选择组件；七个页�
 
 ## 生命周期和故障隔离
 
-启动入口先初始化日志、读取配置和组装工厂，再启动引擎和 GUI；扫描在后台完成。DX12 启动失败会记录错误并弹原生消息框；冒烟和截图模式只输出错误，便于自动检查。
+启动入口先初始化日志、读取配置和组装工厂，再启动引擎和 GUI；扫描在后台完成。窗口创建后，平台层按窗口 DPI 从 EXE 内嵌的图标资源加载标题栏与任务栏图标。DX12 启动失败会记录错误并弹原生消息框；冒烟和截图模式只输出错误，便于自动检查。
 
 每个采集源的创建与采集被 catch_unwind 隔离，失败按 1、2、4、8、16、30 秒退避并重建对象，其他源继续工作。尚未返回的同步 API 不触发并行替代线程；数据由最后成功时刻变为过期。错误恢复不等于可以恢复 FFI 未定义行为，原生缓冲区和句柄仍需独立审查。
 
@@ -217,6 +223,6 @@ GUI 复用指标卡片、历史图表、状态和设备选择组件；七个页�
 
 ## 验证边界
 
-已有测试覆盖实际时间差、计数回退、Gauge 速率、合法零值、失败恢复、各周期过期、历史时间/点数/预算、投影缺口、慢采集隔离、在途命令上限、关闭保存（含吸附配置）、损坏配置保护、GPU 计数器实例解析与引擎聚合，以及吸附边缘判定与迷你状态栏定位。真实 Windows 采集与七个页面截图由 CLI 验证，完整结果见 [实现验证记录](VALIDATION.md)。
+已有测试覆盖实际时间差、计数回退、Gauge 速率、合法零值、失败恢复、各周期过期、历史时间/点数/预算、投影缺口、慢采集隔离、在途命令上限、关闭保存（含吸附配置）、损坏配置保护、GPU 计数器实例解析与引擎聚合，以及吸附边缘判定与迷你状态栏定位。真实 Windows 采集由 CLI 的 `--smoke-test` 验证，七个页面与三种迷你状态栏由 `--capture` 截图检查。
 
 吸附的拖动、贴边、换边、恢复和最大化往返已在单屏 150% 缩放下用真实鼠标输入检查。还需验证通道真实溢出、设备消失后的清理、连续保存合并和写入失败、睡眠恢复、热插拔、键盘交互、多屏缩放与多屏吸附、集成显卡与多显卡读数及长期资源预算。构建成功和截图可读不能代替这些验收。
