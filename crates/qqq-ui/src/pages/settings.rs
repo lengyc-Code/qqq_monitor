@@ -128,7 +128,7 @@ fn about(ui: &mut egui::Ui, view: &MonitorView) {
     theme::card().show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 18.0;
-            mascot::portrait(ui, view, 4.0);
+            mascot::portrait(ui, view, 3.0);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 ui.horizontal(|ui| {

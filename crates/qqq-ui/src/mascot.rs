@@ -1,96 +1,142 @@
-//! Q酱, the pixel mascot: a teal-haired cat girl with a pink streak, a black
-//! cat plush on her headband and a gold bell on her collar. Her expression and
-//! speech bubble summarise the current CPU and memory load, so the sidebar
-//! doubles as a health indicator.
+//! Q酱, the pixel mascot: a 40 × 48 chibi bust of a teal-haired cat girl with
+//! a pink streak, a black cat plush on her headband and a gold bell on her
+//! collar. Her expression and speech bubble summarise the current CPU and
+//! memory load, so the sidebar doubles as a health indicator.
 
 use crate::{pixel, theme};
 use eframe::egui::{self, Color32, FontId, Rect, Shape, Vec2, pos2, vec2};
 use qqq_domain::SampleState;
 use qqq_engine::MonitorView;
 
-const WIDTH: usize = 24;
-const HEIGHT: usize = 27;
+const WIDTH: usize = 40;
+const HEIGHT: usize = 48;
 const BLINK_PERIOD: f64 = 4.7;
 const BAND: Color32 = Color32::from_rgb(31, 92, 112);
 const BAND_DOT: Color32 = Color32::from_rgb(48, 132, 154);
-const BASE: [&str; HEIGHT] = [
-    "..K..................K..",
-    "..KK................KK..",
-    "..KHK.....B..B.....KHK..",
-    "..KHWK...KBBBBK...KWHK..",
-    "..KHWWK..BWBBWB..KWWHK..",
-    "..KHWWWK.BBPPBB.KWWWHK..",
-    ".KHHWWWK..BBBB..KWWWHHK.",
-    ".KHHHWWHKKKKKKKKHWWHHHK.",
-    "KHHHHHWBBBBBBBBBBWHHHHHK",
-    "KHHHhHHHPPHHHHHHHHHHHHHK",
-    "KHHHHHPPHHHHdHHHHdHHHHHK",
-    "KHHHdPPdHHHdSdHHdSdHHdHK",
-    "KHHdSPpSdHdSSSddSSSdHdHK",
-    "KHdSSpSSSdSSSSSSSSSSdSHK",
-    "KHdSSSSSSSSSSSSSSSSSSdHK",
-    "KHdSSSSSSSSSSSSSSSSSSdHK",
-    "KHdSSSSSSSSSSSSSSSSSSdHK",
-    "KHdSSSSSSSSSSSSSSSSSSdHK",
-    "KHHdrrSSSSSSSSSSSSrrdHHK",
-    "KHHdSSSSSSSSSSSSSSSSdHHK",
-    "KHHHdsSSSSSSSSSSSSsdHHHK",
-    "KHHHHdKKSSSSSSSSKKdHHHHK",
-    "KHHHHHHKKsSSSSsKKHHHHHHK",
-    "KHHHHHKWWKKSSKKWWKHHHHHK",
-    "KHHHHKWWWWWKKWWWWWKHHHHK",
-    "KHHHKWwWWWWGGWWWWwWKHHHK",
-    "KHHKWWwWWWBgGBWWWwWWKHHK",
+/// Chibi bust without eyes and mouth: a large head with cat ears and fur
+/// tufts, ahoge, headband with the cat plush, pink streak and braid, over a
+/// simplified collar with gem and bell.
+const BASE: [&str; 48] = [
+    ".KHKK............KKHK...K.....K....KKHK.",
+    ".KHHHK..........KHHK...KNK...KNK..KHHHK.",
+    ".KHHHHKK.......KHKK....KNNKKKNNK.KHHHHK.",
+    ".KHDHHHHK......KHKhK..KNNNNNNNNnKHHHDHK.",
+    "KHHDDHHHHKK.....KHhKKKKNWWNNNWWnKHHDDHHK",
+    "KHHDDDDHHHHKK.KKPPhBHHKNWKNNNKWnKDDDDHHK",
+    "KHHDDDDDHHHHHKHBPPBBBBKNNNPNPNNnKDDDDHHK",
+    "KHHDDDDDDDBBBBBPPHHHHHKNNNNPNNNnKDDDDHHK",
+    "KHDDDDDDDBBBHhhPPhhhhhhKNNNNNNnKDDDDDDHK",
+    "KHDDKDDHBBBhhHHPPHHHHHHHKKKKKKKBHDDKDDHK",
+    "KHDKWKDBBBhHHHpPHHHHHHHHHHHHhhBBBDKWKDHK",
+    "HHKWWWKBBHHHHHpPHHHHHHHHHHHHHHHBBKWWWKHH",
+    "HKWWWWWKHHHHHpPPHHHHHHHHhHHHHHHHKWWWWWKH",
+    "KWWWwWWKHHHdHpPhHHHdHHHdhHHdHHHHKWWwWWWK",
+    "HKWwwWWWKHHdpPPhHHHdHHHdhHHdHHHKWWWwwWKH",
+    "KWWwWWwKHHHHpPPhdHHHdHHHhHHHdHHHKwWWwWWK",
+    ".KWwWWwKHHHHpPHHdHHHdHHHdHHHdHHHKwWWwWK.",
+    "..KWWwKHHHHpPPHHdHHHdHHHdHHHdHHHHKwWWK..",
+    "...KwKHHHHHpPPHHHdHHHdHHHdHHHdHHHHKwK...",
+    "....KHHHHHpHPdHHHdHHHdHHHdHHHdHHHHHK....",
+    "....KHHdHHpPPHHHSHHHSHHHSHHHHHHHdHHK....",
+    "....KHHdHHHPPHHHSHHHSHHHSHHHHHHHdHHK....",
+    "...KHHHdHHHHSHHSSSHSSSHSSSHHHHHHdHHHK...",
+    "...KHHHdHHHHSSHSSSSSSSSSSSHSHHHHdHHHK...",
+    "...KHHHdHHHSSSSSSSSSSSSSSSSSSHHHdHHHK...",
+    "...KHHHdHHHSSSSSSSSSSSSSSSSSSHhHdHHHK...",
+    "...KHHHdHHHSSSSSSSSSSSSSSSSSSHhHdHHHK...",
+    "..KHHHHdHHHSSSSSSSSSSSSSSSSSSHhHdHHHHK..",
+    "..KHdHHdHHHSSSSSSSSSSSSSSSSSSHhHdHHdHK..",
+    "..KHdHHdHHHSSSSSSSSSSSSSSSSSSHhHdHHdHK..",
+    "..KHdHHdHHHSSSSSSSSSSSSSSSSSSHhHdHHdHK..",
+    "..KddHHdHHrrrSSSSSSsSSSSSSSrrrHHdHHddK..",
+    ".KHdddHdHHHHSSSSSSSSSSSSSSSSHHHHdHdddHK.",
+    ".KddddKHKHHHSSSSSSSSSSSSSSSSHHHHdHddddK.",
+    ".KdddKHHdKHHHSSSSSSSSSSSSSSHHHHHdHddddK.",
+    ".KdddKdhHKHHHHSSSSSSSSSSSSHHHHHHdHddddK.",
+    ".KdddKHHdKHHHHHSSSSSSSSSSHHHHHHHddddddK.",
+    ".KddddKDKHHHHHHHSSSSSSSSHHHHHHHHddddddK.",
+    ".KdddKDhDKHHHHHHHHSSSSHHHHHHHHHHddddddK.",
+    ".KddddKDKHHHHHHHHHHHHHHHHHHHHHHHddddddK.",
+    ".KdddKHHdKHHHHHHHHHHHHHHHHHHHHHHddddddK.",
+    "KddddKdhHKHHHHKKKHHcCHHKKKHHHHHHdddddddK",
+    "KdddddKhKHHHHHKWWKKCCKKWWKHHHHHHdddddddK",
+    "KddddddKHKKKKKWWWWWKKWWWWWKKKKKHdddddddK",
+    "KddddddKKWwwWWWWWWGYGGWWWWWWwwWKKddddddK",
+    "KddddKKwwwWWWWwwwwGGGgwwwwWWWWwwwKKddddK",
+    "KddKKwwWWWWWWWWWWWWggWWWWWWWWWWWWwwKKddK",
+    "KdKWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWKdK",
 ];
-/// Top row of both eyes and their left columns; every eye pattern is 4 × 4.
-const EYE_ROW: usize = 14;
-const EYE_COLUMNS: [usize; 2] = [5, 15];
-const MOUTH_ROW: usize = 19;
-const MOUTH_COLUMN: usize = 10;
-const EYE_OPEN: [&str; 4] = ["KKKK", "EWEE", "EEWE", "eEEe"];
-const EYE_CLOSED: [&str; 4] = ["SSSS", "SSSS", "KKKK", "SSSS"];
-const EYE_HAPPY: [&str; 4] = ["SSSS", "SKKS", "KSSK", "SSSS"];
-const EYE_SQUEEZE_LEFT: [&str; 4] = ["KSSS", "SKKS", "KSSS", "SSSS"];
-const EYE_SQUEEZE_RIGHT: [&str; 4] = ["SSSK", "SKKS", "SSSK", "SSSS"];
-const MOUTH_GRIN: [&str; 2] = ["KMMK", "SKmS"];
-const MOUTH_SMILE: [&str; 2] = ["KSSK", "SKKS"];
-const MOUTH_OPEN: [&str; 2] = ["SMMS", "SMMS"];
-const MOUTH_WAVE: [&str; 2] = ["SKSK", "KSKS"];
-const MOUTH_FLAT: [&str; 2] = ["SKKS", "SSSS"];
-const SWEAT: [(usize, usize, u8); 8] = [
-    (19, 10, b'K'),
-    (18, 11, b'K'),
-    (19, 11, b'b'),
-    (20, 11, b'K'),
-    (18, 12, b'b'),
-    (19, 12, b'W'),
-    (20, 12, b'K'),
-    (19, 13, b'b'),
+/// Eyes are 7 × 7 from these columns; `.` keeps the face underneath.
+const EYE_ROW: usize = 23;
+const EYE_COLUMNS: [usize; 2] = [11, 22];
+const MOUTH_ORIGIN: (usize, usize) = (18, 33);
+const SWEAT_ORIGIN: (usize, usize) = (29, 17);
+const EYE_OPEN_LEFT: [&str; 7] = [
+    "KKKKKKK", "KEWWEEE", ".EWEEEE", ".RRReRR", ".RReWeR", ".eRReRe", "..eeee.",
 ];
+const EYE_OPEN_RIGHT: [&str; 7] = [
+    "KKKKKKK", "EEEWWEK", "EEEEWE.", "RReRRR.", "ReWeRR.", "eReRRe.", ".eeee..",
+];
+const EYE_CLOSED: [&str; 7] = [
+    "SSSSSSS", "SSSSSSS", "SSSSSSS", "KKKKKKK", "SSSSSSS", "SSSSSSS", "SSSSSSS",
+];
+const EYE_HAPPY_LEFT: [&str; 7] = [
+    "SSSSSSS", "SSSSSSS", "SSSKKSS", "SSKSSKS", "SKSSSSK", "SSSSSSS", "SSSSSSS",
+];
+const EYE_HAPPY_RIGHT: [&str; 7] = [
+    "SSSSSSS", "SSSSSSS", "SSKKSSS", "SKSSKSS", "KSSSSKS", "SSSSSSS", "SSSSSSS",
+];
+const EYE_SQUEEZE_LEFT: [&str; 7] = [
+    "SSSSSSS", "KKSSSSS", "SSKKSSS", "SSSSKKS", "SSKKSSS", "KKSSSSS", "SSSSSSS",
+];
+const EYE_SQUEEZE_RIGHT: [&str; 7] = [
+    "SSSSSSS", "SSSSSKK", "SSSKKSS", "SKKSSSS", "SSSKKSS", "SSSSSKK", "SSSSSSS",
+];
+const MOUTH_SMILE: [&str; 2] = ["s..s", ".MM."];
+const MOUTH_GRIN: [&str; 3] = ["KMMK", "KmmK", ".KK."];
+const MOUTH_OPEN: [&str; 3] = [".MM.", "MmmM", ".MM."];
+const MOUTH_WAVE: [&str; 2] = ["M.M.", ".M.M"];
+const MOUTH_FLAT: [&str; 1] = [".MM."];
+const SWEAT: [&str; 4] = [".K.", "KcK", "cWc", ".c."];
 
 fn color(code: u8) -> Option<Color32> {
     Some(match code {
         b'K' => theme::INK,
         b'H' => Color32::from_rgb(43, 181, 207),
-        b'h' => Color32::from_rgb(155, 231, 242),
-        b'd' => Color32::from_rgb(28, 134, 166),
+        b'h' => Color32::from_rgb(150, 230, 242),
+        b'd' => Color32::from_rgb(24, 128, 160),
+        b'D' => Color32::from_rgb(17, 88, 118),
         b'P' => theme::PINK,
-        b'p' => Color32::from_rgb(214, 52, 112),
+        b'p' => Color32::from_rgb(206, 46, 108),
         b'W' => Color32::WHITE,
-        b'w' => Color32::from_rgb(206, 222, 232),
-        b'B' => Color32::from_rgb(46, 50, 66),
-        b'S' => Color32::from_rgb(255, 234, 222),
-        b's' => Color32::from_rgb(245, 201, 182),
-        b'E' => Color32::from_rgb(194, 30, 90),
-        b'e' => Color32::from_rgb(255, 127, 168),
-        b'r' => Color32::from_rgb(255, 175, 195),
+        b'w' => Color32::from_rgb(214, 226, 236),
+        b'B' => Color32::from_rgb(40, 44, 60),
+        b'N' => Color32::from_rgb(62, 68, 94),
+        b'n' => Color32::from_rgb(98, 106, 140),
+        b'S' => Color32::from_rgb(255, 236, 226),
+        b's' => Color32::from_rgb(246, 204, 188),
+        b'E' => Color32::from_rgb(178, 22, 84),
+        b'R' => Color32::from_rgb(240, 64, 120),
+        b'e' => Color32::from_rgb(255, 150, 186),
+        b'r' => Color32::from_rgb(255, 178, 198),
         b'M' => Color32::from_rgb(150, 36, 66),
-        b'm' => Color32::from_rgb(255, 120, 140),
+        b'm' => Color32::from_rgb(255, 128, 148),
         b'G' => theme::GOLD,
-        b'g' => Color32::from_rgb(184, 128, 26),
-        b'b' => Color32::from_rgb(150, 215, 255),
+        b'g' => Color32::from_rgb(178, 122, 24),
+        b'Y' => Color32::from_rgb(255, 230, 140),
+        b'C' => Color32::from_rgb(64, 150, 240),
+        b'c' => Color32::from_rgb(170, 220, 255),
         _ => return None,
     })
+}
+
+/// Code of a stamp placed at `origin` at (x, y), unless outside it or `.`.
+fn stamp(rows: &[&str], origin: (usize, usize), x: usize, y: usize) -> Option<u8> {
+    let code = *rows
+        .get(y.checked_sub(origin.1)?)?
+        .as_bytes()
+        .get(x.checked_sub(origin.0)?)?;
+    (code != b'.').then_some(code)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -104,24 +150,24 @@ enum Mood {
 }
 
 struct Face {
-    left: &'static [&'static str; 4],
-    right: &'static [&'static str; 4],
-    mouth: &'static [&'static str; 2],
+    left: &'static [&'static str],
+    right: &'static [&'static str],
+    mouth: &'static [&'static str],
     sweat: bool,
 }
 
 impl Mood {
     fn face(self, blink: bool) -> Face {
-        let (left, right, mouth, sweat) = match self {
+        let (left, right, mouth, sweat): (&[&str], &[&str], &[&str], bool) = match self {
             Self::Waiting => (&EYE_CLOSED, &EYE_CLOSED, &MOUTH_FLAT, false),
-            Self::Relaxed => (&EYE_HAPPY, &EYE_HAPPY, &MOUTH_GRIN, false),
-            Self::Calm => (&EYE_OPEN, &EYE_OPEN, &MOUTH_SMILE, false),
-            Self::Busy => (&EYE_OPEN, &EYE_OPEN, &MOUTH_OPEN, true),
+            Self::Relaxed => (&EYE_HAPPY_LEFT, &EYE_HAPPY_RIGHT, &MOUTH_GRIN, false),
+            Self::Calm => (&EYE_OPEN_LEFT, &EYE_OPEN_RIGHT, &MOUTH_SMILE, false),
+            Self::Busy => (&EYE_OPEN_LEFT, &EYE_OPEN_RIGHT, &MOUTH_OPEN, true),
             Self::Overloaded => (&EYE_SQUEEZE_LEFT, &EYE_SQUEEZE_RIGHT, &MOUTH_WAVE, true),
-            Self::Trouble => (&EYE_OPEN, &EYE_OPEN, &MOUTH_FLAT, true),
+            Self::Trouble => (&EYE_OPEN_LEFT, &EYE_OPEN_RIGHT, &MOUTH_FLAT, true),
         };
-        let (left, right) = if blink && *left == EYE_OPEN {
-            (&EYE_CLOSED, &EYE_CLOSED)
+        let (left, right) = if blink && left == EYE_OPEN_LEFT {
+            (&EYE_CLOSED[..], &EYE_CLOSED[..])
         } else {
             (left, right)
         };
@@ -136,21 +182,15 @@ impl Mood {
 
 impl Face {
     fn pixel(&self, x: usize, y: usize) -> Option<Color32> {
-        if self.sweat
-            && let Some((_, _, code)) = SWEAT.iter().find(|(sx, sy, _)| (*sx, *sy) == (x, y))
-        {
-            return color(*code);
-        }
-        for (rows, left) in [(self.left, EYE_COLUMNS[0]), (self.right, EYE_COLUMNS[1])] {
-            if (EYE_ROW..EYE_ROW + 4).contains(&y) && (left..left + 4).contains(&x) {
-                return color(rows[y - EYE_ROW].as_bytes()[x - left]);
-            }
-        }
-        if (MOUTH_ROW..MOUTH_ROW + 2).contains(&y) && (MOUTH_COLUMN..MOUTH_COLUMN + 4).contains(&x)
-        {
-            return color(self.mouth[y - MOUTH_ROW].as_bytes()[x - MOUTH_COLUMN]);
-        }
-        color(BASE[y].as_bytes()[x])
+        let code = self
+            .sweat
+            .then(|| stamp(&SWEAT, SWEAT_ORIGIN, x, y))
+            .flatten()
+            .or_else(|| stamp(self.left, (EYE_COLUMNS[0], EYE_ROW), x, y))
+            .or_else(|| stamp(self.right, (EYE_COLUMNS[1], EYE_ROW), x, y))
+            .or_else(|| stamp(self.mouth, MOUTH_ORIGIN, x, y))
+            .unwrap_or(BASE[y].as_bytes()[x]);
+        color(code)
     }
 }
 
@@ -264,7 +304,7 @@ pub fn show(ui: &mut egui::Ui, view: &MonitorView, animate: bool) {
     let ctx = ui.ctx().clone();
     let (mood, speech) = assess(view);
     let unit = pixel::unit(&ctx, 2.0);
-    let sprite_unit = pixel::unit(&ctx, 3.0);
+    let sprite_unit = pixel::unit(&ctx, 2.0);
     let width = ui.available_width();
     let padding = 8.0;
     let galley = ui.painter().layout(
