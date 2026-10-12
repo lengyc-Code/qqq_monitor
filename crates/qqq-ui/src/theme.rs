@@ -212,7 +212,7 @@ impl Card {
             })
             .show(ui, |ui| {
                 ui.set_width((width - lift.ceil() - margin * 2.0).max(40.0));
-                ui.set_min_height(self.min_height - lift.ceil() - margin * 2.0);
+                ui.set_min_height((self.min_height - lift.ceil() - margin * 2.0).max(0.0));
                 contents(ui)
             });
         let mut response = inner.response;
