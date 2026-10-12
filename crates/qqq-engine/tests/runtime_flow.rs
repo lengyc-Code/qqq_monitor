@@ -72,7 +72,7 @@ impl Collector for FakeCollector {
         self.count += 1;
         let at = Instant::now();
         Ok(SampleBatch {
-            devices: vec![DeviceDescriptor::new(self.id, "测试", DeviceKind::System)],
+            devices: vec![DeviceDescriptor::new(self.id, "", DeviceKind::System)],
             samples: vec![MetricSample::new(
                 self.id,
                 "ticks",
@@ -158,6 +158,7 @@ fn in_flight_limit_is_explicit_and_shutdown_flushes_accepted_save() {
     }
     assert_eq!(received, 32);
     let config = AppConfig {
+        language: Some(Language::Japanese),
         sampling_ms: 2000,
         history_secs: 300,
         edge_docking: false,

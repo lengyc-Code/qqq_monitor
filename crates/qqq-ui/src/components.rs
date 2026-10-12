@@ -1,4 +1,4 @@
-use crate::{pixel, theme};
+use crate::{i18n, pixel, theme};
 use eframe::egui::{self, Color32, FontId, RichText, Sense, pos2, vec2};
 use egui_plot::{HoverPosition, Line, Plot};
 use qqq_domain::{DeviceDescriptor, DeviceKind, MetricKey, MetricReading, SampleState, Unit};
@@ -28,8 +28,8 @@ pub fn format_value(value: Option<f64>, unit: Unit) -> String {
             Unit::Seconds => {
                 let seconds = value as u64;
                 format!(
-                    "{} 天 {:02}:{:02}:{:02}",
-                    seconds / 86400,
+                    "{} {:02}:{:02}:{:02}",
+                    (i18n::t().days)(seconds / 86400),
                     seconds / 3600 % 24,
                     seconds / 60 % 60,
                     seconds % 60
@@ -39,13 +39,14 @@ pub fn format_value(value: Option<f64>, unit: Unit) -> String {
         .unwrap_or_else(|| "—".into())
 }
 pub fn state_label(view: &MonitorView, reading: Option<&MetricReading>) -> (&'static str, Color32) {
+    let t = i18n::t();
     match reading.map(|r| r.effective_state(view.now)) {
-        Some(SampleState::Ready) => ("实时", theme::GOOD),
-        Some(SampleState::Stale) => ("数据过期", theme::WARNING),
-        Some(SampleState::Failed) => ("采集失败", theme::ERROR),
-        Some(SampleState::Unsupported) => ("不支持", theme::MUTED),
-        Some(SampleState::Offline) => ("已断开", theme::MUTED),
-        _ => ("采集中", theme::MUTED),
+        Some(SampleState::Ready) => (t.state_ready, theme::GOOD),
+        Some(SampleState::Stale) => (t.state_stale, theme::WARNING),
+        Some(SampleState::Failed) => (t.state_failed, theme::ERROR),
+        Some(SampleState::Unsupported) => (t.state_unsupported, theme::MUTED),
+        Some(SampleState::Offline) => (t.state_offline, theme::MUTED),
+        _ => (t.state_waiting, theme::MUTED),
     }
 }
 
@@ -57,33 +58,78 @@ pub fn metric_status(ui: &mut egui::Ui, view: &MonitorView, key: &MetricKey) {
     if reading.effective_state(view.now) == SampleState::Ready {
         return;
     }
+    let t = i18n::t();
     let (status, color) = state_label(view, Some(reading));
     let mut message = status.to_string();
     if let Some(at) = reading.last_success {
         message.push_str(&format!(
-            " · 上次有效数据 {:.0} 秒前",
-            view.now.saturating_duration_since(at).as_secs_f64()
+            " · {} {}",
+            t.last_valid,
+            (t.seconds_ago)(view.now.saturating_duration_since(at).as_secs_f64())
         ));
     }
     if let Some(reason) = &reading.reason {
-        message.push_str(&format!(" · {reason}"));
+        message.push_str(&format!(" · {}", i18n::reason(reason)));
     }
     ui.label(RichText::new(message).size(11.0).color(color));
 }
 
-/// Square pixel dot followed by the reading state; meant for right-to-left rows.
+/// Square pixel dot followed by the reading state; meant for right-to-left rows. Without
+/// room for the text, the dot alone shows the state in its tooltip.
 pub fn status_badge(ui: &mut egui::Ui, view: &MonitorView, reading: Option<&MetricReading>) {
     let (status, color) = state_label(view, reading);
     ui.spacing_mut().item_spacing.x = 4.0;
-    ui.label(RichText::new(status).size(11.0).color(color));
-    pixel_dot(ui, color);
+    let dot = pixel::unit(ui.ctx(), 2.0) * 3.0;
+    if ui.available_width() >= label_width(ui, &[status], 11.0) + 4.0 + dot {
+        ui.label(RichText::new(status).size(11.0).color(color));
+        pixel_dot(ui, color);
+    } else {
+        pixel_dot(ui, color).on_hover_text(status);
+    }
 }
 
-pub fn pixel_dot(ui: &mut egui::Ui, color: Color32) {
+/// Width of the widest label at `size`, for a column of labels that shares one width.
+pub fn label_width(ui: &egui::Ui, labels: &[&str], size: f32) -> f32 {
+    labels
+        .iter()
+        .map(|label| {
+            ui.painter()
+                .layout_no_wrap(label.to_string(), FontId::proportional(size), theme::INK)
+                .size()
+                .x
+        })
+        .fold(0.0, f32::max)
+}
+
+/// Display name of a device: the system's own name, or one from the device kind and the
+/// index in its ID for devices the system leaves unnamed.
+pub fn device_name(device: &DeviceDescriptor) -> String {
+    if !device.name.is_empty() {
+        return device.name.clone();
+    }
+    let t = i18n::t();
+    let index = device
+        .id
+        .rsplit_once(':')
+        .and_then(|(_, index)| index.parse::<usize>().ok())
+        .unwrap_or(0);
+    match device.kind {
+        DeviceKind::System => t.this_pc.into(),
+        DeviceKind::Cpu => t.processor.into(),
+        DeviceKind::Core => (t.logical_core)(index + 1),
+        DeviceKind::Memory => t.physical_memory.into(),
+        DeviceKind::Disk => format!("{} {index}", t.physical_disk),
+        DeviceKind::Gpu => t.graphics_card.into(),
+        DeviceKind::Volume | DeviceKind::Network => device.id.clone(),
+    }
+}
+
+pub fn pixel_dot(ui: &mut egui::Ui, color: Color32) -> egui::Response {
     let size = pixel::unit(ui.ctx(), 2.0) * 3.0;
-    let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(size), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(size), Sense::hover());
     ui.painter()
         .rect_filled(pixel::snap_rect(ui.ctx(), rect), 0.0, color);
+    response
 }
 
 /// Soft-tinted label with an optional pixel icon, used as a card heading.
@@ -414,7 +460,7 @@ pub fn history_chart(
                 .allow_scroll(false)
                 .x_axis_formatter(|mark, _| {
                     if mark.value.abs() < 0.5 {
-                        "现在".into()
+                        i18n::t().now.into()
                     } else {
                         format!("{:.0}s", mark.value)
                     }
@@ -426,9 +472,9 @@ pub fn history_chart(
                         position,
                         ..
                     } => Some(format!(
-                        "{plot_name}  {}\n{:.0} 秒前",
+                        "{plot_name}  {}\n{}",
                         format_value(Some(position.y), unit),
-                        -position.x
+                        (i18n::t().seconds_ago)(-position.x)
                     )),
                     HoverPosition::Elsewhere { .. } => None,
                 });
@@ -466,7 +512,7 @@ pub fn history_chart(
                     .is_none_or(|v| v.iter().all(|p| p.value.is_none()))
             }) {
                 ui.label(
-                    RichText::new("等待有效采样；数据不可用时曲线保留缺口")
+                    RichText::new(i18n::t().chart_waiting)
                         .size(12.0)
                         .color(theme::MUTED),
                 );
@@ -475,19 +521,21 @@ pub fn history_chart(
         .response
 }
 
-/// Icon, muted label and value on one line; long values are truncated with a hover tooltip.
+/// Icon, muted label in a column `label_width` wide, and value on one line; long values
+/// are truncated with a hover tooltip.
 pub fn info_row(
     ui: &mut egui::Ui,
     icon: &pixel::Icon,
     tone: theme::Tone,
     label: &str,
+    label_width: f32,
     value: &str,
 ) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         pixel::icon(ui, icon, 1.5, theme::INK, tone.main);
         ui.add_sized(
-            [60.0, 18.0],
+            [label_width, 18.0],
             egui::Label::new(RichText::new(label).size(12.0).color(theme::MUTED)),
         );
         ui.add(egui::Label::new(RichText::new(value).size(13.0)).truncate());
@@ -495,6 +543,7 @@ pub fn info_row(
 }
 
 pub fn device_details(ui: &mut egui::Ui, view: &MonitorView, device: &str, show_name: bool) {
+    let t = i18n::t();
     if let Some(device) = view.devices.get(device) {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
@@ -502,23 +551,28 @@ pub fn device_details(ui: &mut egui::Ui, view: &MonitorView, device: &str, show_
                 ui.horizontal_wrapped(|ui| {
                     if show_name {
                         ui.label(
-                            RichText::new(&device.name)
+                            RichText::new(device_name(device))
                                 .size(theme::SECTION_TITLE)
                                 .strong(),
                         );
                     }
                     if !device.online {
-                        ui.label(RichText::new("设备已断开").size(12.0).color(theme::MUTED));
+                        ui.label(
+                            RichText::new(t.device_offline)
+                                .size(12.0)
+                                .color(theme::MUTED),
+                        );
                     }
                 });
             }
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 16.0;
-                for (name, value) in &device.details {
+                for (key, value) in &device.details {
+                    let label = (t.detail)(key).unwrap_or(key);
                     let mut text = egui::text::LayoutJob::default();
                     for (part, color) in [
-                        (format!("{name}  "), theme::MUTED),
-                        (value.clone(), theme::INK),
+                        (format!("{label}  "), theme::MUTED),
+                        (i18n::detail_value(key, value).to_owned(), theme::INK),
                     ] {
                         text.append(
                             &part,
@@ -544,26 +598,26 @@ pub fn device_selector(
     selected: &mut String,
     kind: DeviceKind,
 ) -> bool {
+    let t = i18n::t();
     let old = selected.clone();
+    let label = |d: &DeviceDescriptor| {
+        format!(
+            "{}{}",
+            device_name(d),
+            if d.online { "" } else { t.offline_suffix }
+        )
+    };
     let text = view
         .devices
         .get(selected)
-        .map(|d| format!("{}{}", d.name, if d.online { "" } else { "（已断开）" }))
-        .unwrap_or_else(|| "等待发现设备".into());
+        .map(label)
+        .unwrap_or_else(|| t.finding_devices.into());
     egui::ComboBox::from_id_salt(id)
         .width(300.0_f32.min(ui.available_width()))
         .selected_text(text)
         .show_ui(ui, |ui| {
             for device in view.devices.values().filter(|d| d.kind == kind) {
-                ui.selectable_value(
-                    selected,
-                    device.id.clone(),
-                    format!(
-                        "{}{}",
-                        device.name,
-                        if device.online { "" } else { "（已断开）" }
-                    ),
-                );
+                ui.selectable_value(selected, device.id.clone(), label(device));
             }
         });
     old != *selected

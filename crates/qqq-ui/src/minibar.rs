@@ -4,7 +4,7 @@
 //! Dragging the bar moves the window; double-clicking it or pressing the
 //! expand button restores the full window.
 
-use crate::{pixel, theme};
+use crate::{i18n, pixel, theme};
 use eframe::egui::{self, FontId, Pos2, Rect, Sense, Shape, Vec2, pos2, vec2};
 use qqq_domain::SampleState;
 use qqq_engine::{DockEdge, MonitorView};
@@ -31,6 +31,7 @@ fn reading(view: &MonitorView, device: &str, metric: &str) -> (Option<f64>, bool
 }
 
 fn gauges(view: &MonitorView, gpu: &str) -> [Gauge; 4] {
+    let t = i18n::t();
     let gauge = |icon, label, tone, (percent, live)| Gauge {
         icon,
         label,
@@ -47,7 +48,7 @@ fn gauges(view: &MonitorView, gpu: &str) -> [Gauge; 4] {
         ),
         gauge(
             &pixel::ICON_MEMORY,
-            "内存",
+            t.memory_short,
             theme::MEMORY,
             reading(view, "memory", "usage"),
         ),
@@ -59,7 +60,7 @@ fn gauges(view: &MonitorView, gpu: &str) -> [Gauge; 4] {
         ),
         gauge(
             &pixel::ICON_MEMORY,
-            "显存",
+            t.gpu_memory_short,
             theme::VRAM,
             reading(view, gpu, "memory_usage"),
         ),
@@ -87,7 +88,7 @@ pub fn show(ui: &mut egui::Ui, view: &MonitorView, edge: DockEdge, gpu: &str) ->
                 .iter()
                 .map(|g| format!("{} {}", g.label, percent(g.percent)))
                 .collect::<Vec<_>>()
-                .join("，");
+                .join(i18n::t().list_separator);
             response
                 .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, &summary));
 
@@ -101,7 +102,8 @@ pub fn show(ui: &mut egui::Ui, view: &MonitorView, edge: DockEdge, gpu: &str) ->
             ui.painter().extend(shapes);
             restore |= ui
                 .scope_builder(egui::UiBuilder::new().max_rect(button), |ui| {
-                    theme::icon_button(ui, &pixel::ICON_EXPAND, "还原完整窗口", button.size(), true)
+                    let label = i18n::t().restore_window;
+                    theme::icon_button(ui, &pixel::ICON_EXPAND, label, button.size(), true)
                 })
                 .inner
                 .clicked();

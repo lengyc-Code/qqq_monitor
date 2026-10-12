@@ -19,11 +19,11 @@ flowchart TD
 
 | 模块 | 当前职责 | 对外接口 |
 | --- | --- | --- |
-| `qqq-domain` | 设备、指标、单位、读数状态、采集工厂 | `Collector`、`CollectorFactory` 和模型 |
-| `qqq-platform-windows` | sysinfo、IP Helper、PDH、DXGI、卷 GUID、显示器工作区、原生句柄 RAII | `collectors()`、显示器与鼠标状态查询、窗口图标、安全的启动错误提示 |
-| `qqq-engine` | 采样调度、差分、历史、查询投影、配置、命令确认 | `MonitorRuntime`、`MonitorClient`、`MonitorView`、`ConfigStore` |
-| `qqq-ui` | 七个独立页面、边缘吸附与迷你状态栏、图表、设备选择、主题、中文字体、看板娘精灵 | `DesktopApp`、`Page`、截图选项、`Desktop` 显示器查询接口、`viewport()` 初始窗口 |
-| 根包 | 日志、组装、DX12 窗口、程序图标资源、CLI 冒烟和关闭 | Windows EXE |
+| `qqq-domain` | 设备、指标、单位、读数状态与不可用原因、采集工厂 | `Collector`、`CollectorFactory`、`Reason` 和模型 |
+| `qqq-platform-windows` | sysinfo、IP Helper、PDH、DXGI、卷 GUID、显示器工作区、用户显示语言、原生句柄 RAII | `collectors()`、显示器与鼠标状态查询、显示语言列表、窗口图标、安全的启动错误提示 |
+| `qqq-engine` | 采样调度、差分、历史、查询投影、配置（含界面语言）、命令确认与提示 | `MonitorRuntime`、`MonitorClient`、`MonitorView`、`ConfigStore`、`Language`、`Notice`、`SaveStatus` |
+| `qqq-ui` | 七个独立页面、边缘吸附与迷你状态栏、图表、设备选择、主题、三种语言的界面文本、CJK 字体、看板娘精灵 | `DesktopApp`、`Page`、截图选项、`Desktop` 显示器查询接口、`viewport()` 初始窗口、`i18n` 文本表 |
+| 根包 | 日志、组装、系统语言解析、DX12 窗口、程序图标资源、CLI 冒烟和关闭 | Windows EXE |
 
 领域、引擎、GUI 和启动包禁止 `unsafe`。Windows 必要的 FFI 集中在 `native.rs`，说明每个调用的句柄、缓冲区和生命周期条件；调用方只看到安全接口。
 
@@ -43,7 +43,7 @@ qqq_monitor/
 ├── crates/
 │   ├── qqq-domain/src/
 │   │   ├── lib.rs
-│   │   ├── metric.rs                # 指标键、单位、采样和状态
+│   │   ├── metric.rs                # 指标键、单位、采样、状态和原因
 │   │   ├── device.rs                # 身份、类型、在线状态、详情
 │   │   └── collector.rs             # 工厂、周期、批次和错误
 │   ├── qqq-platform-windows/src/
@@ -53,7 +53,7 @@ qqq_monitor/
 │   │   ├── disk_io.rs               # 物理磁盘 PDH 读写
 │   │   ├── gpu.rs                   # 显卡利用率与显存聚合
 │   │   ├── inventory.rs             # 本地卷发现与容量
-│   │   └── native.rs                # IP Helper、PDH、DXGI、卷与显示器 API 和 RAII
+│   │   └── native.rs                # IP Helper、PDH、DXGI、卷、显示器与显示语言 API 和 RAII
 │   ├── qqq-engine/
 │   │   ├── src/
 │   │   │   ├── lib.rs
@@ -61,7 +61,8 @@ qqq_monitor/
 │   │   │   ├── normalize.rs         # 实际时间差、预热与数据验证
 │   │   │   ├── history.rs           # 有界历史和显示投影
 │   │   │   ├── view.rs              # 不可变 GUI 无关视图
-│   │   │   └── config.rs            # 校验、恢复和后台保存
+│   │   │   ├── config.rs            # 界面语言、校验、恢复和后台保存
+│   │   │   └── notice.rs            # 命令与配置提示、设置状态
 │   │   └── tests/runtime_flow.rs    # 可控假采集器的运行时测试
 │   └── qqq-ui/
 │       ├── build.rs                 # 由看板娘插画生成像素精灵
@@ -74,7 +75,12 @@ qqq_monitor/
 │           ├── theme.rs             # 配色、字体、控件和卡片
 │           ├── pixel.rs             # 像素图标、位图字体与精灵
 │           ├── mascot.rs            # 看板娘表情、精灵纹理与角色卡
-│           ├── components.rs        # 格式、图表、状态、设备选择
+│           ├── components.rs        # 格式、图表、状态、设备名称与选择
+│           ├── i18n.rs              # 当前语言、文本表结构与措辞入口
+│           ├── i18n/
+│           │   ├── zh.rs            # 简体中文文本表
+│           │   ├── en.rs            # 英语文本表
+│           │   └── ja.rs            # 日语文本表
 │           └── pages/
 │               ├── mod.rs
 │               ├── overview.rs
@@ -88,7 +94,7 @@ qqq_monitor/
     ├── TECHNICAL_PLAN.md
     ├── ARCHITECTURE.md
     ├── IMPLEMENTATION_PLAN.md
-    └── images/                      # README 截图、标志与看板娘图
+    └── images/                      # 各语言 README 的截图、标志与看板娘图
         └── assets/                  # 看板娘插画 mint-0 至 mint-6
 ```
 
@@ -96,13 +102,13 @@ qqq_monitor/
 
 ## 设备和指标契约
 
-`DeviceDescriptor` 包含会话 ID、可选的跨启动身份 persistent_id、类型、名称、在线状态和详情。主键以身份而非名称构建：`cpu`、`core:索引`、`memory`、`system`、`disk:设备号`、`volume:卷GUID`、`net:LUID`、`gpu:adapter LUID`。物理磁盘设备号与 LUID 用于本次会话；网卡选择保存接口 GUID，启动后重新解析为本次 LUID。
+`DeviceDescriptor` 包含会话 ID、可选的跨启动身份 persistent_id、类型、名称、在线状态和详情。名称取系统提供的名称，如 CPU 型号、网卡别名、显卡描述和卷挂载点；内存、本机、物理磁盘与逻辑核心由系统留空，GUI 按类型和 ID 中的序号以当前语言命名。详情是稳定键与值的列表，键包括 `logical_cores`、`os`、`description`、`interface_guid`、`interface_type`、`link_speed`、`vendor`、`memory_type`、`adapter_luid`、`counter_instance`、`volume_label`、`file_system`、`volume_guid`；枚举值同样使用稳定标记，`interface_type` 为 `physical` 或 `virtual`，`memory_type` 为 `dedicated` 或 `shared`。GUI 负责措辞键名与标记。主键以身份而非名称构建：`cpu`、`core:索引`、`memory`、`system`、`disk:设备号`、`volume:卷GUID`、`net:LUID`、`gpu:adapter LUID`。物理磁盘设备号与 LUID 用于本次会话；网卡选择保存接口 GUID，启动后重新解析为本次 LUID。
 
 `MetricKey` 由设备 ID 和指标名组成，例如 `(cpu, usage)`、`(memory, available)`、`(disk:0, read)`、`(net:LUID, receive)`、`(gpu:LUID, memory_usage)`。GPU 设备提供 `usage`、每类引擎的 `engine:类型`（如 `engine:3d`、`engine:videodecode`）、按显卡类型选取的 `memory_used`、`memory_total`、`memory_usage`，以及 `dedicated_used`、`dedicated_total`、`shared_used`、`shared_total`。引擎类型出现后持续上报，空闲时为 0。`MetricDescriptor` 声明单位；`MetricSample` 额外包含真实单调时间和 `SampleValue`：
 
 - `Gauge(f64)` 是已经归一化的值，包括 CPU 百分比、容量和 PDH 格式化 B/s。
 - `Counter(u64)` 是累计计数；当前用于网络字节，由引擎计算速率。
-- `WarmingUp`、`Unsupported`、`Failed` 保留状态与原因，不能用零代替。
+- `WarmingUp`、`Unsupported(Reason)`、`Failed(Reason)` 保留状态与原因，不能用零代替。`Reason` 是语言中立的枚举，例如显卡缺少性能计数器、卷容量暂不可用、设备断开、采集线程异常，以及带 API 名与状态码的系统调用失败；采集源整体失败的 `CollectorError` 与诊断中的采集源错误同样携带 `Reason`。
 
 引擎检查单位一致、采样时刻不倒退，以及同一个指标键不被两个采集源覆盖。百分比要求 0 至 100；所有 Gauge 要求非负且有限。合法零流量仍为有效数据。
 
@@ -193,7 +199,7 @@ CPU 核心网格使用最新读数，点击核心后才请求其历史。离线�
 
 主线程持有页面、所选设备、历史范围、设置草稿和当前已接受配置。`MonitorView` 提供指标、目录、投影、诊断和保存状态；`MonitorClient` 提供非阻塞取视图、提交命令、消费结果和注入唤醒。
 
-设置采用“应用并保存”：校验后先改变引擎采样周期，再由后台保存。保存失败显示“设置已应用，但未保存”。选择网卡只保存当前已接受配置和接口 GUID，不顺带提交设置页面尚未应用的草稿；正常关闭保存已接受配置与窗口几何信息。
+设置采用“应用并保存”：校验后先改变引擎采样周期，再由后台保存。保存失败显示“设置已应用，但未保存”。命令错误、配置校验与读取提示是语言中立的 `Notice`，设置状态是 `SaveStatus`（已加载、按默认值恢复、保存中、已保存、已应用但未保存），GUI 显示时按当前语言措辞。选择网卡只保存当前已接受配置和接口 GUID，不顺带提交设置页面尚未应用的草稿；正常关闭保存已接受配置与窗口几何信息。
 
 配置按字段恢复类型或范围错误，语法损坏时保留原文件并提示。未经用户主动保存，不自动替换损坏文件。保存使用同目录临时文件、UTF-8、sync_all、关闭句柄、rename 替换；失败不先删除旧配置，只清理本次临时文件。
 
@@ -201,11 +207,21 @@ CPU 核心网格使用最新读数，点击核心后才请求其历史。离线�
 
 `minibar.rs` 只读取最新视图中的 CPU、内存和 GPU 页面所选显卡的读数，所选显卡默认取在线且显存总量最大的 GPU；过期值变暗保留，不可用时显示 `—`。顶部横条绘制数字与分段条，左右竖条按物理像素栅格逐格计算 270° 环形仪表盘，分段点亮。
 
-GUI 复用指标卡片、历史图表、状态和设备选择组件；七个页面在独立文件维护，CPU 核心与 GPU 引擎共用热力格组件。主题、格式和中文字体集中管理，容量、速率和时间显示不改变指标口径。
+GUI 复用指标卡片、历史图表、状态和设备选择组件；七个页面在独立文件维护，CPU 核心与 GPU 引擎共用热力格组件。主题、格式、界面文本和 CJK 字体集中管理，容量、速率和时间显示不改变指标口径。
+
+## 界面语言
+
+界面提供简体中文、英语和日语。`AppConfig.language` 保存语言选择，`None` 表示跟随系统。启动入口通过平台层读取 Windows 首选显示语言列表，`Language::preferred` 取第一个受支持的语言，中文各地区变体归为简体中文，都不受支持时使用英语；配置以 BCP 47 标签保存，`zh-CN`、`en`、`ja`。命令行 `--lang` 与设置页面的选择效果相同。
+
+`qqq-ui` 的 `i18n` 模块保存进程级的当前语言，`i18n::t()` 返回该语言的 `Strings` 文本表。文本表包含固定文本、按各语言语序格式化数值的函数，以及 `Reason`、`Notice`、`SaveStatus`、设备详情键和 GPU 引擎类型的措辞函数；每种语言填写完整的 `Strings`，缺项在编译期报错。页面以 `let t = i18n::t();` 取文本，组件需要的文字同样来自文本表，因此领域、平台和引擎层只提供语言中立的数据。
+
+设置页面点击语言后，草稿与已接受配置同时更新并立即保存，与网卡选择相同。`logic` 发现已接受配置解析出的语言与当前语言不同，就切换当前语言并发送窗口标题命令；初始窗口标题由 `viewport()` 按启动语言设置。启动失败的原生提示框标题与引擎提示也按当前语言显示。
+
+布局按文本实际宽度适配：设置页面的标签列与按钮宽度、设备档案的标签列都按当前语言最宽的文字计算，选项与复选框文字在标签右侧换行；卡片标题旁放不下读数状态文字时只显示状态色点，悬停显示状态。页面顶部的像素英文小标题、数值与单位在各语言中保持一致。三种语言共用 Noto Sans CJK SC，日文汉字以简体中文字形显示。
 
 ## 生命周期和故障隔离
 
-启动入口先初始化日志、读取配置和组装工厂，再启动引擎和 GUI；扫描在后台完成。窗口创建后，平台层按窗口 DPI 从 EXE 内嵌的图标资源加载标题栏与任务栏图标。DX12 启动失败会记录错误并弹原生消息框；冒烟和截图模式只输出错误，便于自动检查。
+启动入口先初始化日志、读取配置和组装工厂，再启动引擎和 GUI；扫描在后台完成。窗口创建后，平台层按窗口 DPI 从 EXE 内嵌的图标资源加载标题栏与任务栏图标。DX12 启动失败会记录错误并弹原生消息框，标题使用当前界面语言；冒烟和截图模式只输出错误，便于自动检查。
 
 每个采集源的创建与采集被 catch_unwind 隔离，失败按 1、2、4、8、16、30 秒退避并重建对象，其他源继续工作。尚未返回的同步 API 不触发并行替代线程；数据由最后成功时刻变为过期。错误恢复不等于可以恢复 FFI 未定义行为，原生缓冲区和句柄仍需独立审查。
 
@@ -219,10 +235,11 @@ GUI 复用指标卡片、历史图表、状态和设备选择组件；七个页�
 2. **新增页面**：在 pages 增加文件与 Page 路由，组合公共组件；在 app 的 query 中声明需要的指标。页面无需依赖 Windows API。
 3. **告警与导出**：告警放在归一化之后，规则包含持续时间、恢复阈值和去抖；导出通过引擎查询有缺口的数据区间，再交后台 I/O。需要长期存储时才增加持久化接口。
 4. **进程管理**：领域层增加 PID 与创建时间组成的实例标识及只读/控制接口；控制操作作为命令而非 Collector，操作前验证实例仍匹配，再按需申请权限。
-5. **新平台**：另增平台 crate 并由启动入口选择；本轮不承诺跨平台可运行。第三方动态插件若有实际需求，再设计稳定 C ABI 或进程间协议，不跨 DLL 暴露 Rust trait object。
+5. **新增语言**：在 `Language` 中加入语言与 BCP 47 标签并扩展 `Language::preferred` 的匹配，在 `i18n/` 添加完整的 `Strings` 文本表，在 `i18n::t()` 与 `native_name()` 中登记。领域、平台和引擎层无需改动。
+6. **新平台**：另增平台 crate 并由启动入口选择；本轮不承诺跨平台可运行。第三方动态插件若有实际需求，再设计稳定 C ABI 或进程间协议，不跨 DLL 暴露 Rust trait object。
 
 ## 验证边界
 
-已有测试覆盖实际时间差、计数回退、Gauge 速率、合法零值、失败恢复、各周期过期、历史时间/点数/预算、投影缺口、慢采集隔离、在途命令上限、关闭保存（含吸附配置）、损坏配置保护、GPU 计数器实例解析与引擎聚合，以及吸附边缘判定与迷你状态栏定位。真实 Windows 采集由 CLI 的 `--smoke-test` 验证，七个页面与三种迷你状态栏由 `--capture` 截图检查。
+已有测试覆盖实际时间差、计数回退、Gauge 速率、合法零值、失败恢复、各周期过期、历史时间/点数/预算、投影缺口、慢采集隔离、在途命令上限、关闭保存（含吸附配置）、损坏配置保护、GPU 计数器实例解析与引擎聚合、吸附边缘判定与迷你状态栏定位、系统语言匹配、界面语言配置保存，各语言文本表的启用与设备详情键覆盖，以及各语言看板娘台词在对话气泡内的宽度。真实 Windows 采集由 CLI 的 `--smoke-test` 验证，七个页面与三种迷你状态栏由 `--capture` 配合 `--lang` 在三种语言下截图检查。
 
 吸附的拖动、贴边、换边、恢复和最大化往返已在单屏 150% 缩放下用真实鼠标输入检查。还需验证通道真实溢出、设备消失后的清理、连续保存合并和写入失败、睡眠恢复、热插拔、键盘交互、多屏缩放与多屏吸附、集成显卡与多显卡读数及长期资源预算。构建成功和截图可读不能代替这些验收。

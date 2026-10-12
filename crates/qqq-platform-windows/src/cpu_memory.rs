@@ -32,16 +32,14 @@ impl Collector for CpuMemory {
             .unwrap_or("CPU");
         batch.devices.push(
             DeviceDescriptor::new("cpu", brand, DeviceKind::Cpu)
-                .detail("逻辑核心", self.system.cpus().len().to_string()),
+                .detail("logical_cores", self.system.cpus().len().to_string()),
         );
-        batch.devices.push(DeviceDescriptor::new(
-            "memory",
-            "物理内存",
-            DeviceKind::Memory,
-        ));
+        batch
+            .devices
+            .push(DeviceDescriptor::new("memory", "", DeviceKind::Memory));
         batch.devices.push(
-            DeviceDescriptor::new("system", "本机", DeviceKind::System).detail(
-                "操作系统",
+            DeviceDescriptor::new("system", "", DeviceKind::System).detail(
+                "os",
                 System::long_os_version().unwrap_or_else(|| "Windows".into()),
             ),
         );
@@ -61,11 +59,9 @@ impl Collector for CpuMemory {
         ));
         for (index, cpu) in self.system.cpus().iter().enumerate() {
             let id = format!("core:{index}");
-            batch.devices.push(DeviceDescriptor::new(
-                &id,
-                format!("逻辑核心 {}", index + 1),
-                DeviceKind::Core,
-            ));
+            batch
+                .devices
+                .push(DeviceDescriptor::new(&id, "", DeviceKind::Core));
             batch.samples.push(MetricSample::new(
                 &id,
                 "usage",
@@ -95,7 +91,7 @@ impl Collector for CpuMemory {
             if total > 0 {
                 SampleValue::Gauge(self.system.used_memory() as f64 / total as f64 * 100.0)
             } else {
-                SampleValue::Failed("物理内存总量不可用".into())
+                SampleValue::Failed(Reason::NoMemoryTotal)
             },
             at,
         ));

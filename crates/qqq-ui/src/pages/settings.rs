@@ -1,7 +1,7 @@
 use super::super::DesktopApp;
-use crate::{components::*, mascot, pixel, theme};
+use crate::{components::*, i18n, mascot, pixel, theme};
 use eframe::egui::{self, RichText, vec2};
-use qqq_engine::{MonitorCommand, MonitorView};
+use qqq_engine::{Language, MonitorCommand, MonitorView};
 
 /// History budget shown in diagnostics; matches the engine's allocation limit.
 const HISTORY_BUDGET: f64 = 16.0 * 1024.0 * 1024.0;
@@ -22,54 +22,97 @@ impl DesktopApp {
 
     /// Returns the card's outer height so a neighbouring card can match it.
     fn preferences(&mut self, ui: &mut egui::Ui) -> f32 {
+        let t = i18n::t();
         theme::card()
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 10.0;
-                tag(ui, Some(&pixel::ICON_GEAR), "监控偏好", theme::ACCENT);
+                tag(ui, Some(&pixel::ICON_GEAR), t.preferences, theme::ACCENT);
+                let width = label_width(
+                    ui,
+                    &[
+                        t.language,
+                        t.sampling_interval,
+                        t.default_range,
+                        t.animations,
+                        t.edge_docking,
+                    ],
+                    14.0,
+                ) + 8.0;
+                // Each row is a label column followed by controls; chips and long texts
+                // wrap beside the label rather than under it.
                 let row_label = |ui: &mut egui::Ui, text: &str| {
-                    ui.add_sized([92.0, 30.0], egui::Label::new(text));
+                    ui.add_sized([width, 30.0], egui::Label::new(text));
                 };
-                ui.horizontal_wrapped(|ui| {
+                ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    row_label(ui, "采样间隔");
-                    for (ms, label) in [(500, "0.5 秒"), (1000, "1 秒"), (2000, "2 秒")] {
-                        if theme::chip(ui, label, self.config.sampling_ms == ms).clicked() {
-                            self.config.sampling_ms = ms;
+                    row_label(ui, t.language);
+                    ui.horizontal_wrapped(|ui| {
+                        let choices = [(None, t.follow_system)]
+                            .into_iter()
+                            .chain(Language::ALL.map(|l| (Some(l), i18n::native_name(l))));
+                        for (language, label) in choices {
+                            if theme::chip(ui, label, self.config.language == language).clicked()
+                                && self.active_config.language != language
+                            {
+                                // Applied and saved at once, like the network adapter choice.
+                                self.config.language = language;
+                                let mut config = self.active_config.clone();
+                                config.language = language;
+                                self.save_config(config, true);
+                            }
                         }
-                    }
-                });
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    row_label(ui, "默认历史范围");
-                    for (secs, label) in [(60, "60 秒"), (300, "5 分钟"), (900, "15 分钟")] {
-                        if theme::chip(ui, label, self.config.history_secs == secs).clicked() {
-                            self.config.history_secs = secs;
-                        }
-                    }
+                    });
                 });
                 ui.horizontal(|ui| {
-                    row_label(ui, "界面动效");
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    row_label(ui, t.sampling_interval);
+                    ui.horizontal_wrapped(|ui| {
+                        for ms in [500, 1000, 2000] {
+                            let label = (t.seconds)(ms as f64 / 1000.0);
+                            if theme::chip(ui, &label, self.config.sampling_ms == ms).clicked() {
+                                self.config.sampling_ms = ms;
+                            }
+                        }
+                    });
+                });
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    row_label(ui, t.default_range);
+                    ui.horizontal_wrapped(|ui| {
+                        for (secs, label) in [
+                            (60, (t.seconds)(60.0)),
+                            (300, (t.minutes)(5)),
+                            (900, (t.minutes)(15)),
+                        ] {
+                            if theme::chip(ui, &label, self.config.history_secs == secs).clicked() {
+                                self.config.history_secs = secs;
+                            }
+                        }
+                    });
+                });
+                ui.horizontal(|ui| {
+                    row_label(ui, t.animations);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                     if ui
-                        .checkbox(&mut self.config.animations, "启用轻量动效与看板娘晃动")
+                        .checkbox(&mut self.config.animations, t.animations_option)
                         .changed()
                     {
                         theme::apply(ui.ctx(), self.config.animations);
                     }
                 });
                 ui.horizontal(|ui| {
-                    row_label(ui, "边缘吸附");
-                    ui.checkbox(
-                        &mut self.config.edge_docking,
-                        "拖到屏幕顶部或左右边缘时收起为迷你状态栏",
-                    );
+                    row_label(ui, t.edge_docking);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    ui.checkbox(&mut self.config.edge_docking, t.edge_docking_option);
                 });
                 ui.horizontal(|ui| {
+                    let width = (label_width(ui, &[t.apply_save], 14.0) + 76.0).max(150.0);
                     if theme::pixel_button(
                         ui,
-                        "应用并保存",
+                        t.apply_save,
                         Some(&pixel::ICON_HEART),
                         true,
-                        vec2(150.0, 38.0),
+                        vec2(width, 38.0),
                     )
                     .clicked()
                     {
@@ -77,7 +120,7 @@ impl DesktopApp {
                         self.save_config(self.config.clone(), true);
                     }
                     ui.label(
-                        RichText::new(&self.view.save_status)
+                        RichText::new(i18n::save_status(&self.view.save_status))
                             .size(12.0)
                             .color(theme::MUTED),
                     );
@@ -89,39 +132,43 @@ impl DesktopApp {
     }
 
     fn diagnostics(&mut self, ui: &mut egui::Ui, view: &MonitorView, min_height: f32) {
+        let t = i18n::t();
         theme::card().min_height(min_height).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
-            tag(ui, Some(&pixel::ICON_CLOCK), "运行状态", theme::NETWORK);
-            ui.label(format!(
-                "接收采样批次 {}  ·  丢失批次 {}",
-                view.diagnostics.received_batches, view.diagnostics.dropped_batches
+            tag(
+                ui,
+                Some(&pixel::ICON_CLOCK),
+                t.runtime_status,
+                theme::NETWORK,
+            );
+            ui.label((t.batches)(
+                view.diagnostics.received_batches,
+                view.diagnostics.dropped_batches,
             ));
-            ui.label(format!(
-                "历史数据占用 {} / 16 MiB",
-                bytes(view.diagnostics.history_bytes as f64)
-            ));
+            ui.label((t.history_usage)(&bytes(
+                view.diagnostics.history_bytes as f64,
+            )));
             let used = view.diagnostics.history_bytes as f64 / HISTORY_BUDGET * 100.0;
             segment_bar(ui, Some(used), theme::level_color(used, theme::BLUE), 16.0);
             if view.diagnostics.collector_errors.is_empty() {
-                ui.label(
-                    RichText::new("所有采集源工作正常")
-                        .size(12.0)
-                        .color(theme::GOOD),
-                );
+                ui.label(RichText::new(t.collectors_ok).size(12.0).color(theme::GOOD));
             }
             for (source, error) in &view.diagnostics.collector_errors {
                 ui.label(
-                    RichText::new(format!("{source}：{error}"))
+                    RichText::new((t.labeled)(source, &i18n::reason(error)))
                         .size(12.0)
                         .color(theme::ERROR),
                 );
             }
             if theme::pixel_button(
                 ui,
-                "立即刷新设备",
+                t.refresh_devices,
                 Some(&pixel::ICON_STAR),
                 false,
-                vec2(160.0, 38.0),
+                vec2(
+                    (label_width(ui, &[t.refresh_devices], 14.0) + 76.0).max(160.0),
+                    38.0,
+                ),
             )
             .clicked()
             {
@@ -132,6 +179,7 @@ impl DesktopApp {
 }
 
 fn about(ui: &mut egui::Ui, view: &MonitorView) {
+    let t = i18n::t();
     theme::card().show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 18.0;
@@ -154,13 +202,11 @@ fn about(ui: &mut egui::Ui, view: &MonitorView) {
                         pixel::Effect::Plain,
                     );
                 });
-                ui.label("看板娘 MINT 酱会根据 CPU 与内存负载切换表情：悠闲、平静、忙碌和超载。");
+                ui.label(t.about_mint);
                 ui.label(
-                    RichText::new(
-                        "关闭界面动效后表情仍会随负载变化，但不再晃动，也不会额外刷新界面。",
-                    )
-                    .size(12.0)
-                    .color(theme::MUTED),
+                    RichText::new(t.about_animations)
+                        .size(12.0)
+                        .color(theme::MUTED),
                 );
             });
         });

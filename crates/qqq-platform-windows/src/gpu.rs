@@ -123,16 +123,16 @@ impl Collector for Gpu {
             let uses_dedicated = adapter.dedicated >= DEDICATED_MINIMUM;
             batch.devices.push(
                 DeviceDescriptor::new(&id, &adapter.name, DeviceKind::Gpu)
-                    .detail("厂商", vendor(adapter.vendor))
+                    .detail("vendor", vendor(adapter.vendor))
                     .detail(
-                        "显存类型",
+                        "memory_type",
                         if uses_dedicated {
-                            "专用显存"
+                            "dedicated"
                         } else {
-                            "共享 GPU 内存"
+                            "shared"
                         },
                     )
-                    .detail("适配器 LUID", format!("0x{:016X}", adapter.luid)),
+                    .detail("adapter_luid", format!("0x{:016X}", adapter.luid)),
             );
             let mut push = |metric: &str, unit, value| {
                 batch
@@ -143,7 +143,7 @@ impl Collector for Gpu {
             let counted = dedicated.contains_key(&adapter.luid);
             let load = engines.get(&adapter.luid);
             let usage = if !counted {
-                SampleValue::Unsupported("系统未提供该显卡的性能计数器".into())
+                SampleValue::Unsupported(Reason::NoGpuCounters)
             } else if warmed {
                 SampleValue::Gauge(
                     load.into_iter()
@@ -171,7 +171,7 @@ impl Collector for Gpu {
 
             let bytes = |used: Option<&f64>| match used {
                 Some(&used) => SampleValue::Gauge(used),
-                None => SampleValue::Unsupported("显存计数器不可用".into()),
+                None => SampleValue::Unsupported(Reason::NoGpuMemoryCounters),
             };
             let (used, total) = if uses_dedicated {
                 (dedicated.get(&adapter.luid), adapter.dedicated)
@@ -186,7 +186,7 @@ impl Collector for Gpu {
                     Some(&used) if total > 0.0 => {
                         SampleValue::Gauge((used / total * 100.0).min(100.0))
                     }
-                    _ => SampleValue::Unsupported("显存计数器不可用".into()),
+                    _ => SampleValue::Unsupported(Reason::NoGpuMemoryCounters),
                 },
             );
             push("memory_used", Unit::Bytes, bytes(used));

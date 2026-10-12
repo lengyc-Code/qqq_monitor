@@ -7,6 +7,7 @@
 //! system move loop and Windows snap layouts keep working: snapping or
 //! maximizing resizes the window, and only a pure move docks it.
 
+use crate::i18n;
 use eframe::egui::{self, Pos2, Rect, Vec2, ViewportCommand, pos2, vec2};
 use qqq_engine::{AppConfig, DockEdge};
 use std::time::Duration;
@@ -360,7 +361,7 @@ fn same_size(a: Rect, b: Rect) -> bool {
 
 /// Initial window: the full window, or the bar when the last session ended docked.
 pub fn viewport(config: &AppConfig) -> egui::ViewportBuilder {
-    let builder = egui::ViewportBuilder::default();
+    let builder = egui::ViewportBuilder::default().with_title(i18n::t().window_title);
     let (builder, position) = match config.dock {
         None => (
             builder

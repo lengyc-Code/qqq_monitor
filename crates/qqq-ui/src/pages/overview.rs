@@ -1,11 +1,12 @@
 use super::super::{DesktopApp, Page};
-use crate::{components::*, pixel, theme};
+use crate::{components::*, i18n, pixel, theme};
 use eframe::egui::{self, vec2};
 use qqq_domain::{MetricKey, Unit};
 use qqq_engine::MonitorView;
 
 impl DesktopApp {
     pub(in crate::app) fn overview(&mut self, ui: &mut egui::Ui, view: &MonitorView) {
+        let t = i18n::t();
         let cpu = MetricKey::new("cpu", "usage");
         let memory = MetricKey::new("memory", "usage");
         let read = MetricKey::new(&self.disk, "read");
@@ -21,21 +22,20 @@ impl DesktopApp {
                     icon: &pixel::ICON_CPU,
                     tone: theme::CPU,
                     series: &[(&cpu, theme::TEAL)],
-                    detail: format!("逻辑核心 {}", logical_cores(view)),
+                    detail: (t.cores_detail)(&logical_cores(view)),
                     template: RATE_TEMPLATE,
                 },
                 Page::Cpu,
             ),
             (
                 MetricCard {
-                    title: "内存",
+                    title: t.memory,
                     icon: &pixel::ICON_MEMORY,
                     tone: theme::MEMORY,
                     series: &[(&memory, theme::PINK)],
-                    detail: format!(
-                        "已用 {} / {}",
-                        format_value(view.value("memory", "used"), Unit::Bytes),
-                        format_value(view.value("memory", "total"), Unit::Bytes)
+                    detail: (t.used_of)(
+                        &format_value(view.value("memory", "used"), Unit::Bytes),
+                        &format_value(view.value("memory", "total"), Unit::Bytes),
                     ),
                     template: RATE_TEMPLATE,
                 },
@@ -43,22 +43,22 @@ impl DesktopApp {
             ),
             (
                 MetricCard {
-                    title: "磁盘读取",
+                    title: t.disk_read,
                     icon: &pixel::ICON_DISK,
                     tone: theme::DISK,
                     series: &[(&read, theme::GOLD), (&write, theme::PINK)],
-                    detail: format!("写入 {}", current(&write, Unit::BytesPerSecond)),
+                    detail: format!("{} {}", t.write, current(&write, Unit::BytesPerSecond)),
                     template: RATE_TEMPLATE,
                 },
                 Page::Disk,
             ),
             (
                 MetricCard {
-                    title: "网络接收",
+                    title: t.network_receive,
                     icon: &pixel::ICON_NETWORK,
                     tone: theme::NETWORK,
                     series: &[(&receive, theme::BLUE), (&send, theme::TEAL)],
-                    detail: format!("发送 {}", current(&send, Unit::BytesPerSecond)),
+                    detail: format!("{} {}", t.send, current(&send, Unit::BytesPerSecond)),
                     template: RATE_TEMPLATE,
                 },
                 Page::Network,
@@ -70,7 +70,7 @@ impl DesktopApp {
                 for (index, (card, page)) in row.iter().enumerate() {
                     if card
                         .show(&mut uis[index], view, true)
-                        .on_hover_text("点击查看详情")
+                        .on_hover_text(t.click_for_details)
                         .clicked()
                     {
                         self.page = *page;
@@ -85,10 +85,10 @@ impl DesktopApp {
                 ui,
                 view,
                 "overview-cpu",
-                "处理器与内存使用趋势",
+                t.cpu_memory_chart,
                 Unit::Percent,
                 self.range,
-                &[(&cpu, "CPU", theme::TEAL), (&memory, "内存", theme::PINK)],
+                &[(&cpu, "CPU", theme::TEAL), (&memory, t.memory, theme::PINK)],
                 170.0,
             )
         };
@@ -121,22 +121,22 @@ impl DesktopApp {
                 &mut uis[0],
                 view,
                 "overview-disk",
-                "磁盘读写",
+                t.disk_io,
                 Unit::BytesPerSecond,
                 self.range,
-                &[(&read, "读取", theme::GOLD), (&write, "写入", theme::PINK)],
+                &[(&read, t.read, theme::GOLD), (&write, t.write, theme::PINK)],
                 110.0,
             );
             history_chart(
                 &mut uis[1],
                 view,
                 "overview-network",
-                "网络收发",
+                t.network_io,
                 Unit::BytesPerSecond,
                 self.range,
                 &[
-                    (&receive, "接收", theme::BLUE),
-                    (&send, "发送", theme::TEAL),
+                    (&receive, t.receive, theme::BLUE),
+                    (&send, t.send, theme::TEAL),
                 ],
                 110.0,
             );
@@ -144,52 +144,60 @@ impl DesktopApp {
     }
 
     fn system_card(&self, ui: &mut egui::Ui, view: &MonitorView, min_height: f32) {
+        let t = i18n::t();
         let name = |id: &str| {
             view.devices
                 .get(id)
-                .map(|d| d.name.clone())
+                .map(device_name)
                 .unwrap_or_else(|| "—".into())
         };
-        theme::card().min_height(min_height).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 3.0;
-            tag(ui, Some(&pixel::ICON_HEART), "设备档案", theme::ACCENT);
-            ui.add_space(4.0);
-            info_row(ui, &pixel::ICON_CPU, theme::CPU, "处理器", &name("cpu"));
-            info_row(
-                ui,
+        let rows = [
+            (&pixel::ICON_CPU, theme::CPU, t.processor, name("cpu")),
+            (
                 &pixel::ICON_STAR,
                 theme::CPU,
-                "逻辑核心",
-                &logical_cores(view),
-            );
-            info_row(
-                ui,
+                t.logical_cores,
+                logical_cores(view),
+            ),
+            (
                 &pixel::ICON_MEMORY,
                 theme::MEMORY,
-                "内存总量",
-                &format_value(view.value("memory", "total"), Unit::Bytes),
-            );
-            info_row(
-                ui,
+                t.total_memory,
+                format_value(view.value("memory", "total"), Unit::Bytes),
+            ),
+            (
                 &pixel::ICON_DISK,
                 theme::DISK,
-                "当前磁盘",
-                &name(&self.disk),
-            );
-            info_row(
-                ui,
+                t.current_disk,
+                name(&self.disk),
+            ),
+            (
                 &pixel::ICON_NETWORK,
                 theme::NETWORK,
-                "当前网卡",
-                &name(&self.network),
-            );
-            info_row(
-                ui,
+                t.current_adapter,
+                name(&self.network),
+            ),
+            (
                 &pixel::ICON_CLOCK,
                 theme::ACCENT,
-                "系统运行",
-                &format_value(view.value("system", "uptime"), Unit::Seconds),
+                t.uptime,
+                format_value(view.value("system", "uptime"), Unit::Seconds),
+            ),
+        ];
+        theme::card().min_height(min_height).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 3.0;
+            tag(
+                ui,
+                Some(&pixel::ICON_HEART),
+                t.device_profile,
+                theme::ACCENT,
             );
+            ui.add_space(4.0);
+            let labels = rows.each_ref().map(|row| row.2);
+            let width = label_width(ui, &labels, 12.0) + 12.0;
+            for (icon, tone, label, value) in &rows {
+                info_row(ui, icon, *tone, label, width, value);
+            }
         });
     }
 }
@@ -197,7 +205,7 @@ impl DesktopApp {
 pub(super) fn logical_cores(view: &MonitorView) -> String {
     view.devices
         .get("cpu")
-        .and_then(|d| d.details.iter().find(|(name, _)| name == "逻辑核心"))
+        .and_then(|d| d.details.iter().find(|(key, _)| key == "logical_cores"))
         .map(|(_, value)| value.clone())
         .unwrap_or_else(|| "—".into())
 }

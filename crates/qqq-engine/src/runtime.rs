@@ -1,5 +1,5 @@
 use crate::{
-    AppConfig, ConfigStore, LoadedConfig, MonitorView,
+    AppConfig, ConfigStore, LoadedConfig, MonitorView, Notice, SaveStatus,
     history::{History, HistoryPoint},
     normalize::Normalizer,
 };
@@ -40,7 +40,7 @@ pub enum CommandOutcome {
 #[derive(Debug)]
 pub struct CommandResult {
     pub id: u64,
-    pub result: Result<CommandOutcome, String>,
+    pub result: Result<CommandOutcome, Notice>,
 }
 struct Request {
     id: u64,
@@ -54,7 +54,7 @@ struct SaveJob {
 struct CollectorEvent {
     source: &'static str,
     period: Duration,
-    result: Result<SampleBatch, String>,
+    result: Result<SampleBatch, Reason>,
     dropped: u64,
 }
 
@@ -105,19 +105,22 @@ impl MonitorClient {
     pub fn set_ui_wake(&self, wake: UiWake) {
         *self.control.wake.lock().unwrap() = Some(wake);
     }
-    pub fn try_command(&self, command: MonitorCommand) -> Result<u64, String> {
+    pub fn try_command(&self, command: MonitorCommand) -> Result<u64, Notice> {
         if self.control.stop.load(Ordering::Acquire) {
-            return Err("监控服务已停止".into());
+            return Err(Notice::Stopped);
         }
         self.in_flight
             .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 (n < 32).then_some(n + 1)
             })
-            .map_err(|_| "操作繁忙，请稍后重试".to_string())?;
+            .map_err(|_| Notice::Busy)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        if self.requests.try_send(Request { id, command }).is_err() {
+        if let Err(error) = self.requests.try_send(Request { id, command }) {
             self.in_flight.fetch_sub(1, Ordering::Release);
-            return Err("操作繁忙或服务已停止".into());
+            return Err(match error {
+                TrySendError::Full(_) => Notice::Busy,
+                TrySendError::Disconnected(_) => Notice::Stopped,
+            });
         }
         Ok(id)
     }
@@ -139,7 +142,7 @@ impl MonitorRuntime {
     pub fn start(
         factories: Vec<Arc<dyn CollectorFactory>>,
         loaded: LoadedConfig,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, Notice> {
         loaded.config.validate()?;
         let (requests_tx, requests_rx) = bounded(32);
         let (results_tx, results_rx) = bounded(32);
@@ -175,7 +178,7 @@ impl MonitorRuntime {
             let handle = thread::Builder::new()
                 .name(factory.descriptor().id.into())
                 .spawn(move || collector_worker(factory, tx, signal))
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| Notice::System(e.to_string()))?;
             runtime.threads.push(handle);
         }
         let pending = Arc::new(Mutex::new(None));
@@ -186,7 +189,7 @@ impl MonitorRuntime {
             thread::Builder::new()
                 .name("config-writer".into())
                 .spawn(move || config_worker(loaded.store, writer_pending, save_tx, writer_control))
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| Notice::System(e.to_string()))?,
         );
         let engine_client = runtime.client.clone();
         control.engine_done.store(false, Ordering::Release);
@@ -207,7 +210,7 @@ impl MonitorRuntime {
             Ok(handle) => runtime.threads.push(handle),
             Err(error) => {
                 control.engine_done.store(true, Ordering::Release);
-                return Err(error.to_string());
+                return Err(Notice::System(error.to_string()));
             }
         }
         Ok(runtime)
@@ -287,10 +290,10 @@ fn collector_worker(
                 .collect(&CollectContext { period })
         }));
         let outcome = match result {
-            Ok(result) => result.map_err(|e| e.to_string()),
+            Ok(result) => result.map_err(|e| e.0),
             Err(_) => {
                 collector = None;
-                Err("采集线程发生异常，正在重建采集器".into())
+                Err(Reason::Panicked)
             }
         };
         let failed = outcome.is_err();
@@ -439,7 +442,7 @@ impl EngineState {
                         self.view
                             .diagnostics
                             .collector_errors
-                            .insert(event.source.into(), "指标键与其他采集器冲突".into());
+                            .insert(event.source.into(), Reason::KeyConflict);
                         continue;
                     }
                     self.metric_sources.insert(key.clone(), event.source);
@@ -487,7 +490,7 @@ impl EngineState {
                         && reading.state != SampleState::Offline
                     {
                         reading.state = SampleState::Offline;
-                        reading.reason = Some("设备已断开".into());
+                        reading.reason = Some(Reason::Disconnected);
                         self.normalizer.reset(key);
                         self.history.append(
                             key.clone(),
@@ -546,11 +549,11 @@ fn engine_worker(
     pending: Arc<Mutex<Option<SaveJob>>>,
     saves: Receiver<CommandResult>,
     config: AppConfig,
-    warning: Option<String>,
+    warning: Option<Notice>,
 ) {
     let range = config.history_secs;
     let mut view = MonitorView::empty(config);
-    view.save_status = warning.unwrap_or_else(|| "设置已加载".into());
+    view.save_status = warning.map_or(SaveStatus::Loaded, SaveStatus::Recovered);
     let mut state = EngineState {
         view,
         history: History::default(),
@@ -575,8 +578,8 @@ fn engine_worker(
         for saved in saves.try_iter() {
             if state.latest_save == Some(saved.id) {
                 state.view.save_status = match &saved.result {
-                    Ok(_) => "设置已保存".into(),
-                    Err(e) => format!("设置已应用，但未保存：{e}"),
+                    Ok(_) => SaveStatus::Saved,
+                    Err(e) => SaveStatus::Unsaved(e.clone()),
                 };
             }
             let _ = results.try_send(saved);
@@ -586,7 +589,7 @@ fn engine_worker(
             let result = match request.command {
                 MonitorCommand::SetQuery { keys, range_secs } => {
                     if keys.len() > 16 || ![60, 300, 900].contains(&range_secs) {
-                        Err("历史查询范围无效".into())
+                        Err(Notice::InvalidQuery)
                     } else {
                         state.query = keys;
                         state.range = range_secs;
@@ -608,7 +611,7 @@ fn engine_worker(
                         client.control.sleep.notify_all();
                         state.view.config = config.clone();
                         state.latest_save = Some(request.id);
-                        state.view.save_status = "设置已应用，正在保存…".into();
+                        state.view.save_status = SaveStatus::Saving;
                         let mut slot = pending.lock().unwrap();
                         let mut job = SaveJob {
                             id: request.id,

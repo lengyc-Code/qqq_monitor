@@ -24,7 +24,7 @@ impl Normalizer {
             SampleValue::Gauge(_) => {
                 self.reset(&reading.descriptor.key);
                 reading.state = SampleState::Failed;
-                reading.reason = Some("采集值超出有效范围".into());
+                reading.reason = Some(Reason::OutOfRange);
                 None
             }
             SampleValue::Counter(total) if reading.descriptor.unit == Unit::BytesPerSecond => {
@@ -49,7 +49,7 @@ impl Normalizer {
             SampleValue::Counter(_) => {
                 self.reset(&reading.descriptor.key);
                 reading.state = SampleState::Failed;
-                reading.reason = Some("计数器单位无效".into());
+                reading.reason = Some(Reason::CounterUnit);
                 None
             }
             SampleValue::WarmingUp => {
@@ -142,7 +142,7 @@ mod tests {
         normalizer.apply(
             &mut r,
             sample(
-                SampleValue::Failed("断连".into()),
+                SampleValue::Failed(Reason::Disconnected),
                 at + Duration::from_millis(4200),
                 Unit::BytesPerSecond,
             ),

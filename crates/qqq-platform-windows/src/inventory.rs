@@ -18,9 +18,9 @@ impl Collector for Inventory {
             let at = Instant::now();
             batch.devices.push(
                 DeviceDescriptor::new(&id, &mount, DeviceKind::Volume)
-                    .detail("卷标", disk.name().to_string_lossy())
-                    .detail("文件系统", disk.file_system().to_string_lossy())
-                    .detail("卷 GUID", guid),
+                    .detail("volume_label", disk.name().to_string_lossy())
+                    .detail("file_system", disk.file_system().to_string_lossy())
+                    .detail("volume_guid", guid),
             );
             let total = disk.total_space();
             let free = disk.available_space();
@@ -40,7 +40,7 @@ impl Collector for Inventory {
                 let value = if success && total > 0 {
                     SampleValue::Gauge(value)
                 } else {
-                    SampleValue::Failed("卷容量暂时不可用".into())
+                    SampleValue::Failed(Reason::VolumeUnavailable)
                 };
                 batch
                     .samples

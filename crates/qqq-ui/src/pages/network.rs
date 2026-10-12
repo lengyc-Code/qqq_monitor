@@ -1,18 +1,19 @@
 use super::super::DesktopApp;
-use crate::{components::*, pixel, theme};
+use crate::{components::*, i18n, pixel, theme};
 use eframe::egui::{self, RichText};
 use qqq_domain::{DeviceKind, MetricKey, Unit};
 use qqq_engine::MonitorView;
 
 impl DesktopApp {
     pub(in crate::app) fn network(&mut self, ui: &mut egui::Ui, view: &MonitorView) {
+        let t = i18n::t();
         if device_picker(
             ui,
             view,
             "network-selector",
             &mut self.network,
             DeviceKind::Network,
-            (&pixel::ICON_NETWORK, "网卡", theme::NETWORK),
+            (&pixel::ICON_NETWORK, t.adapter, theme::NETWORK),
         ) {
             self.config.selected_network = view
                 .devices
@@ -29,20 +30,20 @@ impl DesktopApp {
         };
         ui.columns(2, |uis| {
             MetricCard {
-                title: "接收",
+                title: t.receive,
                 icon: &pixel::ICON_NETWORK,
                 tone: theme::NETWORK,
                 series: &[(&receive, theme::BLUE)],
-                detail: format!("本次会话已接收 {}", session(&receive)),
+                detail: (t.session_received)(&session(&receive)),
                 template: RATE_TEMPLATE,
             }
             .show(&mut uis[0], view, false);
             MetricCard {
-                title: "发送",
+                title: t.send,
                 icon: &pixel::ICON_NETWORK,
                 tone: theme::CPU,
                 series: &[(&send, theme::TEAL)],
-                detail: format!("本次会话已发送 {}", session(&send)),
+                detail: (t.session_sent)(&session(&send)),
                 template: RATE_TEMPLATE,
             }
             .show(&mut uis[1], view, false);
@@ -51,21 +52,15 @@ impl DesktopApp {
             ui,
             view,
             "network-history",
-            "网络收发趋势",
+            t.network_chart,
             Unit::BytesPerSecond,
             self.range,
             &[
-                (&receive, "接收", theme::BLUE),
-                (&send, "发送", theme::TEAL),
+                (&receive, t.receive, theme::BLUE),
+                (&send, t.send, theme::TEAL),
             ],
             200.0,
         );
-        ui.label(
-            RichText::new(
-                "只统计选中的单个接口，避免物理网卡与 VPN 流量重复相加；会话流量为本次应用观测到的有效计数差。",
-            )
-            .size(12.0)
-            .color(theme::MUTED),
-        );
+        ui.label(RichText::new(t.network_note).size(12.0).color(theme::MUTED));
     }
 }

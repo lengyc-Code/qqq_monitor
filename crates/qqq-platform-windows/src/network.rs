@@ -10,17 +10,13 @@ impl Collector for Network {
             let id = format!("net:{}", row.luid);
             let mut device = DeviceDescriptor::new(&id, row.name, DeviceKind::Network)
                 .persistent_id(&row.guid)
-                .detail("描述", row.description)
-                .detail("接口 GUID", row.guid)
+                .detail("description", row.description)
+                .detail("interface_guid", row.guid)
                 .detail(
-                    "接口类型",
-                    if row.physical {
-                        "物理网卡"
-                    } else {
-                        "虚拟或软件接口"
-                    },
+                    "interface_type",
+                    if row.physical { "physical" } else { "virtual" },
                 )
-                .detail("链路速率", format!("{} Mbps", row.link_speed / 1_000_000));
+                .detail("link_speed", format!("{} Mbps", row.link_speed / 1_000_000));
             device.online = row.connected;
             batch.devices.push(device);
             for (metric, value) in [("receive", row.received), ("send", row.sent)] {

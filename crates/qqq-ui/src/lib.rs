@@ -3,6 +3,7 @@
 mod app;
 mod components;
 mod dock;
+pub mod i18n;
 mod mascot;
 mod minibar;
 mod pixel;

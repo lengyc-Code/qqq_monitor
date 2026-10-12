@@ -1,4 +1,4 @@
-use crate::{AppConfig, history::HistoryPoint};
+use crate::{AppConfig, SaveStatus, history::HistoryPoint};
 use qqq_domain::*;
 use std::{collections::BTreeMap, time::Instant};
 
@@ -7,7 +7,7 @@ pub struct Diagnostics {
     pub dropped_batches: u64,
     pub received_batches: u64,
     pub history_bytes: usize,
-    pub collector_errors: BTreeMap<String, String>,
+    pub collector_errors: BTreeMap<String, Reason>,
 }
 
 #[derive(Clone, Debug)]
@@ -19,7 +19,7 @@ pub struct MonitorView {
     pub metrics: BTreeMap<MetricKey, MetricReading>,
     pub history: BTreeMap<MetricKey, Vec<HistoryPoint>>,
     pub config: AppConfig,
-    pub save_status: String,
+    pub save_status: SaveStatus,
     pub diagnostics: Diagnostics,
 }
 
@@ -33,7 +33,7 @@ impl MonitorView {
             metrics: BTreeMap::new(),
             history: BTreeMap::new(),
             config,
-            save_status: String::new(),
+            save_status: SaveStatus::Loaded,
             diagnostics: Diagnostics::default(),
         }
     }

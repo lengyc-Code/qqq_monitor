@@ -3,7 +3,7 @@
 //! speech bubble summarise the current CPU and memory load, so the sidebar doubles as a
 //! health indicator.
 
-use crate::{pixel, theme};
+use crate::{i18n, pixel, theme};
 use eframe::egui::{self, Color32, FontId, Rect, Shape, Vec2, pos2, vec2};
 use qqq_domain::SampleState;
 use qqq_engine::MonitorView;
@@ -79,41 +79,27 @@ fn texture(ctx: &egui::Context, pose: Pose, mood: Mood) -> egui::TextureHandle {
 
 /// Mood and speech from the live readings. Missing values never count as load.
 fn assess(view: &MonitorView) -> (Mood, String) {
+    let t = i18n::t();
     let ready = |device: &str| {
         view.reading(device, "usage")
             .filter(|r| r.effective_state(view.now) == SampleState::Ready)
             .and_then(|r| r.value)
     };
     let (Some(cpu), Some(memory)) = (ready("cpu"), ready("memory")) else {
-        return (Mood::Waiting, "正在唤醒传感器…\n请稍等一下～".into());
+        return (Mood::Waiting, t.mint_waiting.into());
     };
     if !view.diagnostics.collector_errors.is_empty() {
-        (Mood::Trouble, "有些数据采集不到…\n去「设置」看看吧".into())
+        (Mood::Trouble, t.mint_trouble.into())
     } else if cpu >= 85.0 {
-        (
-            Mood::Overloaded,
-            format!("CPU {cpu:.0}%！\n忙得要冒烟啦 >_<"),
-        )
+        (Mood::Overloaded, (t.mint_cpu_hot)(cpu))
     } else if memory >= 90.0 {
-        (
-            Mood::Overloaded,
-            format!("内存用了 {memory:.0}%\n快要装不下啦！"),
-        )
+        (Mood::Overloaded, (t.mint_memory_full)(memory))
     } else if cpu >= 50.0 || memory >= 75.0 {
-        (
-            Mood::Busy,
-            format!("有点忙哦～\nCPU {cpu:.0}%  内存 {memory:.0}%"),
-        )
+        (Mood::Busy, (t.mint_busy)(cpu, memory))
     } else if cpu < 15.0 {
-        (
-            Mood::Relaxed,
-            format!("好悠闲～CPU 才 {cpu:.0}%\n一起喝杯茶吧"),
-        )
+        (Mood::Relaxed, (t.mint_relaxed)(cpu))
     } else {
-        (
-            Mood::Calm,
-            format!("一切正常！\nCPU {cpu:.0}%  内存 {memory:.0}%"),
-        )
+        (Mood::Calm, (t.mint_calm)(cpu, memory))
     }
 }
 
@@ -212,7 +198,7 @@ pub fn show(ui: &mut egui::Ui, view: &MonitorView, animate: bool) {
     );
     let response = ui.allocate_rect(rect, egui::Sense::hover());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &speech));
-    response.on_hover_text("看板娘 MINT 酱会根据 CPU 与内存负载切换表情");
+    response.on_hover_text(i18n::t().mint_hover);
 
     // Bob once per second, driven by a scheduled repaint instead of a continuous
     // frame loop.
@@ -274,7 +260,7 @@ pub fn show(ui: &mut egui::Ui, view: &MonitorView, animate: bool) {
     painter.text(
         pos2(rect.center().x, rect.bottom()),
         egui::Align2::CENTER_BOTTOM,
-        "看板娘 · MINT 酱",
+        i18n::t().mint_name,
         FontId::proportional(11.0),
         theme::NIGHT_MUTED,
     );
@@ -289,4 +275,50 @@ pub fn portrait(ui: &mut egui::Ui, view: &MonitorView, logical_unit: f32) -> egu
     );
     paint_card(ui.painter(), rect, unit, Pose::Figure, assess(view).0, 0.0);
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qqq_engine::Language;
+
+    /// Width of the speech text: the 172-point sidebar less its 30 points of margins, less
+    /// the bubble's 2-point border and 8-point padding on both sides.
+    const TEXT_WIDTH: f32 = 172.0 - 30.0 - 2.0 * (2.0 + 8.0);
+
+    #[test]
+    fn every_speech_line_fits_the_bubble() {
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        // Fonts load on the first pass; its texture upload has no renderer to go to.
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
+        let mut overflowing = Vec::new();
+        for language in Language::ALL {
+            let t = i18n::strings(language);
+            // The widest readings each mood can show, given the thresholds in `assess`.
+            let speeches = [
+                t.mint_waiting.to_owned(),
+                t.mint_trouble.to_owned(),
+                (t.mint_cpu_hot)(100.0),
+                (t.mint_memory_full)(100.0),
+                (t.mint_busy)(84.0, 89.0),
+                (t.mint_relaxed)(14.0),
+                (t.mint_calm)(49.0, 74.0),
+            ];
+            for line in speeches.iter().flat_map(|speech| speech.lines()) {
+                let width = ctx.fonts_mut(|fonts| {
+                    fonts
+                        .layout_no_wrap(line.to_owned(), FontId::proportional(12.0), theme::INK)
+                        .size()
+                        .x
+                });
+                if width > TEXT_WIDTH {
+                    overflowing.push(format!("{language:?} {line:?}: {width}"));
+                }
+            }
+        }
+        assert!(overflowing.is_empty(), "{overflowing:#?}");
+    }
 }

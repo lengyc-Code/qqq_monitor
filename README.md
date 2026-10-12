@@ -1,190 +1,203 @@
 <p align="center">
-  <img src="docs/images/logo.png" alt="QQQ Monitor 标志：捧着监控面板的 MINT 酱" width="260">
+  <img src="docs/images/logo.png" alt="QQQ Monitor logo: MINT holding a monitoring panel" width="260">
 </p>
 
 <h1 align="center">QQQ Monitor</h1>
 
 <p align="center">
-  二次元像素风格的 Windows 性能监控器，由看板娘「MINT 酱」陪你看着电脑的状态。<br>
+  A pixel-art, anime-style performance monitor for Windows, with MINT the mascot keeping an eye on your PC.<br>
   Rust 2024 · egui / wgpu (DX12) · Windows x64 · MIT
 </p>
 
-QQQ Monitor 是一个用 Rust 编写的 Windows 多功能任务管理器。当前版本 0.1.0 聚焦实时性能监控：从 Windows 原生接口采集 CPU、内存、GPU、磁盘与网络数据，以原生 GUI 呈现历史曲线与设备详情，并可吸附到屏幕边缘变成常驻置顶的迷你状态栏。进程管理、告警与托盘功能列入后续计划。
+<p align="center">
+  <b>English</b> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a>
+</p>
 
-## 主界面
+QQQ Monitor is a multi-purpose task manager for Windows, written in Rust. Version 0.1.0 focuses on real-time performance monitoring: it collects CPU, memory, GPU, disk and network data from native Windows APIs, shows history charts and device details in a native GUI, and can dock to a screen edge as an always-on-top mini bar. Process management, alerts and a tray icon are planned for later versions.
 
-![QQQ Monitor 总览页面](docs/images/overview.png)
+## Main window
 
-左侧为导航与看板娘，右侧为当前页面，底部状态栏显示监控状态、采样间隔、会话时长以及三个迷你状态栏按钮。
+![QQQ Monitor overview page](docs/images/overview.en.png)
 
-## 功能
+Navigation and the mascot sit on the left and the current page on the right. The status bar at the bottom shows the monitor state, the sampling interval, the session length and three mini bar buttons.
 
-### 性能监控
+## Features
 
-| 页面 | 内容 |
+### Performance monitoring
+
+| Page | Contents |
 | --- | --- |
-| 总览 | CPU、内存、磁盘读取、网络接收四张实时卡片与像素迷你图；处理器与内存趋势、磁盘读写、网络收发三组历史曲线；设备档案（处理器型号、逻辑核心数、内存总量、当前磁盘与网卡、系统运行时长） |
-| CPU | 总使用率与历史曲线、最忙核心、逻辑核心热力网格；点击核心查看其历史 |
-| 内存 | 物理内存使用率、已用与可用容量、使用趋势 |
-| GPU | 按最忙引擎计算的 GPU 使用率（与任务管理器口径一致）、各类引擎占用（3D、复制、视频编解码、计算等）、专用显存与共享 GPU 内存；可切换显卡，点击引擎查看其历史 |
-| 磁盘 | 物理磁盘读写速率与历史；全部本地卷的卷标、文件系统、可用与总容量 |
-| 网络 | 选中网卡的接收与发送速率、历史曲线、本次会话累计流量 |
-| 设置 | 采样间隔、默认历史范围、界面动效、边缘吸附开关；运行状态、采集源诊断、历史内存占用与手动刷新设备 |
+| Overview | Live cards with pixel mini charts for CPU, memory, disk read and network receive; history charts for CPU and memory, disk read and write, and network traffic; a device profile with the processor model, logical cores, total memory, current disk and adapter, and system uptime |
+| CPU | Total usage and its history, the busiest core and a heat grid of logical cores; click a core to see its history |
+| Memory | Physical memory usage, used and available capacity, and usage over time |
+| GPU | GPU usage from the busiest engine (matching Task Manager), the load of each engine type (3D, copy, video encode and decode, compute and more), dedicated and shared GPU memory; switch between graphics cards and click an engine to see its history |
+| Disk | Physical disk read and write rates with history; label, file system, free and total space of every local volume |
+| Network | Receive and send rates of the selected adapter, a history chart and the traffic of this session |
+| Settings | Language, sampling interval, default history range, animations and edge docking; runtime status, collector diagnostics, history memory and a manual device refresh |
 
-指标口径：
+Metric definitions:
 
-- 磁盘 I/O 按物理磁盘统计，卷容量按本地卷单独展示。
-- 网络统计选中的单个接口，物理网卡与 VPN 等虚拟接口的流量分别计算；会话流量为本次运行观测到的有效计数差。
-- 速率单位为 B/s、KiB/s、MiB/s，容量单位为 MiB、GiB。
-- 每项读数带有状态（预热、实时、过期、不支持、失败、离线），过期数据会标注数据年龄，采集中断在图表上显示为缺口。
+- Disk I/O is counted per physical disk; capacity is shown per local volume.
+- Network traffic is counted for the selected interface only, so physical adapters and virtual interfaces such as VPNs are measured separately; session traffic is the valid counter growth observed during this run.
+- Rates use B/s, KiB/s and MiB/s; capacities use MiB and GiB.
+- Every reading carries a state (warming up, live, stale, unsupported, failed, disconnected). Stale data shows its age, and collection outages appear as gaps in the charts.
 
-### 历史曲线
+### History charts
 
-引擎为每个指标保留最多 15 分钟历史，页面右上角可切换 60 秒、5 分钟、15 分钟视图。历史总量限制在 16 MiB 以内；图表每条曲线最多投影 400 点，降采样时保留峰谷。
+The engine keeps up to 15 minutes of history for every metric, and the buttons at the top right switch between 60-second, 5-minute and 15-minute views. All history stays within 16 MiB; each chart line projects at most 400 points and keeps peaks and valleys when downsampling.
 
-### 边缘吸附与迷你状态栏
+### Edge docking and the mini bar
 
-把窗口拖到屏幕顶部或左右边缘后松开，窗口会收起为置顶的迷你状态栏，持续显示 CPU、内存、GPU 和显存使用率：
+Drag the window to the top, left or right screen edge and release it: the window collapses into an always-on-top mini bar that keeps showing CPU, memory, GPU and GPU memory usage.
 
 <p align="center">
-  <img src="docs/images/dock-top.png" alt="顶部迷你状态栏"><br>
-  <sub>顶部横条：数值下方带分段条</sub>
+  <img src="docs/images/dock-top.en.png" alt="Mini bar on the top edge"><br>
+  <sub>Top bar: values above segmented level strips</sub>
 </p>
 
 <p align="center">
-  <img src="docs/images/dock-right.png" alt="侧边迷你状态栏"><br>
-  <sub>左右竖条：像素环形仪表盘</sub>
+  <img src="docs/images/dock-right.en.png" alt="Mini bar on a side edge"><br>
+  <sub>Side bar: pixel ring gauges</sub>
 </p>
 
-- GPU 与显存跟随 GPU 页面所选显卡，默认选显存最大的显卡。
-- 拖动迷你状态栏可沿边缘移动或换到另一条边缘；拖离边缘时在落点恢复完整窗口，双击或点击展开按钮则按吸附前的位置与尺寸恢复。
-- 主窗口底部状态栏的三个按钮可直接吸附到顶部、左侧或右侧。
-- Windows 自带的贴靠与最大化手势保持系统行为。
-- 关闭时处于吸附状态，下次启动直接显示迷你状态栏。
+- GPU and GPU memory follow the card selected on the GPU page, which defaults to the card with the most memory.
+- Drag the mini bar along its edge or onto another edge. Dropping it away from every edge restores the full window at the drop point; double-clicking the bar or pressing its expand button restores the window's previous position and size.
+- The three buttons in the status bar of the main window dock it to the top, left or right edge directly.
+- Windows snap and maximize gestures keep their system behavior.
+- When the app closes while docked, it starts as the mini bar next time.
 
-### 看板娘 MINT 酱
+### MINT, the mascot
 
-MINT 酱是一位青色长发、粉色挑染、白绒猫耳的少女，发箍上趴着黑猫玩偶，穿白色短披肩与黑色裙装，领口系着金色铃铛，界面配色也取自她的形象。她常驻侧栏底部，根据实时 CPU 与内存负载切换表情和台词，侧栏因此兼作系统健康指示器：
+MINT is a girl with long teal hair, a pink streak and fluffy white cat ears. A black cat plush rests on her headband, she wears a white capelet and a black dress, and a golden bell hangs at her collar; the interface colors come from her look. She lives at the bottom of the sidebar and changes her expression and lines with the live CPU and memory load, so the sidebar doubles as a health indicator:
 
 <p align="center">
-  <img src="docs/images/mascot-moods.png" alt="MINT 酱的六种表情">
+  <img src="docs/images/mascot-moods.png" alt="MINT's six expressions">
 </p>
 
-| 位置 | 表情 | 素材 | 触发条件 |
+| Position | Mood | Asset | Trigger |
 | --- | --- | --- | --- |
-| 上排左 | 悠闲 | `mint-1` | CPU 低于 15% |
-| 上排中 | 平静 | `mint-4` | 负载正常 |
-| 上排右 | 忙碌 | `mint-3` | CPU 达到 50% 或内存达到 75% |
-| 下排左 | 超载 | `mint-5` | CPU 达到 85% 或内存达到 90% |
-| 下排中 | 采集异常 | `mint-2` | 有采集源报告错误 |
-| 下排右 | 等待 | `mint-6` | 启动后等待首批 CPU 与内存读数 |
+| Top left | Relaxed | `mint-1` | CPU below 15% |
+| Top middle | Calm | `mint-4` | Normal load |
+| Top right | Busy | `mint-3` | CPU at 50% or memory at 75% |
+| Bottom left | Overloaded | `mint-5` | CPU at 85% or memory at 90% |
+| Bottom middle | Trouble | `mint-2` | A collector reports an error |
+| Bottom right | Waiting | `mint-6` | Waiting for the first CPU and memory readings after start |
 
-侧栏显示半身像，设置页面显示全身像。两者都由构建脚本 `crates/qqq-ui/build.rs` 从 [`docs/images/assets`](docs/images/assets) 中的 `mint-1` 至 `mint-6` 插画生成：与图片边缘相连的白色背景变为透明，每 10 × 10 个源像素合成一个精灵像素；绘制时每个精灵像素对齐整数个物理像素，边缘保持清晰。替换插画后重新构建即可更新看板娘。`mint-0` 是项目标志。
+The sidebar shows her bust and the Settings page her full figure. The build script `crates/qqq-ui/build.rs` generates both from the illustrations `mint-1` to `mint-6` in [`docs/images/assets`](docs/images/assets): the white background connected to the image border becomes transparent, and every 10 × 10 block of source pixels becomes one sprite pixel. Each sprite pixel is drawn on a whole number of physical pixels, so the edges stay crisp. Replace the illustrations and rebuild to update the mascot. `mint-0` is the project logo.
 
-开启界面动效时，MINT 酱每秒轻轻晃动；动效由定时重绘驱动，空闲时保持低刷新。
+With animations on, MINT bobs gently once a second. The animation runs on scheduled repaints, so the app redraws rarely while idle.
 
-### 程序图标
+### Application icon
 
 <p align="center">
-  <img src="docs/images/icon.png" alt="QQQ Monitor 程序图标">
+  <img src="docs/images/icon.png" alt="QQQ Monitor application icon">
 </p>
 
-程序图标是一台长着 MINT 酱猫耳的像素显示器：屏幕上跳动着粉色脉冲，两颊带腮红，下方挂着她的金色铃铛。图标以多尺寸 ICO 嵌入 EXE，资源管理器、标题栏和任务栏共用；16、24、32 像素三版分别手绘，在常见缩放比例下保持像素清晰。
+The application icon is a pixel monitor with MINT's cat ears: a pink pulse runs across the screen, the cheeks blush and her golden bell hangs below. A multi-size ICO embedded in the EXE serves File Explorer, the title bar and the taskbar; the 16, 24 and 32 pixel versions are drawn by hand so they stay crisp at common scaling factors.
 
-### 配置
+### Interface language
 
-设置页面采用“应用并保存”：采样间隔（0.5、1、2 秒）、默认历史范围、界面动效与边缘吸附立即生效，并由后台线程写入 TOML 配置。网卡选择、窗口位置与尺寸、吸附边缘和迷你状态栏位置在关闭时一并保存。
+The interface is available in English, 简体中文 (Simplified Chinese) and 日本語 (Japanese). By default it follows the system: at startup it picks the first supported language from the Windows display language preferences, uses Simplified Chinese for every Chinese variant, and falls back to English. The Language row on the Settings page offers System default or a specific language; a click switches the whole interface and the window title at once and saves the choice.
 
-| 文件 | 位置 |
+Pages, cards, charts, status and error messages, device names and details, MINT's lines and the startup failure dialog all follow the interface language; the pixel-font captions at the top of each page, numbers and units look the same in every language. All three languages use the embedded Noto Sans CJK SC font.
+
+### Configuration
+
+The Settings page applies changes with Apply & save: the sampling interval (0.5, 1 or 2 seconds), the default history range, animations and edge docking take effect at once, and a background thread writes them to a TOML file. The language takes effect and is saved as soon as you click it. The adapter selection, window position and size, docked edge and mini bar position are saved on close.
+
+| File | Location |
 | --- | --- |
-| 配置 | `%APPDATA%\qqq_monitor\config\config.toml` |
-| 日志 | `%LOCALAPPDATA%\qqq_monitor\data\logs`，按日滚动，保留 7 个文件 |
+| Configuration | `%APPDATA%\qqq_monitor\config\config.toml` |
+| Logs | `%LOCALAPPDATA%\qqq_monitor\data\logs`, rotated daily, 7 files kept |
 
-## 快速开始
+## Getting started
 
-### 环境要求
+### Requirements
 
-- Windows x64 与支持 DX12 的图形适配器
-- Rust 1.99 或更新版本，目标 `x86_64-pc-windows-msvc`
-- Visual Studio Build Tools 的 C++ 工具链与 Windows SDK
+- Windows x64 and a graphics adapter with DX12 support
+- Rust 1.99 or newer, target `x86_64-pc-windows-msvc`
+- The C++ toolchain and Windows SDK from Visual Studio Build Tools
 
-### 构建与运行
+### Build and run
 
 ```powershell
 cargo run --release
 ```
 
-构建产物位于 `target\release\qqq_monitor.exe`，可直接运行。普通账户即可完成全部采集。
+The executable is `target\release\qqq_monitor.exe` and runs as is. A standard user account collects every metric.
 
-### 命令行参数
+### Command-line options
 
-| 参数 | 作用 |
+| Option | Effect |
 | --- | --- |
-| `--smoke-test` | 运行约 8 秒，检查 CPU、内存、物理磁盘 I/O、网络与卷容量均有有效读数，并输出全部指标（含 GPU）；全部通过时退出码为 0 |
-| `--capture PATH` | 启动真实 GUI，约 8 秒后把窗口保存为 PNG 并退出，用户配置保持原样；`PATH` 的父目录需已存在 |
-| `--page PAGE` | 与 `--capture` 配合选择页面：`overview`、`cpu`、`memory`、`gpu`、`disk`、`network`、`settings` |
-| `--dock EDGE` | 以迷你状态栏启动：`top`、`left`、`right`；与 `--capture` 配合可截取迷你状态栏 |
-| `--help` | 显示参数说明 |
+| `--smoke-test` | Runs for about 8 seconds, checks that CPU, memory, physical disk I/O, network and volume capacity all have valid readings, and prints every metric including the GPU; exits with code 0 when every check passes |
+| `--capture PATH` | Starts the real GUI, saves the window as a PNG after about 8 seconds and exits, leaving the user configuration as it is; the parent folder of `PATH` must exist |
+| `--page PAGE` | Page for `--capture`: `overview`, `cpu`, `memory`, `gpu`, `disk`, `network`, `settings` |
+| `--dock EDGE` | Starts as the mini bar: `top`, `left`, `right`; with `--capture` it captures the mini bar |
+| `--lang LANG` | Starts in an interface language, like choosing it on the Settings page: `zh-CN`, `en`, `ja`; with `--capture` it captures pages in that language |
+| `--help` | Lists the options (in Simplified Chinese) |
 
 ```powershell
 cargo run --release -- --capture "$PWD\target\gpu.png" --page gpu
 cargo run --release -- --capture "$PWD\target\dock-left.png" --dock left
+cargo run --release -- --capture "$PWD\target\settings-ja.png" --page settings --lang ja
 ```
 
-## 架构
+## Architecture
 
-项目是一个 Cargo Workspace，由四个库 crate 和一个启动包组成。领域模型与监控引擎独立于 Windows 和 GUI；具体采集器由启动入口注入，GUI 只读取引擎发布的不可变视图。
+The project is a Cargo workspace of four library crates and a launcher package. The domain model and the monitoring engine are independent of Windows and the GUI; the launcher injects the concrete collectors, and the GUI only reads immutable views that the engine publishes.
 
 ```mermaid
 flowchart TD
-    BOOT[qqq_monitor<br>启动与组装] --> UI[qqq-ui<br>页面与组件]
-    BOOT --> ENGINE[qqq-engine<br>监控引擎]
-    BOOT --> WIN[qqq-platform-windows<br>Windows 采集]
+    BOOT[qqq_monitor<br>launch and wiring] --> UI[qqq-ui<br>pages and components]
+    BOOT --> ENGINE[qqq-engine<br>monitoring engine]
+    BOOT --> WIN[qqq-platform-windows<br>Windows collectors]
     UI --> ENGINE
-    UI --> DOMAIN[qqq-domain<br>模型与接口]
+    UI --> DOMAIN[qqq-domain<br>model and interfaces]
     ENGINE --> DOMAIN
     WIN --> DOMAIN
 ```
 
-| 路径 | 职责 |
+| Path | Responsibility |
 | --- | --- |
-| `src/` | 日志初始化、依赖组装、DX12 窗口与窗口图标、命令行冒烟检查与截图、统一关闭 |
-| `build.rs`、`assets/` | 多尺寸程序图标与资源脚本，构建时嵌入 EXE |
-| `crates/qqq-domain/` | 设备、指标、单位、读数状态，以及 `Collector`、`CollectorFactory` 接口 |
-| `crates/qqq-platform-windows/` | sysinfo 采集 CPU 与内存；IP Helper 采集网络；PDH 采集磁盘 I/O 与 GPU 引擎、显存；DXGI 枚举显卡；本地卷容量；显示器工作区与鼠标状态查询；从 EXE 资源加载窗口图标。原生调用集中在 `native.rs` 并以 RAII 管理句柄 |
-| `crates/qqq-engine/` | 采样调度、计数差分与预热、有界历史与显示投影、不可变视图、配置读写与后台保存 |
-| `crates/qqq-ui/` | 七个页面、边缘吸附与迷你状态栏、图表与通用组件、主题、像素绘制（位图字体、图标、精灵）、看板娘（构建时由插画生成像素精灵）与内嵌中文字体 |
+| `src/` | Logging setup, wiring, system language detection, the DX12 window and window icon, the command-line smoke test and capture, orderly shutdown |
+| `build.rs`, `assets/` | Multi-size application icon and resource script, embedded into the EXE at build time |
+| `crates/qqq-domain/` | Devices, metrics, units, reading states and unavailability reasons, plus the `Collector` and `CollectorFactory` interfaces |
+| `crates/qqq-platform-windows/` | CPU and memory through sysinfo; network through IP Helper; disk I/O, GPU engines and GPU memory through PDH; graphics cards through DXGI; local volume capacity; monitor work areas and mouse state; the user's display languages; window icons from the EXE resources. Native calls live in `native.rs`, with RAII handle management |
+| `crates/qqq-engine/` | Sampling schedule, counter deltas and warm-up, bounded history and display projection, immutable views, configuration (including the interface language) with background saving, and language-neutral command and configuration notices |
+| `crates/qqq-ui/` | Seven pages, edge docking and the mini bar, charts and shared components, the theme, pixel drawing (bitmap font, icons, sprites), the mascot (pixel sprites generated from illustrations at build time), interface text in three languages and the embedded CJK font |
 
-### 数据流
+### Data flow
 
 ```mermaid
 flowchart LR
-    CPU[CPU 与内存] --> CH[有界批次通道]
-    NET[网络] --> CH
-    DISK[磁盘 I/O] --> CH
-    GPU[GPU 与显存] --> CH
-    VOL[卷容量] --> CH
-    CH --> ENGINE[引擎<br>校验与差分]
-    ENGINE --> HISTORY[有界历史<br>与显示投影]
-    HISTORY --> SLOT[最新 Arc 视图槽]
+    CPU[CPU and memory] --> CH[Bounded batch channels]
+    NET[Network] --> CH
+    DISK[Disk I/O] --> CH
+    GPU[GPU and GPU memory] --> CH
+    VOL[Volume capacity] --> CH
+    CH --> ENGINE[Engine<br>validation and deltas]
+    ENGINE --> HISTORY[Bounded history<br>and display projection]
+    HISTORY --> SLOT[Latest Arc view slot]
     SLOT --> UI[GUI]
-    UI --> CMD[有界命令通道]
+    UI --> CMD[Bounded command channel]
     CMD --> ENGINE
 ```
 
-- **独立采集线程**：每个采集源在自己的线程里创建、使用并释放资源，按采样间隔或固定周期（卷容量 30 秒）运行；单个采集源出错时按 1 至 30 秒退避重建，其余采集源照常工作。
-- **背压**：每个采集源最多缓存 8 批数据，满载时丢弃当前批次并在历史中留出缺口；在途命令上限 32 个。
-- **无阻塞渲染**：引擎在锁外构造视图，只替换一个 `Arc` 槽并唤醒重绘；GUI 每帧非阻塞地取最新视图，按需提交历史查询。
-- **安全边界**：领域、引擎、GUI 与启动包均禁用 `unsafe`，Windows FFI 集中在平台层的 `native.rs`。
+- **Collector threads**: every collector creates, uses and releases its resources on its own thread and runs at the sampling interval or a fixed period (30 seconds for volume capacity). A failing collector is recreated with a backoff of 1 to 30 seconds while the others keep working.
+- **Backpressure**: every collector buffers at most 8 batches; when the buffer is full, the current batch is dropped and the history records a gap. At most 32 commands are in flight.
+- **Non-blocking rendering**: the engine builds views outside the lock, swaps a single `Arc` slot and requests a repaint; every frame, the GUI takes the latest view without blocking and submits history queries as needed.
+- **Safety boundary**: the domain, engine, GUI and launcher forbid `unsafe`; Windows FFI lives in `native.rs` of the platform crate.
 
-### 扩展方式
+### Extending
 
-- **新增指标**：在平台层实现 `CollectorFactory` 并加入 `collectors()` 注册列表，引擎按统一管线处理，页面通过 `MetricKey` 读取。
-- **新增页面**：在 `crates/qqq-ui/src/pages/` 添加页面文件与 `Page` 路由，组合现有组件，并在查询中声明所需指标。
+- **New metric**: implement `CollectorFactory` in the platform crate and register it in `collectors()`; the engine runs it through the common pipeline, and pages read it by `MetricKey`.
+- **New page**: add a page file and a `Page` route under `crates/qqq-ui/src/pages/`, combine the existing components and declare the metrics the page queries.
+- **New language**: add the language and its BCP 47 tag to `Language`, then add its text table under `crates/qqq-ui/src/i18n/`; every language fills every entry of `Strings`, so a missing translation fails to compile.
 
-接口契约、线程模型、历史预算与故障隔离的完整说明见 [架构设计](docs/ARCHITECTURE.md)。
+The [architecture document](docs/ARCHITECTURE.md) covers the interface contracts, threading model, history budget and fault isolation in full.
 
-## 开发检查
+## Development checks
 
 ```powershell
 cargo fmt --all -- --check
@@ -193,16 +206,18 @@ cargo test --workspace --release
 cargo run --release -- --smoke-test
 ```
 
-自动测试覆盖速率计算、预热与失败恢复、过期判定、历史预算与投影缺口、慢采集隔离、命令上限、配置保存与损坏保护、GPU 计数器解析，以及吸附边缘判定与迷你状态栏定位；运行时测试使用可控的假采集器驱动完整引擎。
+The automated tests cover rate calculation, warm-up and failure recovery, staleness, the history budget and projection gaps, slow collector isolation, the command limit, configuration saving and corruption protection, GPU counter parsing, docking edge detection and mini bar placement, system language matching, the text table of every language and the width of MINT's lines. Runtime tests drive the complete engine with controllable fake collectors.
 
-## 设计文档
+## Design documents
 
-| 文档 | 内容 |
+The design documents are written in Simplified Chinese.
+
+| Document | Contents |
 | --- | --- |
-| [技术方案](docs/TECHNICAL_PLAN.md) | 首版范围、技术选型、指标口径、GUI 视觉与交互规范、性能预算和风险 |
-| [架构设计](docs/ARCHITECTURE.md) | Workspace 分工、依赖方向、接口、采样与渲染数据流、异常处理和扩展步骤 |
-| [实施与验收计划](docs/IMPLEMENTATION_PLAN.md) | 开发阶段、交付顺序和可检查的验收标准 |
+| [Technical plan](docs/TECHNICAL_PLAN.md) | First-release scope, technology choices, metric definitions, GUI visual and interaction guidelines, performance budget and risks |
+| [Architecture](docs/ARCHITECTURE.md) | Workspace roles, dependency direction, interfaces, sampling and rendering data flow, error handling and extension steps |
+| [Implementation and acceptance plan](docs/IMPLEMENTATION_PLAN.md) | Development phases, delivery order and checkable acceptance criteria |
 
-## 许可
+## License
 
-项目代码使用 MIT 许可证，见 [LICENSE](LICENSE)。内嵌的 Noto Sans CJK SC 字体使用 SIL Open Font License，见 [字体许可](crates/qqq-ui/assets/fonts/LICENSE.txt)。
+The code is licensed under the MIT License, see [LICENSE](LICENSE). The embedded Noto Sans CJK SC font is licensed under the SIL Open Font License, see the [font license](crates/qqq-ui/assets/fonts/LICENSE.txt).

@@ -1,4 +1,4 @@
-use crate::{DeviceDescriptor, MetricSample};
+use crate::{DeviceDescriptor, MetricSample, Reason};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug)]
@@ -41,8 +41,8 @@ impl Default for SampleBatch {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct CollectorError(pub String);
+#[error("{0:?}")]
+pub struct CollectorError(pub Reason);
 
 pub trait Collector {
     fn collect(&mut self, context: &CollectContext) -> Result<SampleBatch, CollectorError>;

@@ -46,8 +46,7 @@ impl Collector for DiskIo {
             };
             let id = format!("disk:{number}");
             batch.devices.push(
-                DeviceDescriptor::new(&id, format!("物理磁盘 {number}"), DeviceKind::Disk)
-                    .detail("计数器实例", &name),
+                DeviceDescriptor::new(&id, "", DeviceKind::Disk).detail("counter_instance", &name),
             );
             for (metric, values) in [("read", &read), ("write", &write)] {
                 let value = if !warmed {

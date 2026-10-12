@@ -1,8 +1,9 @@
-use qqq_domain::CollectorError;
+use qqq_domain::{CollectorError, Reason};
 use std::{collections::BTreeMap, mem::size_of, ptr};
 use windows::{
     Win32::{
         Foundation::{HWND, LPARAM, POINT, RECT, WPARAM},
+        Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME},
         Graphics::{
             Dxgi::{
                 CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_ERROR_NOT_FOUND, IDXGIFactory1,
@@ -24,11 +25,14 @@ use windows::{
             },
         },
     },
-    core::{HSTRING, PCWSTR, w},
+    core::{HSTRING, PCWSTR, PWSTR},
 };
 
-fn error(api: &str, status: u32) -> CollectorError {
-    CollectorError(format!("{api} 失败，错误码 0x{status:08X}"))
+fn error(api: &'static str, code: u32) -> CollectorError {
+    CollectorError(Reason::CallFailed { api, code })
+}
+fn bad_data(api: &'static str) -> CollectorError {
+    CollectorError(Reason::BadData { api })
 }
 fn text(value: &[u16]) -> String {
     String::from_utf16_lossy(&value[..value.iter().position(|v| *v == 0).unwrap_or(value.len())])
@@ -64,7 +68,7 @@ pub fn network_rows() -> Result<Vec<NetworkRow>, CollectorError> {
         return Err(error("GetIfTable2", status.0));
     }
     if pointer.is_null() {
-        return Err(CollectorError("GetIfTable2 返回空表".into()));
+        return Err(bad_data("GetIfTable2"));
     }
     let table = InterfaceTable(pointer);
     // SAFETY: successful API call allocates NumEntries contiguous rows after the header.
@@ -111,16 +115,50 @@ pub fn local_volume_id(mount: &str) -> Option<String> {
     Some(text(&buffer))
 }
 
-pub fn show_error(message: &str) {
+pub fn show_error(title: &str, message: &str) {
     // SAFETY: no owner, and both strings remain valid for the duration of the modal call.
     unsafe {
         MessageBoxW(
             None,
             &HSTRING::from(message),
-            w!("QQQ Monitor 启动失败"),
+            &HSTRING::from(title),
             MB_OK | MB_ICONERROR,
         );
     }
+}
+
+/// Display languages of the user as BCP 47 tags such as `ja-JP`, most preferred first;
+/// empty when the system cannot report them.
+pub fn ui_languages() -> Vec<String> {
+    let (mut count, mut length) = (0_u32, 0_u32);
+    // SAFETY: without a buffer the call only writes the language count and the required
+    // buffer length to valid locals.
+    if unsafe { GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, None, &mut length) }
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let mut buffer = vec![0_u16; length as usize];
+    // SAFETY: the buffer holds the `length` UTF-16 units the first call asked for and
+    // outlives the call.
+    if unsafe {
+        GetUserPreferredUILanguages(
+            MUI_LANGUAGE_NAME,
+            &mut count,
+            Some(PWSTR(buffer.as_mut_ptr())),
+            &mut length,
+        )
+    }
+    .is_err()
+    {
+        return Vec::new();
+    }
+    // NUL-terminated names followed by an empty name.
+    buffer
+        .split(|unit| *unit == 0)
+        .filter(|name| !name.is_empty())
+        .map(String::from_utf16_lossy)
+        .collect()
 }
 
 /// Live PDH query over wildcard counter paths; values are read back by path index.
@@ -191,7 +229,7 @@ impl CounterQuery {
         for _ in 0..3 {
             // GPU engine counters list one instance per process and engine.
             if bytes as usize > 4 * 1024 * 1024 {
-                return Err(CollectorError("性能计数器缓冲区异常".into()));
+                return Err(bad_data("PdhGetFormattedCounterArrayW"));
             }
             // u64 provides at least the alignment required by the PDH item structure.
             let mut buffer = vec![0_u64; (bytes as usize).div_ceil(size_of::<u64>())];
@@ -214,7 +252,7 @@ impl CounterQuery {
                 return Err(error("PdhGetFormattedCounterArrayW", status));
             }
             if count as usize > capacity / size_of::<PDH_FMT_COUNTERVALUE_ITEM_W>() {
-                return Err(CollectorError("性能计数器数组长度无效".into()));
+                return Err(bad_data("PdhGetFormattedCounterArrayW"));
             }
             // SAFETY: API initialized count items, and bounds were checked above.
             let items = unsafe {
@@ -229,7 +267,7 @@ impl CounterQuery {
             for item in items {
                 let pointer = item.szName.0 as usize;
                 if pointer < begin || pointer >= end || !pointer.is_multiple_of(2) {
-                    return Err(CollectorError("性能计数器名称指针无效".into()));
+                    return Err(bad_data("PdhGetFormattedCounterArrayW"));
                 }
                 // SAFETY: name pointer is inside the live buffer; scan is bounded by its allocation.
                 let name =
@@ -254,7 +292,7 @@ impl CounterQuery {
             }
             return Ok(values);
         }
-        Err(CollectorError("计数器实例变化频繁，暂时无法读取".into()))
+        Err(CollectorError(Reason::InstancesChanging))
     }
 }
 
@@ -270,7 +308,7 @@ pub struct GpuAdapter {
 }
 
 pub fn gpu_adapters() -> Result<Vec<GpuAdapter>, CollectorError> {
-    let failed = |api: &str, e: windows::core::Error| CollectorError(format!("{api} 失败：{e}"));
+    let failed = |api: &'static str, e: windows::core::Error| error(api, e.code().0 as u32);
     // SAFETY: factory creation has no preconditions; the COM wrapper releases it on drop.
     let factory: IDXGIFactory1 =
         unsafe { CreateDXGIFactory1() }.map_err(|e| failed("CreateDXGIFactory1", e))?;

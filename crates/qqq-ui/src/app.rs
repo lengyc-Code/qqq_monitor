@@ -1,10 +1,13 @@
 #[path = "pages/mod.rs"]
 mod pages;
 
-use crate::{components, dock, mascot, minibar, pixel, theme};
+use crate::{components, dock, i18n, mascot, minibar, pixel, theme};
 use eframe::egui::{self, RichText, pos2, vec2};
 use qqq_domain::{DeviceKind, MetricKey};
-use qqq_engine::{AppConfig, CommandOutcome, DockEdge, MonitorClient, MonitorCommand, MonitorView};
+use qqq_engine::{
+    AppConfig, CommandOutcome, DockEdge, Language, MonitorClient, MonitorCommand, MonitorView,
+    Notice,
+};
 use std::{
     path::PathBuf,
     sync::Arc,
@@ -22,17 +25,19 @@ pub enum Page {
     Settings,
 }
 impl Page {
-    fn title(self) -> &'static str {
+    fn text(self) -> &'static i18n::PageText {
+        let t = i18n::t();
         match self {
-            Self::Overview => "系统总览",
-            Self::Cpu => "处理器",
-            Self::Memory => "物理内存",
-            Self::Gpu => "显卡",
-            Self::Disk => "磁盘与存储",
-            Self::Network => "网络流量",
-            Self::Settings => "设置",
+            Self::Overview => &t.overview_page,
+            Self::Cpu => &t.cpu_page,
+            Self::Memory => &t.memory_page,
+            Self::Gpu => &t.gpu_page,
+            Self::Disk => &t.disk_page,
+            Self::Network => &t.network_page,
+            Self::Settings => &t.settings_page,
         }
     }
+    /// Bitmap-font label above the title, the same in every language.
     fn kicker(self) -> &'static str {
         match self {
             Self::Overview => "OVERVIEW",
@@ -42,17 +47,6 @@ impl Page {
             Self::Disk => "STORAGE",
             Self::Network => "NETWORK",
             Self::Settings => "CONFIG",
-        }
-    }
-    fn hint(self) -> &'static str {
-        match self {
-            Self::Overview => "实时掌握电脑的运行状态",
-            Self::Cpu => "观察整体负载与每个逻辑核心",
-            Self::Memory => "系统可用物理内存与使用趋势",
-            Self::Gpu => "显卡利用率、各引擎占用与显存",
-            Self::Disk => "物理磁盘读写与本地卷容量",
-            Self::Network => "查看所选网卡的实时收发",
-            Self::Settings => "按你的使用习惯调整监控",
         }
     }
 }
@@ -76,7 +70,7 @@ pub struct DesktopApp {
     range: u64,
     last_query: Vec<MetricKey>,
     last_range: u64,
-    message: String,
+    message: Option<Notice>,
     latest_save: Option<u64>,
     capture: Option<CaptureOptions>,
     capture_requested: bool,
@@ -84,6 +78,8 @@ pub struct DesktopApp {
     closing: bool,
     dock: dock::Dock,
     desktop: dock::Desktop,
+    /// Language the "follow system" setting resolves to.
+    system_language: Language,
 }
 
 impl DesktopApp {
@@ -93,7 +89,9 @@ impl DesktopApp {
         config: AppConfig,
         capture: Option<CaptureOptions>,
         desktop: dock::Desktop,
+        system_language: Language,
     ) -> Self {
+        i18n::set(config.language.unwrap_or(system_language));
         theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx, config.animations);
         let context = cc.egui_ctx.clone();
@@ -105,6 +103,7 @@ impl DesktopApp {
         Self {
             dock: dock::Dock::new(&config),
             desktop,
+            system_language,
             range: config.history_secs,
             active_config: config.clone(),
             config,
@@ -118,7 +117,7 @@ impl DesktopApp {
             gpu_engine: String::new(),
             last_query: Vec::new(),
             last_range: 0,
-            message: String::new(),
+            message: None,
             latest_save: None,
             capture,
             capture_requested: false,
@@ -128,12 +127,12 @@ impl DesktopApp {
     }
     fn command(&mut self, command: MonitorCommand) {
         if let Err(error) = self.client.try_command(command) {
-            self.message = error;
+            self.message = Some(error);
         }
     }
     fn save_config(&mut self, config: AppConfig, explicit: bool) {
         if let Err(error) = config.validate() {
-            self.message = error;
+            self.message = Some(error);
             return;
         }
         match self.client.try_command(MonitorCommand::SaveConfig {
@@ -144,7 +143,7 @@ impl DesktopApp {
                 self.active_config = config;
                 self.latest_save = Some(id);
             }
-            Err(error) => self.message = error,
+            Err(error) => self.message = Some(error),
         }
     }
     fn select_initial_devices(&mut self) {
@@ -159,7 +158,9 @@ impl DesktopApp {
                     self.view.devices.values().find(|d| {
                         d.kind == DeviceKind::Network
                             && d.online
-                            && d.details.iter().any(|(_, value)| value == "物理网卡")
+                            && d.details
+                                .iter()
+                                .any(|(key, value)| key == "interface_type" && value == "physical")
                     })
                 })
                 .or_else(|| {
@@ -240,7 +241,7 @@ impl DesktopApp {
                     self.last_query = keys;
                     self.last_range = self.range;
                 }
-                Err(error) => self.message = error,
+                Err(error) => self.message = Some(error),
             }
         }
     }
@@ -278,23 +279,23 @@ impl DesktopApp {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     pixel::icon(ui, &pixel::ICON_HEART, 1.0, theme::PINK_SOFT, theme::PINK);
                     ui.label(
-                        RichText::new("性能监控")
+                        RichText::new(i18n::t().tagline)
                             .size(11.0)
                             .color(theme::NIGHT_MUTED),
                     );
                 });
-                for (page, icon, name) in [
-                    (Page::Overview, &pixel::ICON_STAR, "总览"),
-                    (Page::Cpu, &pixel::ICON_CPU, "CPU"),
-                    (Page::Memory, &pixel::ICON_MEMORY, "内存"),
-                    (Page::Gpu, &pixel::ICON_GPU, "GPU"),
-                    (Page::Disk, &pixel::ICON_DISK, "磁盘"),
-                    (Page::Network, &pixel::ICON_NETWORK, "网络"),
-                    (Page::Settings, &pixel::ICON_GEAR, "设置"),
+                for (page, icon) in [
+                    (Page::Overview, &pixel::ICON_STAR),
+                    (Page::Cpu, &pixel::ICON_CPU),
+                    (Page::Memory, &pixel::ICON_MEMORY),
+                    (Page::Gpu, &pixel::ICON_GPU),
+                    (Page::Disk, &pixel::ICON_DISK),
+                    (Page::Network, &pixel::ICON_NETWORK),
+                    (Page::Settings, &pixel::ICON_GEAR),
                 ] {
                     if theme::nav_button(
                         ui,
-                        name,
+                        page.text().nav,
                         icon,
                         self.page == page,
                         vec2(ui.available_width(), 40.0),
@@ -318,6 +319,7 @@ impl DesktopApp {
         );
     }
     fn header(&mut self, ui: &mut egui::Ui) {
+        let t = i18n::t();
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
@@ -332,9 +334,9 @@ impl DesktopApp {
                         pixel::Effect::Plain,
                     );
                 });
-                ui.heading(self.page.title());
+                ui.heading(self.page.text().title);
                 ui.label(
-                    RichText::new(self.page.hint())
+                    RichText::new(self.page.text().hint)
                         .color(theme::MUTED)
                         .size(12.0),
                 );
@@ -342,12 +344,20 @@ impl DesktopApp {
             if self.page != Page::Settings {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    for (secs, label) in [(900, "15 分钟"), (300, "5 分钟"), (60, "60 秒")] {
-                        if theme::chip(ui, label, self.range == secs).clicked() {
+                    for (secs, label) in [
+                        (900, (t.minutes)(15)),
+                        (300, (t.minutes)(5)),
+                        (60, (t.seconds)(60.0)),
+                    ] {
+                        if theme::chip(ui, &label, self.range == secs).clicked() {
                             self.range = secs;
                         }
                     }
-                    ui.label(RichText::new("历史范围").size(12.0).color(theme::MUTED));
+                    ui.label(
+                        RichText::new(t.history_range)
+                            .size(12.0)
+                            .color(theme::MUTED),
+                    );
                 });
             }
         });
@@ -403,12 +413,17 @@ impl eframe::App for DesktopApp {
                 continue;
             }
             match result.result {
-                Err(error) => self.message = error,
+                Err(error) => self.message = Some(error),
                 Ok(CommandOutcome::Saved) if self.latest_save == Some(result.id) => {
-                    self.message.clear();
+                    self.message = None;
                 }
                 _ => {}
             }
+        }
+        let language = self.active_config.language.unwrap_or(self.system_language);
+        if language != i18n::language() {
+            i18n::set(language);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(i18n::t().window_title.into()));
         }
         self.select_initial_devices();
         self.query();
@@ -453,6 +468,7 @@ impl eframe::App for DesktopApp {
         }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
+        let t = i18n::t();
         let view = Arc::clone(&self.view);
         if let Some(edge) = self.dock.edge() {
             if minibar::show(ui, &view, edge, &self.gpu) {
@@ -476,33 +492,36 @@ impl eframe::App for DesktopApp {
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     let (text, color) = if view.diagnostics.collector_errors.is_empty() {
-                        ("监控运行中", theme::TEAL)
+                        (t.running, theme::TEAL)
                     } else {
-                        ("部分采集不可用", theme::GOLD)
+                        (t.degraded, theme::GOLD)
                     };
                     ui.spacing_mut().item_spacing.x = 6.0;
                     components::pixel_dot(ui, color);
                     ui.label(RichText::new(text).size(12.0).color(color));
                     ui.add_space(8.0);
                     ui.label(
-                        RichText::new(format!(
-                            "采样 {:.1}s  ·  会话 {:.0}s",
+                        RichText::new((t.timing)(
                             view.config.sampling_ms as f64 / 1000.0,
-                            view.elapsed
+                            view.elapsed,
                         ))
                         .size(12.0)
                         .color(theme::NIGHT_MUTED),
                     );
-                    if !self.message.is_empty() {
+                    if let Some(message) = &self.message {
                         ui.add_space(8.0);
-                        ui.label(RichText::new(&self.message).size(12.0).color(theme::GOLD));
+                        ui.label(
+                            RichText::new(i18n::notice(message))
+                                .size(12.0)
+                                .color(theme::GOLD),
+                        );
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         for (edge, icon, label) in [
-                            (DockEdge::Right, &pixel::ICON_DOCK_RIGHT, "吸附到屏幕右侧"),
-                            (DockEdge::Left, &pixel::ICON_DOCK_LEFT, "吸附到屏幕左侧"),
-                            (DockEdge::Top, &pixel::ICON_DOCK_TOP, "吸附到屏幕顶部"),
+                            (DockEdge::Right, &pixel::ICON_DOCK_RIGHT, t.dock_right),
+                            (DockEdge::Left, &pixel::ICON_DOCK_LEFT, t.dock_left),
+                            (DockEdge::Top, &pixel::ICON_DOCK_TOP, t.dock_top),
                         ] {
                             if theme::icon_button(ui, icon, label, vec2(26.0, 22.0), true).clicked()
                             {
@@ -510,7 +529,7 @@ impl eframe::App for DesktopApp {
                             }
                         }
                         ui.label(
-                            RichText::new("迷你状态栏")
+                            RichText::new(t.minibar)
                                 .size(12.0)
                                 .color(theme::NIGHT_MUTED),
                         );

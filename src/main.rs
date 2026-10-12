@@ -5,8 +5,8 @@ mod bootstrap;
 
 use eframe::wgpu::rwh::{HasWindowHandle, RawWindowHandle};
 use qqq_domain::{DeviceKind, SampleState};
-use qqq_engine::{ConfigStore, DockEdge, MonitorRuntime};
-use qqq_ui::{CaptureOptions, Desktop, DesktopApp, Page};
+use qqq_engine::{ConfigStore, DockEdge, Language, MonitorRuntime};
+use qqq_ui::{CaptureOptions, Desktop, DesktopApp, Page, i18n};
 use std::{
     path::PathBuf,
     thread,
@@ -19,7 +19,7 @@ fn main() {
         tracing::error!(%error,"启动失败");
         eprintln!("{error}");
         if !std::env::args().any(|v| v == "--smoke-test" || v == "--capture") {
-            qqq_platform_windows::show_startup_error(&error);
+            qqq_platform_windows::show_startup_error(i18n::t().startup_failed, &error);
         }
         std::process::exit(1);
     }
@@ -29,7 +29,7 @@ fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|s| s == "--help") {
         println!(
-            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           截图页面：overview/cpu/memory/gpu/disk/network/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right"
+            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           截图页面：overview/cpu/memory/gpu/disk/network/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja"
         );
         return Ok(());
     }
@@ -43,7 +43,23 @@ fn run() -> Result<(), String> {
             _ => return Err("--dock 需要 top、left 或 right".into()),
         });
     }
-    let mut runtime = MonitorRuntime::start(qqq_platform_windows::collectors(), loaded)?;
+    if let Some(index) = args.iter().position(|s| s == "--lang") {
+        let tag = args.get(index + 1).map(String::as_str);
+        config.language = Some(
+            Language::ALL
+                .into_iter()
+                .find(|language| Some(language.tag()) == tag)
+                .ok_or("--lang 需要 zh-CN、en 或 ja")?,
+        );
+    }
+    let system_language = Language::preferred(
+        qqq_platform_windows::ui_languages()
+            .iter()
+            .map(String::as_str),
+    );
+    i18n::set(config.language.unwrap_or(system_language));
+    let mut runtime = MonitorRuntime::start(qqq_platform_windows::collectors(), loaded)
+        .map_err(|notice| i18n::notice(&notice))?;
     if args.iter().any(|s| s == "--smoke-test") {
         return smoke_test(&mut runtime);
     }
@@ -91,7 +107,7 @@ fn run() -> Result<(), String> {
         button_held: qqq_platform_windows::mouse_button_held,
     };
     let result = eframe::run_native(
-        "QQQ Monitor · 性能监控",
+        "QQQ Monitor",
         options,
         Box::new(move |cc| {
             if let Ok(handle) = cc.window_handle()
@@ -100,7 +116,12 @@ fn run() -> Result<(), String> {
                 qqq_platform_windows::set_window_icon(handle.hwnd.get());
             }
             Ok(Box::new(DesktopApp::new(
-                cc, client, config, capture, desktop,
+                cc,
+                client,
+                config,
+                capture,
+                desktop,
+                system_language,
             )))
         }),
     )
@@ -135,7 +156,7 @@ fn smoke_test(runtime: &mut MonitorRuntime) -> Result<(), String> {
         }
     }
     for (source, error) in &view.diagnostics.collector_errors {
-        eprintln!("{source}: {error}");
+        eprintln!("{source}: {error:?}");
     }
     let cpu = view
         .reading("cpu", "usage")

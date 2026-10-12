@@ -1,0 +1,275 @@
+//! Simplified Chinese.
+
+use super::{PageText, Strings};
+use qqq_domain::Reason;
+use qqq_engine::{Notice, SaveStatus};
+
+pub const STRINGS: Strings = Strings {
+    window_title: "QQQ Monitor · 性能监控",
+    tagline: "性能监控",
+    startup_failed: "QQQ Monitor 启动失败",
+    overview_page: PageText {
+        nav: "总览",
+        title: "系统总览",
+        hint: "实时掌握电脑的运行状态",
+    },
+    cpu_page: PageText {
+        nav: "CPU",
+        title: "处理器",
+        hint: "观察整体负载与每个逻辑核心",
+    },
+    memory_page: PageText {
+        nav: "内存",
+        title: "物理内存",
+        hint: "系统可用物理内存与使用趋势",
+    },
+    gpu_page: PageText {
+        nav: "GPU",
+        title: "显卡",
+        hint: "显卡利用率、各引擎占用与显存",
+    },
+    disk_page: PageText {
+        nav: "磁盘",
+        title: "磁盘与存储",
+        hint: "物理磁盘读写与本地卷容量",
+    },
+    network_page: PageText {
+        nav: "网络",
+        title: "网络流量",
+        hint: "查看所选网卡的实时收发",
+    },
+    settings_page: PageText {
+        nav: "设置",
+        title: "设置",
+        hint: "按你的使用习惯调整监控",
+    },
+
+    history_range: "历史范围",
+    seconds: |v| format!("{v} 秒"),
+    minutes: |v| format!("{v} 分钟"),
+    running: "监控运行中",
+    degraded: "部分采集不可用",
+    timing: |sampling, session| format!("采样 {sampling:.1}s  ·  会话 {session:.0}s"),
+    minibar: "迷你状态栏",
+    dock_top: "吸附到屏幕顶部",
+    dock_left: "吸附到屏幕左侧",
+    dock_right: "吸附到屏幕右侧",
+    restore_window: "还原完整窗口",
+
+    days: |v| format!("{v} 天"),
+    state_ready: "实时",
+    state_stale: "数据过期",
+    state_failed: "采集失败",
+    state_unsupported: "不支持",
+    state_offline: "已断开",
+    state_waiting: "采集中",
+    seconds_ago: |v| format!("{v:.0} 秒前"),
+    last_valid: "上次有效数据",
+    now: "现在",
+    chart_waiting: "等待有效采样；数据不可用时曲线保留缺口",
+    device_offline: "设备已断开",
+    offline_suffix: "（已断开）",
+    finding_devices: "等待发现设备",
+    waiting_samples: "等待采样",
+    click_for_details: "点击查看详情",
+    list_separator: "，",
+    labeled: |label, text| format!("{label}：{text}"),
+    used_of: |used, total| format!("已用 {used} / {total}"),
+
+    processor: "处理器",
+    physical_memory: "物理内存",
+    this_pc: "本机",
+    physical_disk: "物理磁盘",
+    graphics_card: "显卡",
+    adapter: "网卡",
+    logical_core: |n| format!("逻辑核心 {n}"),
+    detail,
+    physical_adapter: "物理网卡",
+    virtual_adapter: "虚拟或软件接口",
+    dedicated_memory: "专用显存",
+    shared_memory: "共享 GPU 内存",
+    reason,
+    notice,
+    save_status,
+
+    memory: "内存",
+    gpu_memory: "显存",
+    memory_short: "内存",
+    gpu_memory_short: "显存",
+    read: "读取",
+    write: "写入",
+    receive: "接收",
+    send: "发送",
+    logical_cores: "逻辑核心",
+
+    mint_name: "看板娘 · MINT 酱",
+    mint_hover: "看板娘 MINT 酱会根据 CPU 与内存负载切换表情",
+    mint_waiting: "正在唤醒传感器…\n请稍等一下～",
+    mint_trouble: "有些数据采集不到…\n去「设置」看看吧",
+    mint_cpu_hot: |cpu| format!("CPU {cpu:.0}%！\n忙得要冒烟啦 >_<"),
+    mint_memory_full: |memory| format!("内存用了 {memory:.0}%\n快要装不下啦！"),
+    mint_busy: |cpu, memory| format!("有点忙哦～\nCPU {cpu:.0}%  内存 {memory:.0}%"),
+    mint_relaxed: |cpu| format!("好悠闲～CPU 才 {cpu:.0}%\n一起喝杯茶吧"),
+    mint_calm: |cpu, memory| format!("一切正常！\nCPU {cpu:.0}%  内存 {memory:.0}%"),
+
+    cores_detail: |cores| format!("逻辑核心 {cores}"),
+    disk_read: "磁盘读取",
+    network_receive: "网络接收",
+    cpu_memory_chart: "处理器与内存使用趋势",
+    disk_io: "磁盘读写",
+    network_io: "网络收发",
+    device_profile: "设备档案",
+    total_memory: "内存总量",
+    current_disk: "当前磁盘",
+    current_adapter: "当前网卡",
+    uptime: "系统运行",
+
+    cpu_total: "总使用率",
+    cpu_total_detail: "所有逻辑核心的平均负载",
+    cpu_busiest: "最忙核心",
+    cpu_overall: "整体 CPU",
+    cpu_selected_core: "选中核心",
+    cpu_chart: "CPU 使用率",
+    cpu_cores_hint: "点击核心查看历史",
+
+    memory_in_use: "已使用",
+    share_of_total: |share| format!("占总量 {share}"),
+    available: "可用",
+    allocatable: |share| format!("还能分配 {share}"),
+    memory_total: "物理内存总量",
+    memory_total_detail: "系统可用的物理内存",
+    memory_chart: "物理内存使用趋势",
+    memory_usage: "内存使用率",
+    memory_note: "统计系统可用物理内存；已用内存与提交量属于不同指标。",
+
+    gpu_usage: "GPU 使用率",
+    engines_waiting: "等待引擎数据",
+    busiest_engine: |engine, load| format!("最忙引擎 {engine} · {load}"),
+    gpu_memory_used: |kind, used, total| format!("{kind} 已用 {used} / {total}"),
+    gpu_chart: "GPU 与显存使用率",
+    engines_title: "引擎占用",
+    engines_hint: "同类引擎取最忙的一个，点击查看历史",
+    engines_missing: "等待引擎数据；未提供引擎计数器的显卡只显示显存",
+    engine: |name| format!("{name} 引擎"),
+    engine_kind,
+    gpu_memory_title: "显存明细",
+    gpu_memory_hint: "专用显存位于显卡板载内存，共享 GPU 内存取自系统内存",
+    total_share: |total, share| format!("共 {total}  ·  占 {share}"),
+    gpu_note: "GPU 使用率与任务管理器口径一致：各进程在同一引擎上的占用相加，再取最忙的引擎；不同类型的引擎不相加。",
+
+    disk_read_detail: "选中物理磁盘的读取速率",
+    disk_write_detail: "选中物理磁盘的写入速率",
+    disk_chart: "物理磁盘读写速率",
+    volumes_title: "本地卷容量",
+    volumes_hint: "卷容量与物理磁盘 I/O 分别统计",
+    volumes_waiting: "等待发现本地卷",
+    volume_space: |free, total| format!("可用 {free}  ·  共 {total}"),
+    no_label: "无卷标",
+    unknown_file_system: "未知文件系统",
+
+    session_received: |bytes| format!("本次会话已接收 {bytes}"),
+    session_sent: |bytes| format!("本次会话已发送 {bytes}"),
+    network_chart: "网络收发趋势",
+    network_note: "只统计选中的单个接口，避免物理网卡与 VPN 流量重复相加；会话流量为本次应用观测到的有效计数差。",
+
+    preferences: "监控偏好",
+    language: "界面语言",
+    follow_system: "跟随系统",
+    sampling_interval: "采样间隔",
+    default_range: "默认历史范围",
+    animations: "界面动效",
+    animations_option: "启用轻量动效与看板娘晃动",
+    edge_docking: "边缘吸附",
+    edge_docking_option: "拖到屏幕顶部或左右边缘时收起为迷你状态栏",
+    apply_save: "应用并保存",
+    runtime_status: "运行状态",
+    batches: |received, dropped| format!("接收采样批次 {received}  ·  丢失批次 {dropped}"),
+    history_usage: |used| format!("历史数据占用 {used} / 16 MiB"),
+    collectors_ok: "所有采集源工作正常",
+    refresh_devices: "立即刷新设备",
+    about_mint: "看板娘 MINT 酱会根据 CPU 与内存负载切换表情：悠闲、平静、忙碌和超载。",
+    about_animations: "关闭界面动效后表情仍会随负载变化，但不再晃动，也不会额外刷新界面。",
+};
+
+fn detail(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "logical_cores" => "逻辑核心",
+        "os" => "操作系统",
+        "description" => "描述",
+        "interface_guid" => "接口 GUID",
+        "interface_type" => "接口类型",
+        "link_speed" => "链路速率",
+        "vendor" => "厂商",
+        "memory_type" => "显存类型",
+        "adapter_luid" => "适配器 LUID",
+        "counter_instance" => "计数器实例",
+        "volume_label" => "卷标",
+        "file_system" => "文件系统",
+        "volume_guid" => "卷 GUID",
+        _ => return None,
+    })
+}
+
+fn engine_kind(kind: &str) -> Option<&'static str> {
+    Some(match kind {
+        "copy" => "复制",
+        "videodecode" => "视频解码",
+        "videoencode" => "视频编码",
+        "videoprocessing" => "视频处理",
+        "compute" => "计算",
+        "graphics" => "图形",
+        "legacyoverlay" => "旧版叠加",
+        "overlay" => "叠加",
+        "security" => "安全",
+        "ofa" => "光流",
+        _ => return None,
+    })
+}
+
+fn reason(reason: &Reason) -> String {
+    match reason {
+        Reason::NoGpuCounters => "系统未提供该显卡的性能计数器".into(),
+        Reason::NoGpuMemoryCounters => "显存计数器不可用".into(),
+        Reason::VolumeUnavailable => "卷容量暂时不可用".into(),
+        Reason::NoMemoryTotal => "物理内存总量不可用".into(),
+        Reason::OutOfRange => "采集值超出有效范围".into(),
+        Reason::CounterUnit => "计数器单位无效".into(),
+        Reason::Disconnected => "设备已断开".into(),
+        Reason::Panicked => "采集线程发生异常，正在重建采集器".into(),
+        Reason::KeyConflict => "指标键与其他采集器冲突".into(),
+        Reason::InstancesChanging => "计数器实例变化频繁，暂时无法读取".into(),
+        Reason::CallFailed { api, code } => format!("{api} 失败，错误码 0x{code:08X}"),
+        Reason::BadData { api } => format!("{api} 返回的数据无效"),
+    }
+}
+
+fn notice(notice: &Notice) -> String {
+    match notice {
+        Notice::Stopped => "监控服务已停止".into(),
+        Notice::Busy => "操作繁忙，请稍后重试".into(),
+        Notice::InvalidQuery => "历史查询范围无效".into(),
+        Notice::InvalidSampling => "采样间隔必须为 0.5、1 或 2 秒".into(),
+        Notice::InvalidHistory => "历史范围必须为 60、300 或 900 秒".into(),
+        Notice::InvalidWindowSize => "窗口尺寸无效".into(),
+        Notice::InvalidWindowPosition => "窗口位置无效".into(),
+        Notice::InvalidValue => "部分配置无效，已恢复该项默认值".into(),
+        Notice::InvalidType => "部分配置类型无效，已恢复该项默认值".into(),
+        Notice::CorruptFile => {
+            "配置文件损坏，已使用默认值；原文件保留，点击保存设置后才替换".into()
+        }
+        Notice::Unreadable(error) => format!("无法读取配置：{error}"),
+        Notice::CorruptKept => "已保留损坏的配置，请在设置页面主动保存".into(),
+        Notice::InvalidDirectory => "配置目录无效".into(),
+        Notice::System(error) => error.clone(),
+    }
+}
+
+fn save_status(status: &SaveStatus) -> String {
+    match status {
+        SaveStatus::Loaded => "设置已加载".into(),
+        SaveStatus::Recovered(warning) => notice(warning),
+        SaveStatus::Saving => "设置已应用，正在保存…".into(),
+        SaveStatus::Saved => "设置已保存".into(),
+        SaveStatus::Unsaved(error) => format!("设置已应用，但未保存：{}", notice(error)),
+    }
+}

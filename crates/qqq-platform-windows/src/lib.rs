@@ -10,6 +10,8 @@ use std::{sync::Arc, time::Duration};
 
 /// Window icons from the icon resource embedded in the executable.
 pub use native::set_window_icon;
+/// The user's display languages, most preferred first.
+pub use native::ui_languages;
 /// Screen geometry and pointer state for docking the window, in physical pixels.
 pub use native::{covers_point, monitor_at, mouse_button_held};
 
@@ -66,6 +68,6 @@ pub fn collectors() -> Vec<Arc<dyn CollectorFactory>> {
     ]
 }
 
-pub fn show_startup_error(message: &str) {
-    native::show_error(message);
+pub fn show_startup_error(title: &str, message: &str) {
+    native::show_error(title, message);
 }
