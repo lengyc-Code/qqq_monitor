@@ -56,6 +56,9 @@ pub const STRINGS: Strings = Strings {
     dock_right: "画面の右端にドッキング",
     restore_window: "ウィンドウを元に戻す",
 
+    tray_open: "メインウィンドウを表示",
+    tray_exit: "終了",
+
     days: |v| format!("{v} 日"),
     state_ready: "リアルタイム",
     state_stale: "データが古い",
@@ -181,6 +184,8 @@ pub const STRINGS: Strings = Strings {
     animations_option: "軽いアニメーションと看板娘の揺れを有効にする",
     edge_docking: "端へのドッキング",
     edge_docking_option: "上端か左右の端へドラッグするとミニバーになる",
+    minimize_to_tray: "トレイに最小化",
+    minimize_to_tray_option: "最小化するとタスクトレイにアイコンだけを残す",
     apply_save: "適用して保存",
     runtime_status: "動作状況",
     batches: |received, dropped| format!("受信バッチ {received}  ·  破棄バッチ {dropped}"),

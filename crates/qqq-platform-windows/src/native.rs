@@ -374,7 +374,7 @@ pub fn mouse_button_held() -> bool {
 }
 
 /// Resource ID of the application icon that `build.rs` embeds from `assets/qqq_monitor.rc`.
-const APP_ICON: u16 = 1;
+pub(crate) const APP_ICON: u16 = 1;
 
 /// Sets the title-bar and taskbar icons of a window from the icon embedded in the executable,
 /// loading for each the size the system uses at the window's DPI.

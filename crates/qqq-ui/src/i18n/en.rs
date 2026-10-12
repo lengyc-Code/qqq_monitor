@@ -56,6 +56,9 @@ pub const STRINGS: Strings = Strings {
     dock_right: "Dock to the right edge",
     restore_window: "Restore the full window",
 
+    tray_open: "Show main window",
+    tray_exit: "Exit",
+
     days: |v| match v {
         1 => "1 day".into(),
         _ => format!("{v} days"),
@@ -184,6 +187,8 @@ pub const STRINGS: Strings = Strings {
     animations_option: "Light animations and a bobbing mascot",
     edge_docking: "Edge docking",
     edge_docking_option: "Dragging to the top or a side edge shows the mini bar",
+    minimize_to_tray: "Minimize to tray",
+    minimize_to_tray_option: "Minimizing leaves only an icon in the notification area",
     apply_save: "Apply & save",
     runtime_status: "Status",
     batches: |received, dropped| format!("Batches received {received}  ·  dropped {dropped}"),

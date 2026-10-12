@@ -105,6 +105,10 @@ fn run() -> Result<(), String> {
         monitor_at: qqq_platform_windows::monitor_at,
         covers: qqq_platform_windows::covers_point,
         button_held: qqq_platform_windows::mouse_button_held,
+        show_tray: qqq_platform_windows::show_tray,
+        hide_tray: qqq_platform_windows::hide_tray,
+        tray_opened: qqq_platform_windows::tray_opened,
+        taskbar_button: qqq_platform_windows::set_taskbar_button,
     };
     let result = eframe::run_native(
         "QQQ Monitor",
@@ -114,6 +118,10 @@ fn run() -> Result<(), String> {
                 && let RawWindowHandle::Win32(handle) = handle.as_raw()
             {
                 qqq_platform_windows::set_window_icon(handle.hwnd.get());
+                let context = cc.egui_ctx.clone();
+                qqq_platform_windows::attach_tray(handle.hwnd.get(), move || {
+                    context.request_repaint()
+                });
             }
             Ok(Box::new(DesktopApp::new(
                 cc,
@@ -126,6 +134,8 @@ fn run() -> Result<(), String> {
         }),
     )
     .map_err(|e| e.to_string());
+    // The shell keeps an icon until it is removed, even after the process exits.
+    qqq_platform_windows::hide_tray();
     runtime.shutdown();
     result
 }

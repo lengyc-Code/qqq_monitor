@@ -4,6 +4,7 @@ mod gpu;
 mod inventory;
 mod native;
 mod network;
+mod tray;
 
 use qqq_domain::*;
 use std::{sync::Arc, time::Duration};
@@ -14,6 +15,11 @@ pub use native::set_window_icon;
 pub use native::ui_languages;
 /// Screen geometry and pointer state for docking the window, in physical pixels.
 pub use native::{covers_point, monitor_at, mouse_button_held};
+/// Notification-area icon and taskbar button of the application window.
+pub use tray::{
+    attach as attach_tray, hide as hide_tray, opened as tray_opened, set_taskbar_button,
+    show as show_tray,
+};
 
 struct BuiltinFactory {
     descriptor: CollectorDescriptor,

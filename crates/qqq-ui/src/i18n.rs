@@ -46,6 +46,10 @@ pub struct Strings {
     pub dock_right: &'static str,
     pub restore_window: &'static str,
 
+    // Notification-area icon menu.
+    pub tray_open: &'static str,
+    pub tray_exit: &'static str,
+
     // Readings and shared components.
     pub days: fn(u64) -> String,
     pub state_ready: &'static str,
@@ -195,6 +199,8 @@ pub struct Strings {
     pub animations_option: &'static str,
     pub edge_docking: &'static str,
     pub edge_docking_option: &'static str,
+    pub minimize_to_tray: &'static str,
+    pub minimize_to_tray_option: &'static str,
     pub apply_save: &'static str,
     pub runtime_status: &'static str,
     /// Received and dropped sample batches.

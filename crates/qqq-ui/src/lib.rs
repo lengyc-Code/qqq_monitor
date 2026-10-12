@@ -8,6 +8,7 @@ mod mascot;
 mod minibar;
 mod pixel;
 mod theme;
+mod tray;
 
 pub use app::*;
 pub use dock::{Desktop, viewport};

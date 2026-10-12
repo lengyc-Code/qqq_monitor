@@ -70,6 +70,8 @@ pub struct AppConfig {
     pub window_position: Option<[f32; 2]>,
     /// Dock a window dragged against the top, left or right screen edge.
     pub edge_docking: bool,
+    /// Hide a minimized window in the notification area.
+    pub minimize_to_tray: bool,
     /// Edge of the compact status bar; `None` shows the full window.
     pub dock: Option<DockEdge>,
     /// Outer position of the compact status bar, in points.
@@ -87,6 +89,7 @@ impl Default for AppConfig {
             window_size: [1280.0, 800.0],
             window_position: None,
             edge_docking: true,
+            minimize_to_tray: true,
             dock: None,
             dock_position: None,
         }
@@ -177,6 +180,7 @@ impl ConfigStore {
                     field!(window_size, [f32; 2]);
                     field!(window_position, Option<[f32; 2]>);
                     field!(edge_docking, bool);
+                    field!(minimize_to_tray, bool);
                     field!(dock, Option<DockEdge>);
                     field!(dock_position, Option<[f32; 2]>);
                 }

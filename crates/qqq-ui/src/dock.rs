@@ -36,7 +36,8 @@ pub fn bar_size(edge: DockEdge) -> Vec2 {
 /// Rectangle edges as `[left, top, right, bottom]`.
 pub type Edges = [f32; 4];
 
-/// Monitor queries answered by the host platform, in physical pixels of the virtual screen.
+/// Monitor queries and shell integration answered by the host platform; points are in
+/// physical pixels of the virtual screen.
 #[derive(Clone, Copy)]
 pub struct Desktop {
     /// Bounds and work area of the monitor nearest to a point.
@@ -45,6 +46,16 @@ pub struct Desktop {
     pub covers: fn([f32; 2]) -> bool,
     /// Whether a mouse button is held, including while the system moves the window.
     pub button_held: fn() -> bool,
+    /// Shows the notification-area icon with a tooltip and the labels of its "open" and
+    /// "exit" menu items, or updates the text of the shown icon.
+    pub show_tray: fn(&str, &str, &str),
+    /// Removes the notification-area icon.
+    pub hide_tray: fn(),
+    /// Whether the user asked for the window from the icon since the last call.
+    pub tray_opened: fn() -> bool,
+    /// Shows or removes the taskbar button of the visible window; `false` while the window
+    /// has not appeared yet.
+    pub taskbar_button: fn(bool) -> bool,
 }
 
 /// Work area of the monitor around a window, in points, and which of its

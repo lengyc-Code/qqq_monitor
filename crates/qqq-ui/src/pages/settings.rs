@@ -35,6 +35,7 @@ impl DesktopApp {
                         t.default_range,
                         t.animations,
                         t.edge_docking,
+                        t.minimize_to_tray,
                     ],
                     14.0,
                 ) + 8.0;
@@ -104,6 +105,11 @@ impl DesktopApp {
                     row_label(ui, t.edge_docking);
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                     ui.checkbox(&mut self.config.edge_docking, t.edge_docking_option);
+                });
+                ui.horizontal(|ui| {
+                    row_label(ui, t.minimize_to_tray);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    ui.checkbox(&mut self.config.minimize_to_tray, t.minimize_to_tray_option);
                 });
                 ui.horizontal(|ui| {
                     let width = (label_width(ui, &[t.apply_save], 14.0) + 76.0).max(150.0);

@@ -56,6 +56,9 @@ pub const STRINGS: Strings = Strings {
     dock_right: "吸附到屏幕右侧",
     restore_window: "还原完整窗口",
 
+    tray_open: "显示主窗口",
+    tray_exit: "退出",
+
     days: |v| format!("{v} 天"),
     state_ready: "实时",
     state_stale: "数据过期",
@@ -181,6 +184,8 @@ pub const STRINGS: Strings = Strings {
     animations_option: "启用轻量动效与看板娘晃动",
     edge_docking: "边缘吸附",
     edge_docking_option: "拖到屏幕顶部或左右边缘时收起为迷你状态栏",
+    minimize_to_tray: "最小化到托盘",
+    minimize_to_tray_option: "最小化时只在任务栏托盘保留图标",
     apply_save: "应用并保存",
     runtime_status: "运行状态",
     batches: |received, dropped| format!("接收采样批次 {received}  ·  丢失批次 {dropped}"),

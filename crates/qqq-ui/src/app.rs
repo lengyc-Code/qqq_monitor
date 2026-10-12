@@ -1,7 +1,7 @@
 #[path = "pages/mod.rs"]
 mod pages;
 
-use crate::{components, dock, i18n, mascot, minibar, pixel, theme};
+use crate::{components, dock, i18n, mascot, minibar, pixel, theme, tray};
 use eframe::egui::{self, RichText, pos2, vec2};
 use qqq_domain::{DeviceKind, MetricKey};
 use qqq_engine::{
@@ -78,6 +78,7 @@ pub struct DesktopApp {
     closing: bool,
     dock: dock::Dock,
     desktop: dock::Desktop,
+    tray: tray::Tray,
     /// Language the "follow system" setting resolves to.
     system_language: Language,
 }
@@ -103,6 +104,7 @@ impl DesktopApp {
         Self {
             dock: dock::Dock::new(&config),
             desktop,
+            tray: tray::Tray::default(),
             system_language,
             range: config.history_secs,
             active_config: config.clone(),
@@ -427,6 +429,20 @@ impl eframe::App for DesktopApp {
         }
         self.select_initial_devices();
         self.query();
+        if self.capture.is_none() {
+            self.tray.update(
+                ctx,
+                &self.desktop,
+                self.dock.edge().is_some(),
+                self.active_config.minimize_to_tray,
+            );
+            if self.tray.opened(ctx, &self.desktop) {
+                if self.dock.edge().is_some() {
+                    self.dock.restore(ctx, &self.desktop, None);
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+        }
         self.dock
             .update(ctx, &self.desktop, self.active_config.edge_docking);
         if !self.closing && ctx.input(|i| i.viewport().close_requested()) {

@@ -13,7 +13,7 @@
   <b>English</b> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a>
 </p>
 
-QQQ Monitor is a multi-purpose task manager for Windows, written in Rust. Version 0.1.0 focuses on real-time performance monitoring: it collects CPU, memory, GPU, disk and network data from native Windows APIs, shows history charts and device details in a native GUI, and can dock to a screen edge as an always-on-top mini bar. Process management, alerts and a tray icon are planned for later versions.
+QQQ Monitor is a multi-purpose task manager for Windows, written in Rust. Version 0.1.0 focuses on real-time performance monitoring: it collects CPU, memory, GPU, disk and network data from native Windows APIs, shows history charts and device details in a native GUI, and can dock to a screen edge as an always-on-top mini bar. Docked or minimized, it stays in the notification area. Process management and alerts are planned for later versions.
 
 ## Main window
 
@@ -33,7 +33,7 @@ Navigation and the mascot sit on the left and the current page on the right. The
 | GPU | GPU usage from the busiest engine (matching Task Manager), the load of each engine type (3D, copy, video encode and decode, compute and more), dedicated and shared GPU memory; switch between graphics cards and click an engine to see its history |
 | Disk | Physical disk read and write rates with history; label, file system, free and total space of every local volume |
 | Network | Receive and send rates of the selected adapter, a history chart and the traffic of this session |
-| Settings | Language, sampling interval, default history range, animations and edge docking; runtime status, collector diagnostics, history memory and a manual device refresh |
+| Settings | Language, sampling interval, default history range, animations, edge docking and minimize to tray; runtime status, collector diagnostics, history memory and a manual device refresh |
 
 Metric definitions:
 
@@ -65,6 +65,12 @@ Drag the window to the top, left or right screen edge and release it: the window
 - The three buttons in the status bar of the main window dock it to the top, left or right edge directly.
 - Windows snap and maximize gestures keep their system behavior.
 - When the app closes while docked, it starts as the mini bar next time.
+
+### Notification area
+
+- While docked as the mini bar, the window leaves the taskbar and an icon appears in the notification area.
+- Minimize to tray on the Settings page is on by default: minimizing the full window hides it and leaves only the icon.
+- Clicking the icon or choosing Show main window from its menu restores and activates the full window; Exit saves the configuration and closes the app.
 
 ### MINT, the mascot
 
@@ -103,7 +109,7 @@ Pages, cards, charts, status and error messages, device names and details, MINT'
 
 ### Configuration
 
-The Settings page applies changes with Apply & save: the sampling interval (0.5, 1 or 2 seconds), the default history range, animations and edge docking take effect at once, and a background thread writes them to a TOML file. The language takes effect and is saved as soon as you click it. The adapter selection, window position and size, docked edge and mini bar position are saved on close.
+The Settings page applies changes with Apply & save: the sampling interval (0.5, 1 or 2 seconds), the default history range, animations, edge docking and minimize to tray take effect at once, and a background thread writes them to a TOML file. The language takes effect and is saved as soon as you click it. The adapter selection, window position and size, docked edge and mini bar position are saved on close.
 
 | File | Location |
 | --- | --- |
@@ -163,9 +169,9 @@ flowchart TD
 | `src/` | Logging setup, wiring, system language detection, the DX12 window and window icon, the command-line smoke test and capture, orderly shutdown |
 | `build.rs`, `assets/` | Multi-size application icon and resource script, embedded into the EXE at build time |
 | `crates/qqq-domain/` | Devices, metrics, units, reading states and unavailability reasons, plus the `Collector` and `CollectorFactory` interfaces |
-| `crates/qqq-platform-windows/` | CPU and memory through sysinfo; network through IP Helper; disk I/O, GPU engines and GPU memory through PDH; graphics cards through DXGI; local volume capacity; monitor work areas and mouse state; the user's display languages; window icons from the EXE resources. Native calls live in `native.rs`, with RAII handle management |
+| `crates/qqq-platform-windows/` | CPU and memory through sysinfo; network through IP Helper; disk I/O, GPU engines and GPU memory through PDH; graphics cards through DXGI; local volume capacity; monitor work areas and mouse state; the user's display languages; window icons from the EXE resources; the notification-area icon, its menu and the taskbar button. Native calls live in `native.rs` and `tray.rs`, with RAII handle management |
 | `crates/qqq-engine/` | Sampling schedule, counter deltas and warm-up, bounded history and display projection, immutable views, configuration (including the interface language) with background saving, and language-neutral command and configuration notices |
-| `crates/qqq-ui/` | Seven pages, edge docking and the mini bar, charts and shared components, the theme, pixel drawing (bitmap font, icons, sprites), the mascot (pixel sprites generated from illustrations at build time), interface text in three languages and the embedded CJK font |
+| `crates/qqq-ui/` | Seven pages, edge docking and the mini bar, the tray presence, charts and shared components, the theme, pixel drawing (bitmap font, icons, sprites), the mascot (pixel sprites generated from illustrations at build time), interface text in three languages and the embedded CJK font |
 
 ### Data flow
 
