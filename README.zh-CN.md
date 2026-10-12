@@ -253,6 +253,23 @@ cargo run -p qqq-remote --example probe -- 127.0.0.1 test --port 2222 --password
 
 自动测试覆盖速率计算、预热与失败恢复、过期判定、历史预算与投影缺口、慢采集隔离、命令上限、配置保存与损坏保护、GPU 计数器解析、吸附边缘判定与迷你状态栏定位、进程 CPU 使用率与实例匹配、进程轮询与操作结果、Windows 进程枚举与按实例操作、WSL 进程输出解析、远程主机的连接状态与重连策略、主机密钥核对、Linux `/proc` 与 `df` 输出解析和按远程时钟计算速率、`~/.ssh/config` 导入、Windows 凭据管理器读写，以及系统语言匹配、各语言文本表与看板娘台词宽度；运行时测试使用可控的假采集器驱动完整引擎。
 
+## 发布
+
+`scripts\release.ps1` 发布 `Cargo.toml` 中的当前版本，标签为 `v<版本>`。先提升 `Cargo.toml` 中的版本号并提交，再把 Release 说明写成 Markdown 文件，然后运行：
+
+```powershell
+.\scripts\release.ps1 -NotesFile <说明文件>
+```
+
+脚本先确认工作区干净、位于 `main` 且与 `origin/main` 同步、标签尚不存在且 GitHub CLI（`gh`）已登录，然后运行上述 fmt、Clippy 与 Release 测试，以静态链接的 C 运行库构建 `x86_64-pc-windows-msvc` Release 版，确认程序不依赖 VC++ 运行库并运行冒烟测试。程序、`LICENSE`、字体许可与三份 README 打包为 `target\dist\v<版本>\qqq_monitor-v<版本>-x86_64-pc-windows-msvc.zip`，同目录生成 `SHA256SUMS.txt`。最后推送 `main` 与附注标签，创建 GitHub Release 并上传这两个文件。
+
+| 参数 | 作用 |
+| --- | --- |
+| `-NotesFile PATH` | Release 说明的 Markdown 文件，发布时必填 |
+| `-PackageOnly` | 只检查、构建和打包，Git 与 GitHub 保持原样 |
+| `-Draft` | 以草稿创建 Release |
+| `-SkipChecks` | 跳过 fmt、Clippy、测试与冒烟测试 |
+
 ## 设计文档
 
 | 文档 | 内容 |

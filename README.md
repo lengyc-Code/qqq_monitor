@@ -253,6 +253,23 @@ While the server runs, the Remote page can add host `127.0.0.1` with port `2222`
 
 The automated tests cover rate calculation, warm-up and failure recovery, staleness, the history budget and projection gaps, slow collector isolation, the command limit, configuration saving and corruption protection, GPU counter parsing, docking edge detection and mini bar placement, process CPU usage and instance matching, process polling and action results, Windows process enumeration and per-instance actions, WSL process output parsing, remote host connection states and the reconnect policy, host key checks, parsing of Linux `/proc` and `df` output with rates by the host's clock, `~/.ssh/config` import, Windows Credential Manager access, system language matching, the text table of every language and the width of MINT's lines. Runtime tests drive the complete engine with controllable fake collectors.
 
+## Releasing
+
+`scripts\release.ps1` releases the current version in `Cargo.toml` under the tag `v<version>`. Raise the version in `Cargo.toml` and commit it, write the release notes as a Markdown file, then run:
+
+```powershell
+.\scripts\release.ps1 -NotesFile <notes file>
+```
+
+The script first makes sure the working tree is clean, `main` is checked out and in step with `origin/main`, the tag is new and the GitHub CLI (`gh`) is signed in. It then runs the fmt, Clippy and release test checks above, builds the `x86_64-pc-windows-msvc` release with the C runtime linked statically, confirms the program needs no VC++ runtime and runs the smoke test. The program, `LICENSE`, the font license and the three READMEs go into `target\dist\v<version>\qqq_monitor-v<version>-x86_64-pc-windows-msvc.zip`, with `SHA256SUMS.txt` beside it. Finally it pushes `main` and an annotated tag, creates the GitHub release and uploads both files.
+
+| Option | Effect |
+| --- | --- |
+| `-NotesFile PATH` | Markdown file with the release notes; required to publish |
+| `-PackageOnly` | Checks, builds and packages only, leaving Git and GitHub as they are |
+| `-Draft` | Creates the release as a draft |
+| `-SkipChecks` | Skips fmt, Clippy, the tests and the smoke test |
+
 ## Design documents
 
 The design documents are written in Simplified Chinese.

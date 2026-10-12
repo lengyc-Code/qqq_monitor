@@ -43,6 +43,8 @@ qqq_monitor/
 ├── src/
 │   ├── main.rs                      # GUI、冒烟、截图、关闭
 │   └── bootstrap.rs                 # 日志初始化
+├── scripts/
+│   └── release.ps1                  # 检查、构建、打包并发布 GitHub Release
 ├── crates/
 │   ├── qqq-domain/src/
 │   │   ├── lib.rs
