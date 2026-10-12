@@ -1,8 +1,8 @@
 #[path = "pages/mod.rs"]
 mod pages;
 
-use crate::theme;
-use eframe::egui::{self, RichText};
+use crate::{components, mascot, pixel, theme};
+use eframe::egui::{self, RichText, pos2, vec2};
 use qqq_domain::{DeviceKind, MetricKey};
 use qqq_engine::{AppConfig, CommandOutcome, MonitorClient, MonitorCommand, MonitorView};
 use std::{
@@ -31,6 +31,16 @@ impl Page {
             Self::Settings => "设置",
         }
     }
+    fn kicker(self) -> &'static str {
+        match self {
+            Self::Overview => "OVERVIEW",
+            Self::Cpu => "PROCESSOR",
+            Self::Memory => "MEMORY",
+            Self::Disk => "STORAGE",
+            Self::Network => "NETWORK",
+            Self::Settings => "CONFIG",
+        }
+    }
     fn hint(self) -> &'static str {
         match self {
             Self::Overview => "实时掌握电脑的运行状态",
@@ -55,7 +65,6 @@ pub struct DesktopApp {
     active_config: AppConfig,
     network: String,
     disk: String,
-    volume: String,
     core: String,
     range: u64,
     last_query: Vec<MetricKey>,
@@ -92,7 +101,6 @@ impl DesktopApp {
             page,
             network: String::new(),
             disk: String::new(),
-            volume: String::new(),
             core: String::new(),
             last_query: Vec::new(),
             last_range: 0,
@@ -156,19 +164,14 @@ impl DesktopApp {
                 self.network = device.id.clone();
             }
         }
-        for (selection, kind) in [
-            (&mut self.disk, DeviceKind::Disk),
-            (&mut self.volume, DeviceKind::Volume),
-        ] {
-            if selection.is_empty()
-                && let Some(device) = self
-                    .view
-                    .devices
-                    .values()
-                    .find(|d| d.kind == kind && d.online)
-            {
-                *selection = device.id.clone();
-            }
+        if self.disk.is_empty()
+            && let Some(device) = self
+                .view
+                .devices
+                .values()
+                .find(|d| d.kind == DeviceKind::Disk && d.online)
+        {
+            self.disk = device.id.clone();
         }
     }
     fn query(&mut self) {
@@ -212,52 +215,152 @@ impl DesktopApp {
             }
         }
     }
-    fn sidebar(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::left("navigation")
-            .default_size(156.0)
+    fn sidebar(&mut self, ui: &mut egui::Ui, view: &MonitorView) {
+        let panel = egui::Panel::left("navigation")
+            .exact_size(172.0)
             .resizable(false)
-            .frame(egui::Frame::new().fill(theme::BACKGROUND).inner_margin(14))
+            .show_separator_line(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::NIGHT)
+                    .inner_margin(egui::Margin {
+                        left: 14,
+                        right: 16,
+                        top: 16,
+                        bottom: 10,
+                    }),
+            )
             .show(ui, |ui| {
-                ui.add_space(6.0);
-                ui.label(RichText::new("QQQ").size(28.0).strong().color(theme::CYAN));
-                ui.label(
-                    RichText::new("M O N I T O R")
-                        .size(10.0)
-                        .color(theme::MUTED),
-                );
-                ui.add_space(22.0);
-                ui.label(RichText::new("性能监控").size(11.0).color(theme::MUTED));
-                ui.add_space(4.0);
-                for (page, symbol, name) in [
-                    (Page::Overview, "●", "总览"),
-                    (Page::Cpu, "▤", "CPU"),
-                    (Page::Memory, "▦", "内存"),
-                    (Page::Disk, "▣", "磁盘"),
-                    (Page::Network, "↕", "网络"),
-                    (Page::Settings, "⚙", "设置"),
-                ] {
-                    let selected = self.page == page;
-                    let text = format!("{symbol}    {name}");
-                    if theme::soft_button(
+                ui.spacing_mut().item_spacing.y = 6.0;
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    pixel::label(
                         ui,
-                        &text,
-                        selected,
-                        egui::vec2(ui.available_width(), 36.0),
+                        "QQQ",
+                        4.0,
+                        theme::TEAL,
+                        pixel::Effect::Drop(theme::PINK),
+                    );
+                    pixel::icon(ui, &pixel::ICON_SPARKLE, 1.5, theme::GOLD, theme::GOLD_SOFT);
+                });
+                pixel::label(ui, "MONITOR", 2.0, theme::NIGHT_MUTED, pixel::Effect::Plain);
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    pixel::icon(ui, &pixel::ICON_HEART, 1.0, theme::PINK_SOFT, theme::PINK);
+                    ui.label(
+                        RichText::new("性能监控")
+                            .size(11.0)
+                            .color(theme::NIGHT_MUTED),
+                    );
+                });
+                for (page, icon, name) in [
+                    (Page::Overview, &pixel::ICON_STAR, "总览"),
+                    (Page::Cpu, &pixel::ICON_CPU, "CPU"),
+                    (Page::Memory, &pixel::ICON_MEMORY, "内存"),
+                    (Page::Disk, &pixel::ICON_DISK, "磁盘"),
+                    (Page::Network, &pixel::ICON_NETWORK, "网络"),
+                    (Page::Settings, &pixel::ICON_GEAR, "设置"),
+                ] {
+                    if theme::nav_button(
+                        ui,
+                        name,
+                        icon,
+                        self.page == page,
+                        vec2(ui.available_width(), 40.0),
                     )
                     .clicked()
                     {
                         self.page = page;
                     }
                 }
-                ui.add_space(20.0);
-                ui.separator();
+                mascot::show(ui, view, self.config.animations);
+            });
+        let rect = panel.response.rect;
+        let border = pixel::unit(ui.ctx(), 2.0);
+        ui.painter().rect_filled(
+            pixel::snap_rect(
+                ui.ctx(),
+                egui::Rect::from_x_y_ranges(rect.right() - border..=rect.right(), rect.y_range()),
+            ),
+            0.0,
+            theme::TEAL,
+        );
+    }
+    fn header(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    pixel::icon(ui, &pixel::ICON_SPARKLE, 1.0, theme::INK, theme::GOLD);
+                    pixel::label(
+                        ui,
+                        self.page.kicker(),
+                        1.5,
+                        theme::PINK,
+                        pixel::Effect::Plain,
+                    );
+                });
+                ui.heading(self.page.title());
                 ui.label(
-                    RichText::new("WINDOWS / LIVE")
-                        .size(10.0)
-                        .color(theme::MUTED),
+                    RichText::new(self.page.hint())
+                        .color(theme::MUTED)
+                        .size(12.0),
                 );
             });
+            if self.page != Page::Settings {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    for (secs, label) in [(900, "15 分钟"), (300, "5 分钟"), (60, "60 秒")] {
+                        if theme::chip(ui, label, self.range == secs).clicked() {
+                            self.range = secs;
+                        }
+                    }
+                    ui.label(RichText::new("历史范围").size(12.0).color(theme::MUTED));
+                });
+            }
+        });
     }
+}
+
+/// Faint pixel dots with an occasional sparkle behind the page content.
+fn backdrop(ui: &egui::Ui) {
+    let ctx = ui.ctx();
+    let rect = ui.clip_rect();
+    let dot = pixel::unit(ctx, 2.0);
+    let sparkle = pixel::unit(ctx, 1.0);
+    let step = 32.0;
+    let mut shapes = Vec::new();
+    for row in 0..=(rect.height() / step) as usize {
+        for column in 0..=(rect.width() / step) as usize {
+            let offset = if row % 2 == 0 { 0.0 } else { step / 2.0 };
+            let at = pixel::snap(
+                ctx,
+                pos2(
+                    rect.left() + 12.0 + column as f32 * step + offset,
+                    rect.top() + 12.0 + row as f32 * step,
+                ),
+            );
+            if (row * 7 + column * 3) % 11 == 0 {
+                pixel::icon_shapes(
+                    &mut shapes,
+                    at - egui::Vec2::splat(4.0 * sparkle),
+                    sparkle,
+                    &pixel::ICON_SPARKLE,
+                    theme::PAGE_DOT,
+                    theme::PAGE,
+                );
+            } else {
+                shapes.push(egui::Shape::rect_filled(
+                    egui::Rect::from_min_size(at, egui::Vec2::splat(dot)),
+                    0.0,
+                    theme::PAGE_DOT,
+                ));
+            }
+        }
+    }
+    ui.painter().extend(shapes);
 }
 
 impl eframe::App for DesktopApp {
@@ -324,29 +427,30 @@ impl eframe::App for DesktopApp {
     }
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
         let view = Arc::clone(&self.view);
-        egui::Panel::bottom("status")
+        let status = egui::Panel::bottom("status")
             .resizable(false)
+            .show_separator_line(false)
             .frame(
                 egui::Frame::new()
-                    .fill(theme::BACKGROUND)
-                    .inner_margin(egui::Margin::symmetric(14, 6)),
+                    .fill(theme::NIGHT)
+                    .inner_margin(egui::Margin {
+                        left: 14,
+                        right: 14,
+                        top: 7,
+                        bottom: 5,
+                    }),
             )
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    let errors = view.diagnostics.collector_errors.len();
-                    ui.label(
-                        RichText::new(if errors == 0 {
-                            "●  监控运行中"
-                        } else {
-                            "●  部分采集不可用"
-                        })
-                        .size(12.0)
-                        .color(if errors == 0 {
-                            theme::GREEN
-                        } else {
-                            theme::WARNING
-                        }),
-                    );
+                    let (text, color) = if view.diagnostics.collector_errors.is_empty() {
+                        ("监控运行中", theme::TEAL)
+                    } else {
+                        ("部分采集不可用", theme::GOLD)
+                    };
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    components::pixel_dot(ui, color);
+                    ui.label(RichText::new(text).size(12.0).color(color));
+                    ui.add_space(8.0);
                     ui.label(
                         RichText::new(format!(
                             "采样 {:.1}s  ·  会话 {:.0}s",
@@ -354,48 +458,52 @@ impl eframe::App for DesktopApp {
                             view.elapsed
                         ))
                         .size(12.0)
-                        .color(theme::MUTED),
+                        .color(theme::NIGHT_MUTED),
                     );
                     if !self.message.is_empty() {
-                        ui.label(
-                            RichText::new(&self.message)
-                                .size(12.0)
-                                .color(theme::WARNING),
-                        );
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(&self.message).size(12.0).color(theme::GOLD));
                     }
                 });
             });
-        self.sidebar(ui);
+        let rect = status.response.rect;
+        let border = pixel::unit(ui.ctx(), 2.0);
+        ui.painter().rect_filled(
+            pixel::snap_rect(
+                ui.ctx(),
+                egui::Rect::from_x_y_ranges(rect.x_range(), rect.top()..=rect.top() + border),
+            ),
+            0.0,
+            theme::TEAL,
+        );
+        self.sidebar(ui, &view);
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(theme::BACKGROUND).inner_margin(16))
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::PAGE)
+                    .inner_margin(egui::Margin {
+                        left: 18,
+                        right: 14,
+                        top: 14,
+                        bottom: 4,
+                    }),
+            )
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 4.0;
-                        ui.heading(self.page.title());
-                        ui.label(
-                            RichText::new(self.page.hint())
-                                .color(theme::MUTED)
-                                .size(12.0),
-                        );
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        for (secs, label) in [(900, "15 分钟"), (300, "5 分钟"), (60, "60 秒")]
-                        {
-                            ui.selectable_value(&mut self.range, secs, label);
-                        }
-                    });
-                });
-                ui.add_space(8.0);
+                backdrop(ui);
+                self.header(ui);
+                ui.add_space(6.0);
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .show(ui, |ui| match self.page {
-                        Page::Overview => self.overview(ui, &view),
-                        Page::Cpu => self.cpu(ui, &view),
-                        Page::Memory => self.memory(ui, &view),
-                        Page::Disk => self.disk(ui, &view),
-                        Page::Network => self.network(ui, &view),
-                        Page::Settings => self.settings(ui, &view),
+                    .show(ui, |ui| {
+                        match self.page {
+                            Page::Overview => self.overview(ui, &view),
+                            Page::Cpu => self.cpu(ui, &view),
+                            Page::Memory => self.memory(ui, &view),
+                            Page::Disk => self.disk(ui, &view),
+                            Page::Network => self.network(ui, &view),
+                            Page::Settings => self.settings(ui, &view),
+                        }
+                        ui.add_space(8.0);
                     });
             });
         self.query();
