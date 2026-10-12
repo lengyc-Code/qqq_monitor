@@ -5,6 +5,7 @@ mod inventory;
 mod native;
 mod network;
 mod process;
+mod secret;
 mod tray;
 mod wsl;
 
@@ -100,6 +101,11 @@ impl ProcessPlatform for Processes {
 /// Windows processes and those of running WSL distributions.
 pub fn processes() -> Arc<dyn ProcessPlatform> {
     Arc::new(Processes)
+}
+
+/// Passwords and passphrases in the Windows Credential Manager.
+pub fn secrets() -> Arc<dyn SecretStore> {
+    Arc::new(secret::Credentials)
 }
 
 pub fn show_startup_error(title: &str, message: &str) {

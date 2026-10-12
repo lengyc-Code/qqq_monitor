@@ -52,7 +52,7 @@ impl DesktopApp {
         let mut volumes: Vec<_> = view
             .devices
             .values()
-            .filter(|d| d.kind == DeviceKind::Volume)
+            .filter(|d| d.kind == DeviceKind::Volume && d.host.is_none())
             .collect();
         volumes.sort_by(|a, b| a.name.cmp(&b.name));
         if volumes.is_empty() {
@@ -66,73 +66,18 @@ impl DesktopApp {
         for row in volumes.chunks(columns) {
             ui.columns(columns, |uis| {
                 for (index, volume) in row.iter().enumerate() {
-                    let ui = &mut uis[index];
-                    let usage = view.value(&volume.id, "usage");
-                    let detail = |name: &str| {
-                        volume
-                            .details
-                            .iter()
-                            .find(|(key, _)| key == name)
-                            .map(|(_, value)| value.as_str())
-                            .filter(|value| !value.is_empty())
-                    };
-                    theme::card()
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = 6.0;
-                            ui.horizontal(|ui| {
-                                tag(
-                                    ui,
-                                    Some(&pixel::ICON_DISK),
-                                    &device_name(volume),
-                                    theme::DISK,
-                                );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if volume.online {
-                                            pixel::label(
-                                                ui,
-                                                &format_value(usage, Unit::Percent),
-                                                2.0,
-                                                theme::INK,
-                                                pixel::Effect::Plain,
-                                            );
-                                        } else {
-                                            ui.label(
-                                                RichText::new(t.state_offline)
-                                                    .size(12.0)
-                                                    .color(theme::MUTED),
-                                            );
-                                        }
-                                    },
-                                );
-                            });
-                            segment_bar(
-                                ui,
-                                usage,
-                                theme::level_color(usage.unwrap_or(0.0), theme::GOLD),
-                                16.0,
-                            );
-                            ui.label(
-                                RichText::new((t.volume_space)(
-                                    &format_value(view.value(&volume.id, "available"), Unit::Bytes),
-                                    &format_value(view.value(&volume.id, "total"), Unit::Bytes),
-                                ))
-                                .size(12.0),
-                            );
-                            ui.label(
-                                RichText::new(format!(
-                                    "{}  ·  {}",
-                                    detail("volume_label").unwrap_or(t.no_label),
-                                    detail("file_system").unwrap_or(t.unknown_file_system)
-                                ))
-                                .size(11.0)
-                                .color(theme::MUTED),
-                            );
-                            metric_status(ui, view, &MetricKey::new(&volume.id, "usage"));
-                        })
-                        .response
-                        .on_hover_text(detail("volume_guid").unwrap_or_default());
+                    let subtitle = format!(
+                        "{}  ·  {}",
+                        detail(volume, "volume_label").unwrap_or(t.no_label),
+                        detail(volume, "file_system").unwrap_or(t.unknown_file_system)
+                    );
+                    volume_card(
+                        &mut uis[index],
+                        view,
+                        volume,
+                        &subtitle,
+                        detail(volume, "volume_guid").unwrap_or_default(),
+                    );
                 }
             });
         }

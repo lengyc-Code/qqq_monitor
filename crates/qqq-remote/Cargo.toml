@@ -1,0 +1,16 @@
+[package]
+name = "qqq-remote"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+qqq-domain.workspace = true
+russh.workspace = true
+tokio.workspace = true
+directories.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["process", "io-util", "rt-multi-thread"] }

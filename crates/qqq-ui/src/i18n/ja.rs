@@ -43,6 +43,11 @@ pub const STRINGS: Strings = Strings {
         title: "プロセス",
         hint: "Windows と実行中の WSL ディストリビューションのプロセスを管理",
     },
+    remote_page: PageText {
+        nav: "リモート",
+        title: "リモートホスト",
+        hint: "SSH で Linux ホストのシステム情報と主要な指標を監視",
+    },
     settings_page: PageText {
         nav: "設定",
         title: "設定",
@@ -225,6 +230,64 @@ pub const STRINGS: Strings = Strings {
     kill_warning: "強制終了するとプロセスはすぐに停止し、保存されていないデータは失われます。",
     cancel: "キャンセル",
     priorities: ["低", "通常以下", "通常", "通常以上", "高", "リアルタイム"],
+
+    remote_add: "ホストを追加",
+    remote_empty: "リモートホストはまだありません。SSH でログインできる Linux ホストを追加すると、システム情報、CPU、メモリ、ディスク、ネットワーク、ファイルシステムをここで確認できます。",
+    remote_connecting: "接続中…",
+    remote_connected: "接続済み",
+    remote_failed: |reason| format!("接続できません：{reason}"),
+    remote_retrying: "まもなく再試行します",
+    remote_key_unknown: |fingerprint| {
+        format!(
+            "このホストへの初めての接続です。ホスト鍵のフィンガープリントをサーバー管理者に確認し、一致した場合のみ信頼してください：\n{fingerprint}"
+        )
+    },
+    remote_key_changed: |fingerprint| {
+        format!(
+            "ホスト鍵が以前に信頼した鍵と異なります。サーバーが再インストールされたか、なりすましの可能性があります。確認できた場合のみ新しい鍵を信頼してください：\n{fingerprint}"
+        )
+    },
+    remote_trust: "信頼して接続",
+    remote_trust_new: "新しい鍵を信頼",
+    remote_edit: "編集",
+    remote_reconnect: "再接続",
+    remote_remove: "削除",
+    remote_remove_confirm: |name| format!("リモートホスト「{name}」を削除しますか？"),
+    remote_remove_warning: "資格情報マネージャーに保存したパスワードまたはパスフレーズと、収集したデータも削除されます。",
+    remote_auth_password: "パスワード",
+    remote_auth_key: "秘密鍵ファイル",
+    remote_auth_agent: "SSH エージェント",
+    remote_add_title: "リモートホストを追加",
+    remote_edit_title: "リモートホストを編集",
+    remote_import: "SSH 設定から読み込む",
+    remote_name: "名前",
+    remote_name_hint: "省略可。空欄ならアドレスを表示",
+    remote_address: "アドレス",
+    remote_address_hint: "ホスト名または IP アドレス",
+    remote_port: "ポート",
+    remote_user: "ユーザー名",
+    remote_auth: "ログイン方法",
+    remote_password: "パスワード",
+    remote_password_keep: "空欄なら保存済みのパスワードを使用",
+    remote_key_file: "秘密鍵ファイル",
+    remote_key_hint: "例：~/.ssh/id_ed25519",
+    remote_passphrase: "パスフレーズ",
+    remote_passphrase_hint: "暗号化されていない鍵では空欄",
+    remote_passphrase_keep: "空欄なら保存済みのパスフレーズを使用",
+    remote_agent_hint: "Windows の OpenSSH Authentication Agent サービスまたは Pageant に読み込まれた鍵を使います。",
+    remote_secret_note: "パスワードとパスフレーズは Windows 資格情報マネージャーに保存され、設定ファイルには書き込まれません。",
+    remote_save: "保存して接続",
+    remote_missing: |field| format!("{field}を入力してください"),
+    remote_bad_port: "ポートは 1〜65535 の数字で指定してください",
+    remote_hostname: "ホスト名",
+    remote_load: "ロードアベレージ",
+    remote_cpu_detail: |iowait, processes| format!("I/O 待ち {iowait} · プロセス {processes}"),
+    remote_swap: "スワップ",
+    remote_no_swap: "なし",
+    remote_volumes_title: "ファイルシステム",
+    remote_volumes_hint: "ローカルファイルシステムの容量。使用率は df と同じ基準",
+    remote_cores_hint: "各論理コアの現在の負荷",
+    yes: "はい",
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -242,6 +305,10 @@ fn detail(key: &str) -> Option<&'static str> {
         "volume_label" => "ボリューム ラベル",
         "file_system" => "ファイルシステム",
         "volume_guid" => "ボリューム GUID",
+        "kernel" => "カーネル",
+        "architecture" => "アーキテクチャ",
+        "default_route" => "デフォルトルート",
+        "device" => "デバイス",
         _ => return None,
     })
 }
@@ -287,6 +354,25 @@ fn reason(reason: &Reason) -> String {
             "アクセスが拒否されました。管理者として実行してからやり直してください".into()
         }
         Reason::HostStopped => "WSL ディストリビューションは停止しています".into(),
+        Reason::AddressNotFound => "ホスト名を解決できません".into(),
+        Reason::ConnectionRefused => {
+            "接続が拒否されました。アドレス、ポート、SSH サービスを確認してください".into()
+        }
+        Reason::TimedOut => "接続がタイムアウトしました".into(),
+        Reason::ConnectionLost => "接続が切れました".into(),
+        Reason::Handshake => {
+            "SSH ハンドシェイクに失敗しました。双方が対応するアルゴリズムがありません".into()
+        }
+        Reason::HostKeyUnknown { .. } => "ホスト鍵がまだ信頼されていません".into(),
+        Reason::HostKeyChanged { .. } => "ホスト鍵が信頼済みの鍵と異なります".into(),
+        Reason::AuthFailed => "ユーザー名、パスワード、または鍵が拒否されました".into(),
+        Reason::NoPassword => "パスワードが保存されていません".into(),
+        Reason::KeyUnreadable => "秘密鍵ファイルを読み込めません".into(),
+        Reason::KeyPassphrase => {
+            "秘密鍵が暗号化されており、パスフレーズがないか正しくありません".into()
+        }
+        Reason::NoAgent => "SSH エージェントが動作していないか、鍵がありません".into(),
+        Reason::NotLinux => "ホストに POSIX シェルまたは Linux の /proc がありません".into(),
     }
 }
 
@@ -311,6 +397,10 @@ fn notice(notice: &Notice) -> String {
         Notice::InvalidDirectory => "設定フォルダーが無効です".into(),
         Notice::System(error) => error.clone(),
         Notice::Process(reason) => format!("プロセスの操作に失敗しました：{}", self::reason(reason)),
+        Notice::InvalidRemoteHost => "リモートホストの設定が無効です".into(),
+        Notice::SecretUnsaved(reason) => {
+            format!("パスワードを保存できません：{}", self::reason(reason))
+        }
     }
 }
 

@@ -5,6 +5,7 @@ mod history;
 mod normalize;
 mod notice;
 mod process;
+mod remote;
 mod runtime;
 mod view;
 
@@ -12,5 +13,6 @@ pub use config::*;
 pub use history::HistoryPoint;
 pub use notice::*;
 pub use process::{ProcessRow, ProcessTable, ProcessView};
+pub use remote::{RemoteState, RemoteStatus, RemoteView, Secret, needs_user};
 pub use runtime::*;
 pub use view::*;

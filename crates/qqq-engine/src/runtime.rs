@@ -3,6 +3,7 @@ use crate::{
     history::{History, HistoryPoint},
     normalize::Normalizer,
     process::{self, ActionJob, NoProcesses, ProcessEvent},
+    remote::{NoRemote, RemoteState, RemoteStatus, RemoteUpdate, Remotes, Secret},
 };
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use qqq_domain::*;
@@ -18,6 +19,9 @@ use std::{
 };
 
 type UiWake = Arc<dyn Fn() + Send + Sync>;
+
+/// Prefix of the source of a remote host's readings, followed by the host ID.
+const REMOTE_SOURCE: &str = "ssh:";
 
 #[derive(Debug)]
 pub enum MonitorCommand {
@@ -37,6 +41,14 @@ pub enum MonitorCommand {
         process: ProcessId,
         action: ProcessAction,
     },
+    /// Saves, or with `None` removes, the password or key passphrase of a remote host,
+    /// then reconnects the host.
+    RemoteSecret {
+        host: String,
+        secret: Option<Secret>,
+    },
+    /// Connects a remote host again at once.
+    Reconnect(String),
 }
 
 #[derive(Debug)]
@@ -60,7 +72,7 @@ struct SaveJob {
     explicit: bool,
 }
 struct CollectorEvent {
-    source: &'static str,
+    source: Arc<str>,
     period: Duration,
     result: Result<SampleBatch, Reason>,
     dropped: u64,
@@ -149,6 +161,8 @@ impl MonitorClient {
 pub struct MonitorRuntime {
     client: MonitorClient,
     threads: Vec<JoinHandle<()>>,
+    /// Remote host workers, which the engine thread starts and stops.
+    remote_threads: Arc<Mutex<Vec<JoinHandle<()>>>>,
 }
 impl MonitorRuntime {
     /// Starts the engine without process access.
@@ -158,9 +172,18 @@ impl MonitorRuntime {
     ) -> Result<Self, Notice> {
         Self::start_with_processes(factories, Arc::new(NoProcesses), loaded)
     }
+    /// Starts the engine without remote access.
     pub fn start_with_processes(
         factories: Vec<Arc<dyn CollectorFactory>>,
         processes: Arc<dyn ProcessPlatform>,
+        loaded: LoadedConfig,
+    ) -> Result<Self, Notice> {
+        Self::start_with_remote(factories, processes, Arc::new(NoRemote), loaded)
+    }
+    pub fn start_with_remote(
+        factories: Vec<Arc<dyn CollectorFactory>>,
+        processes: Arc<dyn ProcessPlatform>,
+        remote: Arc<dyn RemotePlatform>,
         loaded: LoadedConfig,
     ) -> Result<Self, Notice> {
         loaded.config.validate()?;
@@ -191,6 +214,7 @@ impl MonitorRuntime {
         let mut runtime = Self {
             client,
             threads: Vec::new(),
+            remote_threads: Arc::new(Mutex::new(Vec::new())),
         };
         let mut inputs = Vec::new();
         for factory in factories {
@@ -233,6 +257,11 @@ impl MonitorRuntime {
                 })
                 .map_err(|e| Notice::System(e.to_string()))?,
         );
+        let remotes = Remotes::new(
+            remote,
+            Arc::clone(&control),
+            Arc::clone(&runtime.remote_threads),
+        );
         let engine_client = runtime.client.clone();
         control.engine_done.store(false, Ordering::Release);
         match thread::Builder::new()
@@ -247,6 +276,7 @@ impl MonitorRuntime {
                     save_rx,
                     process_rx,
                     action_tx,
+                    remotes,
                     loaded.config,
                     loaded.warning,
                 )
@@ -268,7 +298,12 @@ impl MonitorRuntime {
         while self.threads.iter().any(|t| !t.is_finished()) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(10));
         }
-        for handle in self.threads.drain(..) {
+        // The engine thread has stopped the remote workers by now, or starts no more.
+        let remote: Vec<_> = self.remote_threads.lock().unwrap().drain(..).collect();
+        while remote.iter().any(|t| !t.is_finished()) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        for handle in self.threads.drain(..).chain(remote) {
             if handle.is_finished() {
                 if handle.join().is_err() {
                     tracing::error!("后台线程退出异常");
@@ -291,6 +326,7 @@ fn collector_worker(
     control: Arc<Control>,
 ) {
     let descriptor = factory.descriptor();
+    let source: Arc<str> = descriptor.id.into();
     let mut collector = None;
     let mut dropped = 0_u64;
     let mut retry = 1_u64;
@@ -345,7 +381,7 @@ fn collector_worker(
             collector = None;
         }
         match tx.try_send(CollectorEvent {
-            source: descriptor.id,
+            source: Arc::clone(&source),
             period,
             result: outcome,
             dropped,
@@ -397,17 +433,110 @@ struct EngineState {
     view: MonitorView,
     history: History,
     normalizer: Normalizer,
-    metric_sources: BTreeMap<MetricKey, &'static str>,
-    device_sources: BTreeMap<String, &'static str>,
-    dropped: BTreeMap<&'static str, u64>,
+    metric_sources: BTreeMap<MetricKey, Arc<str>>,
+    device_sources: BTreeMap<String, Arc<str>>,
+    dropped: BTreeMap<Arc<str>, u64>,
     query: Vec<MetricKey>,
     range: u64,
     latest_save: Option<u64>,
     start: Instant,
     /// Host whose processes the GUI watches.
     watched: Option<ProcessHost>,
+    remotes: Remotes,
 }
 impl EngineState {
+    fn set_remote_state(&mut self, host: &str, state: RemoteState) {
+        let hosts = &mut self.view.remote.hosts;
+        if hosts.get(host).is_none_or(|status| status.state != state) {
+            hosts.insert(
+                host.into(),
+                RemoteStatus {
+                    state,
+                    since: Instant::now(),
+                },
+            );
+        }
+    }
+    /// Takes an update of a remote host's worker. Batches pass through the same checks,
+    /// rates and history as this computer's, under the host's device prefix.
+    fn receive_remote(&mut self, host: &str, update: RemoteUpdate) {
+        let source: Arc<str> = format!("{REMOTE_SOURCE}{host}").into();
+        match update {
+            RemoteUpdate::Connecting => {
+                // Keeps the reason visible while a retry connects.
+                if !matches!(
+                    self.view.remote.hosts.get(host).map(|s| &s.state),
+                    Some(RemoteState::Failed(_))
+                ) {
+                    self.set_remote_state(host, RemoteState::Connecting);
+                }
+            }
+            RemoteUpdate::Batch {
+                mut batch,
+                period,
+                dropped,
+            } => {
+                self.set_remote_state(host, RemoteState::Connected);
+                for device in &mut batch.devices {
+                    device.id = remote_device(host, &device.id);
+                    device.host = Some(host.into());
+                }
+                for sample in &mut batch.samples {
+                    let key = &mut sample.descriptor.key;
+                    key.device = remote_device(host, &key.device);
+                }
+                self.receive(CollectorEvent {
+                    source,
+                    period,
+                    result: Ok(batch),
+                    dropped,
+                });
+            }
+            RemoteUpdate::Failed(reason) => {
+                self.set_remote_state(host, RemoteState::Failed(reason.clone()));
+                let dropped = self.dropped.get(&source).copied().unwrap_or(0);
+                self.receive(CollectorEvent {
+                    source,
+                    period: Duration::ZERO,
+                    result: Err(reason),
+                    dropped,
+                });
+            }
+        }
+    }
+    /// Matches the remote workers to the configured hosts and drops the devices, readings
+    /// and history that no longer apply.
+    fn apply_remote_hosts(&mut self) {
+        let hosts = &self.view.config.remote_hosts;
+        for id in self.remotes.apply(hosts) {
+            let prefix = remote_prefix(&id);
+            let ours = |device: &str| device.starts_with(&prefix);
+            self.view.devices.retain(|id, _| !ours(id));
+            self.device_sources.retain(|id, _| !ours(id));
+            self.view.metrics.retain(|key, _| !ours(&key.device));
+            self.metric_sources.retain(|key, _| !ours(&key.device));
+            self.history.series.retain(|key, _| !ours(&key.device));
+            self.normalizer.retain(|key| !ours(&key.device));
+            self.dropped.remove(format!("{REMOTE_SOURCE}{id}").as_str());
+            self.view.remote.hosts.remove(&id);
+        }
+        let hosts = &self.view.config.remote_hosts;
+        self.view
+            .remote
+            .hosts
+            .retain(|id, _| hosts.iter().any(|h| h.id == *id));
+        for host in hosts {
+            if !self.view.remote.hosts.contains_key(&host.id) {
+                self.view.remote.hosts.insert(
+                    host.id.clone(),
+                    RemoteStatus {
+                        state: RemoteState::Connecting,
+                        since: Instant::now(),
+                    },
+                );
+            }
+        }
+    }
     fn receive_processes(&mut self, event: ProcessEvent) {
         let processes = &mut self.view.processes;
         match event {
@@ -427,7 +556,7 @@ impl EngineState {
     fn receive(&mut self, event: CollectorEvent) {
         let old_dropped = self
             .dropped
-            .insert(event.source, event.dropped)
+            .insert(Arc::clone(&event.source), event.dropped)
             .unwrap_or(0);
         if event.dropped > old_dropped {
             self.view.diagnostics.dropped_batches += event.dropped - old_dropped;
@@ -457,10 +586,14 @@ impl EngineState {
         }
         match event.result {
             Err(error) => {
-                self.view
-                    .diagnostics
-                    .collector_errors
-                    .insert(event.source.into(), error.clone());
+                // A remote host reports its failure in its own status, not as a collector
+                // of this computer.
+                if !event.source.starts_with(REMOTE_SOURCE) {
+                    self.view
+                        .diagnostics
+                        .collector_errors
+                        .insert(event.source.to_string(), error.clone());
+                }
                 for (key, reading) in &mut self.view.metrics {
                     if self.metric_sources.get(key) == Some(&event.source) {
                         reading.state = SampleState::Failed;
@@ -478,7 +611,10 @@ impl EngineState {
             }
             Ok(batch) => {
                 self.view.diagnostics.received_batches += 1;
-                self.view.diagnostics.collector_errors.remove(event.source);
+                self.view
+                    .diagnostics
+                    .collector_errors
+                    .remove(&*event.source);
                 if batch.complete_inventory {
                     let present: BTreeSet<_> =
                         batch.devices.iter().map(|d| d.id.as_str()).collect();
@@ -491,7 +627,8 @@ impl EngineState {
                     }
                 }
                 for device in batch.devices {
-                    self.device_sources.insert(device.id.clone(), event.source);
+                    self.device_sources
+                        .insert(device.id.clone(), Arc::clone(&event.source));
                     self.view.devices.insert(device.id.clone(), device);
                 }
                 for sample in batch.samples {
@@ -504,10 +641,11 @@ impl EngineState {
                         self.view
                             .diagnostics
                             .collector_errors
-                            .insert(event.source.into(), Reason::KeyConflict);
+                            .insert(event.source.to_string(), Reason::KeyConflict);
                         continue;
                     }
-                    self.metric_sources.insert(key.clone(), event.source);
+                    self.metric_sources
+                        .insert(key.clone(), Arc::clone(&event.source));
                     let reading =
                         self.view
                             .metrics
@@ -612,6 +750,7 @@ fn engine_worker(
     saves: Receiver<CommandResult>,
     process_events: Receiver<ProcessEvent>,
     actions: Sender<ActionJob>,
+    remotes: Remotes,
     config: AppConfig,
     warning: Option<Notice>,
 ) {
@@ -630,7 +769,10 @@ fn engine_worker(
         latest_save: None,
         start: Instant::now(),
         watched: None,
+        remotes,
     };
+    state.view.remote.presets = Arc::new(state.remotes.platform.presets());
+    state.apply_remote_hosts();
     let mut last_publish = Instant::now();
     while !client.control.stop.load(Ordering::Acquire) || !requests.is_empty() {
         let mut dirty = false;
@@ -642,6 +784,10 @@ fn engine_worker(
         }
         for event in process_events.try_iter().take(8) {
             state.receive_processes(event);
+            dirty = true;
+        }
+        for (host, update) in state.remotes.updates() {
+            state.receive_remote(&host, update);
             dirty = true;
         }
         for saved in saves.try_iter() {
@@ -689,6 +835,18 @@ fn engine_worker(
                     Err(TrySendError::Full(_)) => Err(Notice::Busy),
                     Err(TrySendError::Disconnected(_)) => Err(Notice::Stopped),
                 },
+                MonitorCommand::RemoteSecret { host, secret } => {
+                    let secret = secret.as_ref().map(|s| s.0.as_str());
+                    let result = state.remotes.platform.set_secret(&host, secret);
+                    state.remotes.reconnect(&host);
+                    result
+                        .map(|()| CommandOutcome::Applied)
+                        .map_err(Notice::SecretUnsaved)
+                }
+                MonitorCommand::Reconnect(host) => {
+                    state.remotes.reconnect(&host);
+                    Ok(CommandOutcome::Applied)
+                }
                 MonitorCommand::RefreshInventory => {
                     client.control.refresh.fetch_add(1, Ordering::Release);
                     client.control.sleep.notify_all();
@@ -703,6 +861,7 @@ fn engine_worker(
                             .store(config.sampling_ms, Ordering::Release);
                         client.control.sleep.notify_all();
                         state.view.config = config.clone();
+                        state.apply_remote_hosts();
                         state.latest_save = Some(request.id);
                         state.view.save_status = SaveStatus::Saving;
                         let mut slot = pending.lock().unwrap();
@@ -736,5 +895,6 @@ fn engine_worker(
         }
         client.control.wait(Duration::from_millis(25));
     }
+    state.remotes.stop();
     client.control.engine_done.store(true, Ordering::Release);
 }

@@ -13,7 +13,7 @@
   <b>English</b> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a>
 </p>
 
-QQQ Monitor is a multi-purpose task manager for Windows, written in Rust. Version 0.1.0 focuses on real-time performance monitoring: it collects CPU, memory, GPU, disk and network data from native Windows APIs, shows history charts and device details in a native GUI, and can dock to a screen edge as an always-on-top mini bar. Docked or minimized, it stays in the notification area. It also lists and manages the processes of Windows and of running WSL distributions. Alerts are planned for a later version.
+QQQ Monitor is a multi-purpose task manager for Windows, written in Rust. Version 0.1.0 focuses on real-time performance monitoring: it collects CPU, memory, GPU, disk and network data from native Windows APIs, shows history charts and device details in a native GUI, and can dock to a screen edge as an always-on-top mini bar. Docked or minimized, it stays in the notification area. It also lists and manages the processes of Windows and of running WSL distributions, and monitors one or more Linux hosts over SSH. Alerts are planned for a later version.
 
 ## Main window
 
@@ -34,6 +34,7 @@ Navigation and the mascot sit on the left and the current page on the right. The
 | Disk | Physical disk read and write rates with history; label, file system, free and total space of every local volume |
 | Network | Receive and send rates of the selected adapter, a history chart and the traffic of this session |
 | Processes | Processes of Windows and of each running WSL distribution: name, PID, user, CPU, memory, threads, priority and command line; search, sorting by column, ending processes and changing their priority |
+| Remote | Linux hosts over SSH: a device profile (host name, distribution, kernel and architecture, processor, memory and swap, uptime, load average), CPU and memory trends, read and write of a chosen disk, traffic of a chosen adapter, file system capacity and a heat grid of the logical cores |
 | Settings | Language, sampling interval, default history range, animations, edge docking and minimize to tray; runtime status, collector diagnostics, history memory and a manual device refresh |
 
 Metric definitions:
@@ -81,6 +82,17 @@ Drag the window to the top, left or right screen edge and release it: the window
 - Windows processes are handled with the rights of the current account, so system processes and those of other accounts need the app to run as administrator. WSL processes are handled as root. Every action first checks the start time of the process, so a PID that a new process reuses never reaches the new process.
 - Processes are read only while the Processes page is shown: every second on Windows and every 2 seconds under WSL. Each read first confirms that the distribution still runs, so a stopped distribution never starts; while its processes are shown, the distribution keeps running.
 
+### Remote hosts
+
+![Remote Hosts page](docs/images/remote.en.png)
+
+- On the Remote page, Add host asks for the address, port and user, and a sign-in method: a password, a key file (Ed25519, ECDSA or RSA keys in OpenSSH or PuTTY format, with the passphrase of an encrypted key), or the SSH agent (keys loaded in the Windows OpenSSH Authentication Agent service or Pageant). Import from SSH config lists the hosts of `~/.ssh/config` and fills in the address, port, user and key file.
+- The first connection shows the SHA-256 fingerprint of the host key; Trust and connect accepts it once you have checked it. Hosts already in `~/.ssh/known_hosts` connect at once. A host that offers a key other than the trusted one is not connected, and the page warns about it; you can trust the new key once you are sure.
+- Each host keeps one SSH connection with one POSIX shell on it, which reads `/proc` and `df` at the sampling interval, at least once a second. The host needs only basic commands such as `sh`, `cat` and `df`, busybox systems included; nothing is installed on it.
+- Rates follow the host's own clock. The adapter of the default route is selected by default; disks are whole physical disks; file systems are the local ones, with usage as `df` reports it.
+- A dropped, refused or timed-out connection reconnects by itself, waiting from 2 up to 60 seconds. A rejected user name, password or key and an untrusted host key wait for you to change the settings or click Reconnect, so repeated failed sign-ins never trip the server's ban rules.
+- Remote history spans 15 minutes like that of this computer and keeps recording on every page; removing a host also removes its data and its saved password.
+
 ### MINT, the mascot
 
 MINT is a girl with long teal hair, a pink streak and fluffy white cat ears. A black cat plush rests on her headband, she wears a white capelet and a black dress, and a golden bell hangs at her collar; the interface colors come from her look. She lives at the bottom of the sidebar and changes her expression and lines with the live CPU and memory load, so the sidebar doubles as a health indicator:
@@ -118,11 +130,12 @@ Pages, cards, charts, status and error messages, device names and details, MINT'
 
 ### Configuration
 
-The Settings page applies changes with Apply & save: the sampling interval (0.5, 1 or 2 seconds), the default history range, animations, edge docking and minimize to tray take effect at once, and a background thread writes them to a TOML file. The language takes effect and is saved as soon as you click it. The adapter selection, window position and size, docked edge and mini bar position are saved on close.
+The Settings page applies changes with Apply & save: the sampling interval (0.5, 1 or 2 seconds), the default history range, animations, edge docking and minimize to tray take effect at once, and a background thread writes them to a TOML file. The language takes effect and is saved as soon as you click it. The adapter selection, window position and size, docked edge and mini bar position are saved on close. Remote hosts are saved as soon as you add, edit or remove one or trust its host key; passwords and passphrases are kept in Windows Credential Manager, not in the configuration file.
 
 | File | Location |
 | --- | --- |
 | Configuration | `%APPDATA%\qqq_monitor\config\config.toml` |
+| Remote host passwords | Windows Credential Manager, generic credentials `qqq_monitor/ssh/<host ID>` |
 | Logs | `%LOCALAPPDATA%\qqq_monitor\data\logs`, rotated daily, 7 files kept |
 
 ## Getting started
@@ -147,7 +160,7 @@ The executable is `target\release\qqq_monitor.exe` and runs as is. A standard us
 | --- | --- |
 | `--smoke-test` | Runs for about 8 seconds, checks that CPU, memory, physical disk I/O, network, volume capacity and the Windows process list all have valid readings, and prints every metric including the GPU and the process count of each running WSL distribution; exits with code 0 when every check passes |
 | `--capture PATH` | Starts the real GUI, saves the window as a PNG after about 8 seconds and exits, leaving the user configuration as it is; the parent folder of `PATH` must exist |
-| `--page PAGE` | Page for `--capture`: `overview`, `cpu`, `memory`, `gpu`, `disk`, `network`, `processes`, `settings` |
+| `--page PAGE` | Page for `--capture`: `overview`, `cpu`, `memory`, `gpu`, `disk`, `network`, `processes`, `remote`, `settings` |
 | `--dock EDGE` | Starts as the mini bar: `top`, `left`, `right`; with `--capture` it captures the mini bar |
 | `--lang LANG` | Starts in an interface language, like choosing it on the Settings page: `zh-CN`, `en`, `ja`; with `--capture` it captures pages in that language |
 | `--help` | Lists the options (in Simplified Chinese) |
@@ -160,27 +173,30 @@ cargo run --release -- --capture "$PWD\target\settings-ja.png" --page settings -
 
 ## Architecture
 
-The project is a Cargo workspace of four library crates and a launcher package. The domain model and the monitoring engine are independent of Windows and the GUI; the launcher injects the concrete collectors, and the GUI only reads immutable views that the engine publishes.
+The project is a Cargo workspace of five library crates and a launcher package. The domain model and the monitoring engine are independent of Windows and the GUI; the launcher injects the concrete collectors, and the GUI only reads immutable views that the engine publishes.
 
 ```mermaid
 flowchart TD
     BOOT[qqq_monitor<br>launch and wiring] --> UI[qqq-ui<br>pages and components]
     BOOT --> ENGINE[qqq-engine<br>monitoring engine]
     BOOT --> WIN[qqq-platform-windows<br>Windows collectors]
+    BOOT --> REMOTE[qqq-remote<br>SSH remote collection]
     UI --> ENGINE
     UI --> DOMAIN[qqq-domain<br>model and interfaces]
     ENGINE --> DOMAIN
     WIN --> DOMAIN
+    REMOTE --> DOMAIN
 ```
 
 | Path | Responsibility |
 | --- | --- |
 | `src/` | Logging setup, wiring, system language detection, the DX12 window and window icon, the command-line smoke test and capture, orderly shutdown |
 | `build.rs`, `assets/` | Multi-size application icon and resource script, embedded into the EXE at build time |
-| `crates/qqq-domain/` | Devices, metrics, units, reading states and unavailability reasons, process instances and actions, plus the `Collector`, `CollectorFactory` and `ProcessPlatform` interfaces |
-| `crates/qqq-platform-windows/` | CPU and memory through sysinfo; network through IP Helper; disk I/O, GPU engines and GPU memory through PDH; graphics cards through DXGI; local volume capacity; monitor work areas and mouse state; the user's display languages; window icons from the EXE resources; the notification-area icon, its menu and the taskbar button; Windows processes listed in one system call, ended and reprioritized; processes of running WSL distributions read and handled through `wsl.exe`. Native calls live in `native.rs`, `tray.rs` and `process.rs`, with RAII handle management |
-| `crates/qqq-engine/` | Sampling schedule, counter deltas and warm-up, bounded history and display projection, on-demand process polling with process CPU usage, process actions on their own thread, immutable views, configuration (including the interface language) with background saving, and language-neutral command and configuration notices |
-| `crates/qqq-ui/` | Eight pages including process management, edge docking and the mini bar, the tray presence, charts and shared components, the theme, pixel drawing (bitmap font, icons, sprites), the mascot (pixel sprites generated from illustrations at build time), interface text in three languages and the embedded CJK font |
+| `crates/qqq-domain/` | Devices, metrics, units, reading states and unavailability reasons, process instances and actions, remote host endpoints and sessions, plus the `Collector`, `CollectorFactory`, `ProcessPlatform`, `RemotePlatform` and `SecretStore` interfaces |
+| `crates/qqq-platform-windows/` | CPU and memory through sysinfo; network through IP Helper; disk I/O, GPU engines and GPU memory through PDH; graphics cards through DXGI; local volume capacity; monitor work areas and mouse state; the user's display languages; window icons from the EXE resources; the notification-area icon, its menu and the taskbar button; Windows processes listed in one system call, ended and reprioritized; processes of running WSL distributions read and handled through `wsl.exe`; remote host passwords and passphrases in Windows Credential Manager. Native calls live in `native.rs`, `tray.rs`, `process.rs` and `secret.rs`, with RAII handle management |
+| `crates/qqq-engine/` | Sampling schedule, counter deltas and warm-up, bounded history and display projection, on-demand process polling with process CPU usage, process actions on their own thread, a connection thread with a reconnect policy for each remote host, immutable views, configuration (including the interface language and remote hosts) with background saving, and language-neutral command and configuration notices |
+| `crates/qqq-remote/` | SSH client (russh): sign-in with a password, a private key or the SSH agent, host key checks against the trusted key or `known_hosts`, a POSIX shell on the host that reads `/proc` and `df`, rates by the host's clock, and the hosts of `~/.ssh/config` for importing |
+| `crates/qqq-ui/` | Nine pages including process management and remote hosts, edge docking and the mini bar, the tray presence, charts and shared components, the theme, pixel drawing (bitmap font, icons, sprites), the mascot (pixel sprites generated from illustrations at build time), interface text in three languages and the embedded CJK font |
 
 ### Data flow
 
@@ -202,7 +218,8 @@ flowchart LR
 - **Collector threads**: every collector creates, uses and releases its resources on its own thread and runs at the sampling interval or a fixed period (30 seconds for volume capacity). A failing collector is recreated with a backoff of 1 to 30 seconds while the others keep working.
 - **Backpressure**: every collector buffers at most 8 batches; when the buffer is full, the current batch is dropped and the history records a gap. At most 32 commands are in flight.
 - **Non-blocking rendering**: the engine builds views outside the lock, swaps a single `Arc` slot and requests a repaint; every frame, the GUI takes the latest view without blocking and submits history queries as needed.
-- **Safety boundary**: the domain, engine, GUI and launcher forbid `unsafe`; Windows FFI lives in `native.rs`, `tray.rs` and `process.rs` of the platform crate.
+- **Remote hosts**: each host has a thread with its own SSH connection and single-threaded tokio runtime; its readings carry the device prefix `ssh:<host ID>/` and pass through the same checks, history and projection as those of this computer.
+- **Safety boundary**: the domain, engine, GUI, remote collection and launcher forbid `unsafe`; Windows FFI lives in `native.rs`, `tray.rs`, `process.rs` and `secret.rs` of the platform crate.
 
 ### Extending
 
@@ -223,7 +240,16 @@ cargo run --release -- --smoke-test
 
 With a WSL distribution running, `cargo test -p qqq-platform-windows -- --ignored` starts and ends a test process inside it to check ending and reprioritizing WSL processes.
 
-The automated tests cover rate calculation, warm-up and failure recovery, staleness, the history budget and projection gaps, slow collector isolation, the command limit, configuration saving and corruption protection, GPU counter parsing, docking edge detection and mini bar placement, process CPU usage and instance matching, process polling and action results, Windows process enumeration and per-instance actions, WSL process output parsing, system language matching, the text table of every language and the width of MINT's lines. Runtime tests drive the complete engine with controllable fake collectors.
+Two examples of `qqq-remote` let you try remote monitoring on this computer: `wsl_sshd` is a development SSH server that listens on 127.0.0.1 and runs every command of a client in a WSL distribution, and `probe` connects to a host the way the monitor does and prints three rounds of readings. Create a host key with `ssh-keygen -t ed25519 -f "$env:TEMP\qqq-host"` (empty passphrase), then run:
+
+```powershell
+cargo run -p qqq-remote --example wsl_sshd -- --host-key "$env:TEMP\qqq-host" --password test
+cargo run -p qqq-remote --example probe -- 127.0.0.1 test --port 2222 --password test --trust
+```
+
+While the server runs, the Remote page can add host `127.0.0.1` with port `2222` and password `test` as well.
+
+The automated tests cover rate calculation, warm-up and failure recovery, staleness, the history budget and projection gaps, slow collector isolation, the command limit, configuration saving and corruption protection, GPU counter parsing, docking edge detection and mini bar placement, process CPU usage and instance matching, process polling and action results, Windows process enumeration and per-instance actions, WSL process output parsing, remote host connection states and the reconnect policy, host key checks, parsing of Linux `/proc` and `df` output with rates by the host's clock, `~/.ssh/config` import, Windows Credential Manager access, system language matching, the text table of every language and the width of MINT's lines. Runtime tests drive the complete engine with controllable fake collectors.
 
 ## Design documents
 

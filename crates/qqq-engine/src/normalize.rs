@@ -10,6 +10,10 @@ impl Normalizer {
     pub fn reset(&mut self, key: &MetricKey) {
         self.baselines.remove(key);
     }
+    /// Keeps only the baselines of the keys `keep` accepts.
+    pub fn retain(&mut self, keep: impl Fn(&MetricKey) -> bool) {
+        self.baselines.retain(|key, _| keep(key));
+    }
     pub fn apply(&mut self, reading: &mut MetricReading, sample: MetricSample) {
         reading.last_attempt = sample.at;
         reading.reason = None;

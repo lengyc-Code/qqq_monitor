@@ -31,6 +31,7 @@ pub struct Strings {
     pub disk_page: PageText,
     pub network_page: PageText,
     pub processes_page: PageText,
+    pub remote_page: PageText,
     pub settings_page: PageText,
 
     // Header and status bar.
@@ -236,6 +237,63 @@ pub struct Strings {
     pub cancel: &'static str,
     /// Priority classes from idle to realtime, in the order of `Priority`.
     pub priorities: [&'static str; 6],
+
+    // Remote hosts.
+    pub remote_add: &'static str,
+    pub remote_empty: &'static str,
+    pub remote_connecting: &'static str,
+    pub remote_connected: &'static str,
+    /// A failed connection, with the reason.
+    pub remote_failed: fn(&str) -> String,
+    pub remote_retrying: &'static str,
+    /// First connection to a host, with the fingerprint of the key it offers.
+    pub remote_key_unknown: fn(&str) -> String,
+    /// A host that offers another key than the trusted one, with the new fingerprint.
+    pub remote_key_changed: fn(&str) -> String,
+    pub remote_trust: &'static str,
+    pub remote_trust_new: &'static str,
+    pub remote_edit: &'static str,
+    pub remote_reconnect: &'static str,
+    pub remote_remove: &'static str,
+    /// Removal question for a host name.
+    pub remote_remove_confirm: fn(&str) -> String,
+    pub remote_remove_warning: &'static str,
+    pub remote_auth_password: &'static str,
+    pub remote_auth_key: &'static str,
+    pub remote_auth_agent: &'static str,
+    pub remote_add_title: &'static str,
+    pub remote_edit_title: &'static str,
+    pub remote_import: &'static str,
+    pub remote_name: &'static str,
+    pub remote_name_hint: &'static str,
+    pub remote_address: &'static str,
+    pub remote_address_hint: &'static str,
+    pub remote_port: &'static str,
+    pub remote_user: &'static str,
+    pub remote_auth: &'static str,
+    pub remote_password: &'static str,
+    pub remote_password_keep: &'static str,
+    pub remote_key_file: &'static str,
+    pub remote_key_hint: &'static str,
+    pub remote_passphrase: &'static str,
+    pub remote_passphrase_hint: &'static str,
+    pub remote_passphrase_keep: &'static str,
+    pub remote_agent_hint: &'static str,
+    pub remote_secret_note: &'static str,
+    pub remote_save: &'static str,
+    /// A required field left empty, by its label.
+    pub remote_missing: fn(&str) -> String,
+    pub remote_bad_port: &'static str,
+    pub remote_hostname: &'static str,
+    pub remote_load: &'static str,
+    /// Share of processor time waiting for I/O, and the number of processes.
+    pub remote_cpu_detail: fn(&str, &str) -> String,
+    pub remote_swap: &'static str,
+    pub remote_no_swap: &'static str,
+    pub remote_volumes_title: &'static str,
+    pub remote_volumes_hint: &'static str,
+    pub remote_cores_hint: &'static str,
+    pub yes: &'static str,
 }
 
 /// Index of the active language in [`Language::ALL`].
@@ -298,6 +356,7 @@ pub fn detail_value<'a>(key: &str, value: &'a str) -> &'a str {
         ("interface_type", "virtual") => t.virtual_adapter,
         ("memory_type", "dedicated") => t.dedicated_memory,
         ("memory_type", "shared") => t.shared_memory,
+        ("default_route", "yes") => t.yes,
         _ => value,
     }
 }
@@ -333,6 +392,10 @@ mod tests {
                 "volume_label",
                 "file_system",
                 "volume_guid",
+                "kernel",
+                "architecture",
+                "default_route",
+                "device",
             ] {
                 assert!((strings.detail)(key).is_some(), "{key}");
             }

@@ -35,6 +35,8 @@ pub fn format_value(value: Option<f64>, unit: Unit) -> String {
                     seconds % 60
                 )
             }
+            Unit::Count if value.fract() == 0.0 => format!("{value:.0}"),
+            Unit::Count => format!("{value:.2}"),
         })
         .unwrap_or_else(|| "—".into())
 }
@@ -400,7 +402,7 @@ pub fn primary_gpu(view: &MonitorView) -> Option<&DeviceDescriptor> {
     let total = |d: &DeviceDescriptor| view.value(&d.id, "memory_total").unwrap_or(0.0);
     view.devices
         .values()
-        .filter(|d| d.kind == DeviceKind::Gpu && d.online)
+        .filter(|d| d.kind == DeviceKind::Gpu && d.host.is_none() && d.online)
         .max_by(|a, b| total(a).total_cmp(&total(b)))
 }
 
@@ -591,12 +593,14 @@ pub fn device_details(ui: &mut egui::Ui, view: &MonitorView, device: &str, show_
     }
 }
 
+/// Selector of the devices of `kind` on remote `host`, or on this computer for `None`.
 pub fn device_selector(
     ui: &mut egui::Ui,
     view: &MonitorView,
     id: &str,
     selected: &mut String,
     kind: DeviceKind,
+    host: Option<&str>,
 ) -> bool {
     let t = i18n::t();
     let old = selected.clone();
@@ -616,7 +620,11 @@ pub fn device_selector(
         .width(300.0_f32.min(ui.available_width()))
         .selected_text(text)
         .show_ui(ui, |ui| {
-            for device in view.devices.values().filter(|d| d.kind == kind) {
+            for device in view
+                .devices
+                .values()
+                .filter(|d| d.kind == kind && d.host.as_deref() == host)
+            {
                 ui.selectable_value(selected, device.id.clone(), label(device));
             }
         });
@@ -637,13 +645,101 @@ pub fn device_picker(
             let changed = ui
                 .horizontal(|ui| {
                     tag(ui, Some(heading.0), heading.1, heading.2);
-                    device_selector(ui, view, id, selected, kind)
+                    device_selector(ui, view, id, selected, kind, None)
                 })
                 .inner;
             device_details(ui, view, selected, false);
             changed
         })
         .inner
+}
+
+/// Capacity card of a volume: usage in the bitmap font, a segmented bar, free and total
+/// space, and `subtitle` below; `hover` explains the card.
+pub fn volume_card(
+    ui: &mut egui::Ui,
+    view: &MonitorView,
+    volume: &DeviceDescriptor,
+    subtitle: &str,
+    hover: &str,
+) {
+    let t = i18n::t();
+    let usage = view.value(&volume.id, "usage");
+    let response = theme::card()
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.horizontal(|ui| {
+                // A long mount point keeps its end, which names the volume best.
+                let name = device_name(volume);
+                let usage_width = pixel::text_size("100.0%", pixel::unit(ui.ctx(), 2.0)).x + 12.0;
+                let room = ui.available_width() - usage_width - 9.0 * 1.5 - 32.0;
+                let shown = fit_end(ui, &name, 13.0, room);
+                let response = tag(ui, Some(&pixel::ICON_DISK), &shown, theme::DISK);
+                if shown != name {
+                    response.on_hover_text(&name);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if volume.online {
+                        pixel::label(
+                            ui,
+                            &format_value(usage, Unit::Percent),
+                            2.0,
+                            theme::INK,
+                            pixel::Effect::Plain,
+                        );
+                    } else {
+                        ui.label(
+                            RichText::new(t.state_offline)
+                                .size(12.0)
+                                .color(theme::MUTED),
+                        );
+                    }
+                });
+            });
+            segment_bar(
+                ui,
+                usage,
+                theme::level_color(usage.unwrap_or(0.0), theme::GOLD),
+                16.0,
+            );
+            ui.label(
+                RichText::new((t.volume_space)(
+                    &format_value(view.value(&volume.id, "available"), Unit::Bytes),
+                    &format_value(view.value(&volume.id, "total"), Unit::Bytes),
+                ))
+                .size(12.0),
+            );
+            ui.label(RichText::new(subtitle).size(11.0).color(theme::MUTED));
+            metric_status(ui, view, &MetricKey::new(&volume.id, "usage"));
+        })
+        .response;
+    if !hover.is_empty() {
+        response.on_hover_text(hover);
+    }
+}
+
+/// `text`, or its longest end after an ellipsis, that fits `width` at `size`.
+pub fn fit_end(ui: &egui::Ui, text: &str, size: f32, width: f32) -> String {
+    let fits = |text: &str| label_width(ui, &[text], size) <= width;
+    if fits(text) {
+        return text.into();
+    }
+    let starts: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+    starts
+        .iter()
+        .map(|&start| format!("…{}", &text[start..]))
+        .find(|candidate| fits(candidate))
+        .unwrap_or_else(|| "…".into())
+}
+
+/// Value of the device detail `key`, when present and not empty.
+pub fn detail<'a>(device: &'a DeviceDescriptor, key: &str) -> Option<&'a str> {
+    device
+        .details
+        .iter()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.as_str())
+        .filter(|value| !value.is_empty())
 }
 
 /// Clickable pixel tile whose heat-colored level rises with a load; `label`

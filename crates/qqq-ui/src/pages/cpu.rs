@@ -13,7 +13,7 @@ impl DesktopApp {
         let mut cores: Vec<_> = view
             .devices
             .values()
-            .filter(|d| d.kind == DeviceKind::Core)
+            .filter(|d| d.kind == DeviceKind::Core && d.host.is_none())
             .collect();
         cores.sort_by_key(|d| core_number(&d.id));
         let busiest = cores

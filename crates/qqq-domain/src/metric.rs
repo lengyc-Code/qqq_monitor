@@ -21,6 +21,8 @@ pub enum Unit {
     Bytes,
     BytesPerSecond,
     Seconds,
+    /// A plain number, such as the load average.
+    Count,
 }
 
 #[derive(Clone, Debug)]
@@ -72,6 +74,33 @@ pub enum Reason {
     AccessDenied,
     /// The WSL distribution is no longer running.
     HostStopped,
+    /// The remote host's name does not resolve to an address.
+    AddressNotFound,
+    /// The remote host refused the connection.
+    ConnectionRefused,
+    /// The remote host did not answer in time.
+    TimedOut,
+    /// The connection to the remote host closed or broke.
+    ConnectionLost,
+    /// The SSH handshake failed, for example without an algorithm both sides support.
+    Handshake,
+    /// No trusted host key is known for the remote host yet. `key` is the offered key as
+    /// an OpenSSH public key line, `fingerprint` its SHA-256 fingerprint.
+    HostKeyUnknown { key: String, fingerprint: String },
+    /// The remote host offered a key other than the trusted one.
+    HostKeyChanged { key: String, fingerprint: String },
+    /// The remote host rejected the sign-in.
+    AuthFailed,
+    /// No password is saved for the remote host.
+    NoPassword,
+    /// The private key file is missing, unreadable or not a private key.
+    KeyUnreadable,
+    /// The private key is encrypted, and the saved passphrase is missing or wrong.
+    KeyPassphrase,
+    /// No SSH agent is running, or it holds no keys.
+    NoAgent,
+    /// The remote host has no Linux `/proc` to read.
+    NotLinux,
 }
 
 #[derive(Clone, Debug)]

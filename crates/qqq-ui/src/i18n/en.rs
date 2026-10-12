@@ -43,6 +43,11 @@ pub const STRINGS: Strings = Strings {
         title: "Processes",
         hint: "Manage the processes of Windows and of running WSL distributions",
     },
+    remote_page: PageText {
+        nav: "Remote",
+        title: "Remote Hosts",
+        hint: "System information and key metrics of Linux hosts over SSH",
+    },
     settings_page: PageText {
         nav: "Settings",
         title: "Settings",
@@ -235,6 +240,64 @@ pub const STRINGS: Strings = Strings {
         "High",
         "Realtime",
     ],
+
+    remote_add: "Add host",
+    remote_empty: "No remote hosts yet. Add a Linux host you can sign in to over SSH to see its system information, CPU, memory, disks, network and file systems here.",
+    remote_connecting: "Connecting…",
+    remote_connected: "Connected",
+    remote_failed: |reason| format!("Connection failed: {reason}"),
+    remote_retrying: "Retrying shortly",
+    remote_key_unknown: |fingerprint| {
+        format!(
+            "First connection to this host. Check the host key fingerprint with the server's administrator and trust it only if it matches:\n{fingerprint}"
+        )
+    },
+    remote_key_changed: |fingerprint| {
+        format!(
+            "The host key differs from the trusted one: the server may have been reinstalled, or someone may be impersonating it. Trust the new key only once you are sure:\n{fingerprint}"
+        )
+    },
+    remote_trust: "Trust and connect",
+    remote_trust_new: "Trust new key",
+    remote_edit: "Edit",
+    remote_reconnect: "Reconnect",
+    remote_remove: "Remove",
+    remote_remove_confirm: |name| format!("Remove remote host \u{201c}{name}\u{201d}?"),
+    remote_remove_warning: "Its password or passphrase in Credential Manager and the collected data are removed too.",
+    remote_auth_password: "Password",
+    remote_auth_key: "Key file",
+    remote_auth_agent: "SSH agent",
+    remote_add_title: "Add Remote Host",
+    remote_edit_title: "Edit Remote Host",
+    remote_import: "Import from SSH config",
+    remote_name: "Name",
+    remote_name_hint: "Optional; the address shows when empty",
+    remote_address: "Address",
+    remote_address_hint: "Host name or IP address",
+    remote_port: "Port",
+    remote_user: "User",
+    remote_auth: "Sign-in",
+    remote_password: "Password",
+    remote_password_keep: "Leave empty to keep the saved password",
+    remote_key_file: "Key file",
+    remote_key_hint: "e.g. ~/.ssh/id_ed25519",
+    remote_passphrase: "Passphrase",
+    remote_passphrase_hint: "Leave empty for an unencrypted key",
+    remote_passphrase_keep: "Leave empty to keep the saved passphrase",
+    remote_agent_hint: "Uses the keys loaded in the Windows OpenSSH Authentication Agent service or Pageant.",
+    remote_secret_note: "Passwords and passphrases are kept in Windows Credential Manager, not in the settings file.",
+    remote_save: "Save and connect",
+    remote_missing: |field| format!("{field} is required"),
+    remote_bad_port: "The port must be a number from 1 to 65535",
+    remote_hostname: "Host name",
+    remote_load: "Load average",
+    remote_cpu_detail: |iowait, processes| format!("I/O wait {iowait} · {processes} processes"),
+    remote_swap: "Swap",
+    remote_no_swap: "Off",
+    remote_volumes_title: "File Systems",
+    remote_volumes_hint: "Capacity of local file systems; usage matches df",
+    remote_cores_hint: "Current load of each logical core",
+    yes: "Yes",
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -252,6 +315,10 @@ fn detail(key: &str) -> Option<&'static str> {
         "volume_label" => "Volume label",
         "file_system" => "File system",
         "volume_guid" => "Volume GUID",
+        "kernel" => "Kernel",
+        "architecture" => "Architecture",
+        "default_route" => "Default route",
+        "device" => "Device",
         _ => return None,
     })
 }
@@ -289,6 +356,23 @@ fn reason(reason: &Reason) -> String {
         Reason::ProcessGone => "the process has exited".into(),
         Reason::AccessDenied => "access denied; run as administrator and try again".into(),
         Reason::HostStopped => "the WSL distribution has stopped".into(),
+        Reason::AddressNotFound => "the host name does not resolve".into(),
+        Reason::ConnectionRefused => {
+            "connection refused; check the address, port and SSH service".into()
+        }
+        Reason::TimedOut => "the connection timed out".into(),
+        Reason::ConnectionLost => "the connection was lost".into(),
+        Reason::Handshake => "SSH handshake failed: no algorithm both sides support".into(),
+        Reason::HostKeyUnknown { .. } => "the host key is not trusted yet".into(),
+        Reason::HostKeyChanged { .. } => "the host key differs from the trusted one".into(),
+        Reason::AuthFailed => "the user name, password or key was rejected".into(),
+        Reason::NoPassword => "no password is saved".into(),
+        Reason::KeyUnreadable => "the key file cannot be read".into(),
+        Reason::KeyPassphrase => {
+            "the key is encrypted and its passphrase is missing or wrong".into()
+        }
+        Reason::NoAgent => "no SSH agent is running, or it holds no keys".into(),
+        Reason::NotLinux => "the host offers no POSIX shell or Linux /proc".into(),
     }
 }
 
@@ -316,6 +400,10 @@ fn notice(notice: &Notice) -> String {
         Notice::InvalidDirectory => "Invalid settings folder".into(),
         Notice::System(error) => error.clone(),
         Notice::Process(reason) => format!("Process action failed: {}", self::reason(reason)),
+        Notice::InvalidRemoteHost => "Invalid remote host settings".into(),
+        Notice::SecretUnsaved(reason) => {
+            format!("The password could not be saved: {}", self::reason(reason))
+        }
     }
 }
 

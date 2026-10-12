@@ -43,6 +43,11 @@ pub const STRINGS: Strings = Strings {
         title: "进程",
         hint: "查看并管理 Windows 与运行中的 WSL 发行版里的进程",
     },
+    remote_page: PageText {
+        nav: "远程",
+        title: "远程主机",
+        hint: "通过 SSH 监控 Linux 主机的系统信息与主要指标",
+    },
     settings_page: PageText {
         nav: "设置",
         title: "设置",
@@ -225,6 +230,62 @@ pub const STRINGS: Strings = Strings {
     kill_warning: "强制结束会立即终止进程，未保存的数据会丢失。",
     cancel: "取消",
     priorities: ["低", "低于正常", "正常", "高于正常", "高", "实时"],
+
+    remote_add: "添加主机",
+    remote_empty: "还没有远程主机。添加一台能用 SSH 登录的 Linux 主机，即可在这里查看它的系统信息、CPU、内存、磁盘、网络与文件系统。",
+    remote_connecting: "正在连接…",
+    remote_connected: "已连接",
+    remote_failed: |reason| format!("连接失败：{reason}"),
+    remote_retrying: "稍后自动重试",
+    remote_key_unknown: |fingerprint| {
+        format!("首次连接这台主机。请向服务器管理员核对主机密钥指纹，一致后再信任：\n{fingerprint}")
+    },
+    remote_key_changed: |fingerprint| {
+        format!(
+            "主机密钥与之前信任的不同：可能是服务器重装了系统，也可能有人在冒充它。确认无误后再信任新密钥：\n{fingerprint}"
+        )
+    },
+    remote_trust: "信任并连接",
+    remote_trust_new: "信任新密钥",
+    remote_edit: "编辑",
+    remote_reconnect: "重新连接",
+    remote_remove: "删除",
+    remote_remove_confirm: |name| format!("删除远程主机“{name}”？"),
+    remote_remove_warning: "凭据管理器中保存的密码或口令以及已采集的数据会一并删除。",
+    remote_auth_password: "密码",
+    remote_auth_key: "私钥文件",
+    remote_auth_agent: "SSH 代理",
+    remote_add_title: "添加远程主机",
+    remote_edit_title: "编辑远程主机",
+    remote_import: "从 SSH 配置导入",
+    remote_name: "名称",
+    remote_name_hint: "可选，留空时显示地址",
+    remote_address: "地址",
+    remote_address_hint: "主机名或 IP 地址",
+    remote_port: "端口",
+    remote_user: "用户名",
+    remote_auth: "登录方式",
+    remote_password: "密码",
+    remote_password_keep: "留空则保留已保存的密码",
+    remote_key_file: "私钥文件",
+    remote_key_hint: "例如 ~/.ssh/id_ed25519",
+    remote_passphrase: "私钥口令",
+    remote_passphrase_hint: "私钥未加密时留空",
+    remote_passphrase_keep: "留空则保留已保存的口令",
+    remote_agent_hint: "使用 Windows OpenSSH 认证代理服务或 Pageant 中已加载的密钥。",
+    remote_secret_note: "密码与私钥口令保存在 Windows 凭据管理器中，不写入配置文件。",
+    remote_save: "保存并连接",
+    remote_missing: |field| format!("请填写{field}"),
+    remote_bad_port: "端口应为 1 至 65535 之间的数字",
+    remote_hostname: "主机名",
+    remote_load: "平均负载",
+    remote_cpu_detail: |iowait, processes| format!("I/O 等待 {iowait} · {processes} 个进程"),
+    remote_swap: "交换空间",
+    remote_no_swap: "未启用",
+    remote_volumes_title: "文件系统",
+    remote_volumes_hint: "本地文件系统的容量，使用率与 df 的口径一致",
+    remote_cores_hint: "每个逻辑核心的当前负载",
+    yes: "是",
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -242,6 +303,10 @@ fn detail(key: &str) -> Option<&'static str> {
         "volume_label" => "卷标",
         "file_system" => "文件系统",
         "volume_guid" => "卷 GUID",
+        "kernel" => "内核",
+        "architecture" => "架构",
+        "default_route" => "默认路由",
+        "device" => "设备",
         _ => return None,
     })
 }
@@ -279,6 +344,19 @@ fn reason(reason: &Reason) -> String {
         Reason::ProcessGone => "进程已经退出".into(),
         Reason::AccessDenied => "没有权限，可以管理员身份运行后重试".into(),
         Reason::HostStopped => "WSL 发行版已停止".into(),
+        Reason::AddressNotFound => "找不到该主机名".into(),
+        Reason::ConnectionRefused => "连接被拒绝，请检查地址、端口和 SSH 服务".into(),
+        Reason::TimedOut => "连接超时".into(),
+        Reason::ConnectionLost => "连接已断开".into(),
+        Reason::Handshake => "SSH 握手失败，双方没有共同支持的算法".into(),
+        Reason::HostKeyUnknown { .. } => "主机密钥尚未受信任".into(),
+        Reason::HostKeyChanged { .. } => "主机密钥与之前信任的不同".into(),
+        Reason::AuthFailed => "用户名、密码或密钥被拒绝".into(),
+        Reason::NoPassword => "没有保存密码".into(),
+        Reason::KeyUnreadable => "无法读取私钥文件".into(),
+        Reason::KeyPassphrase => "私钥已加密，口令缺失或不正确".into(),
+        Reason::NoAgent => "没有运行中的 SSH 代理，或代理中没有密钥".into(),
+        Reason::NotLinux => "主机没有提供 POSIX shell 或 Linux 的 /proc".into(),
     }
 }
 
@@ -301,6 +379,8 @@ fn notice(notice: &Notice) -> String {
         Notice::InvalidDirectory => "配置目录无效".into(),
         Notice::System(error) => error.clone(),
         Notice::Process(reason) => format!("进程操作失败：{}", self::reason(reason)),
+        Notice::InvalidRemoteHost => "远程主机设置无效".into(),
+        Notice::SecretUnsaved(reason) => format!("无法保存密码：{}", self::reason(reason)),
     }
 }
 

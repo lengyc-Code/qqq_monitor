@@ -23,6 +23,7 @@ pub enum Page {
     Disk,
     Network,
     Processes,
+    Remote,
     Settings,
 }
 impl Page {
@@ -36,6 +37,7 @@ impl Page {
             Self::Disk => &t.disk_page,
             Self::Network => &t.network_page,
             Self::Processes => &t.processes_page,
+            Self::Remote => &t.remote_page,
             Self::Settings => &t.settings_page,
         }
     }
@@ -49,6 +51,7 @@ impl Page {
             Self::Disk => "STORAGE",
             Self::Network => "NETWORK",
             Self::Processes => "PROCESSES",
+            Self::Remote => "REMOTE",
             Self::Settings => "CONFIG",
         }
     }
@@ -83,6 +86,7 @@ pub struct DesktopApp {
     desktop: dock::Desktop,
     tray: tray::Tray,
     process: pages::processes::ProcessPage,
+    remote: pages::remote::RemotePage,
     /// Language the "follow system" setting resolves to.
     system_language: Language,
 }
@@ -110,6 +114,7 @@ impl DesktopApp {
             desktop,
             tray: tray::Tray::default(),
             process: Default::default(),
+            remote: Default::default(),
             system_language,
             range: config.history_secs,
             active_config: config.clone(),
@@ -154,15 +159,17 @@ impl DesktopApp {
         }
     }
     fn select_initial_devices(&mut self) {
+        // Devices of this computer; remote hosts have their own page.
+        let local = || self.view.devices.values().filter(|d| d.host.is_none());
         if self.network.is_empty() {
             let preferred = self.config.selected_network.as_ref().and_then(|guid| {
-                self.view.devices.values().find(|d| {
+                local().find(|d| {
                     d.kind == DeviceKind::Network && d.persistent_id.as_ref() == Some(guid)
                 })
             });
             let selected = preferred
                 .or_else(|| {
-                    self.view.devices.values().find(|d| {
+                    local().find(|d| {
                         d.kind == DeviceKind::Network
                             && d.online
                             && d.details
@@ -170,28 +177,14 @@ impl DesktopApp {
                                 .any(|(key, value)| key == "interface_type" && value == "physical")
                     })
                 })
-                .or_else(|| {
-                    self.view
-                        .devices
-                        .values()
-                        .find(|d| d.kind == DeviceKind::Network && d.online)
-                })
-                .or_else(|| {
-                    self.view
-                        .devices
-                        .values()
-                        .find(|d| d.kind == DeviceKind::Network)
-                });
+                .or_else(|| local().find(|d| d.kind == DeviceKind::Network && d.online))
+                .or_else(|| local().find(|d| d.kind == DeviceKind::Network));
             if let Some(device) = selected {
                 self.network = device.id.clone();
             }
         }
         if self.disk.is_empty()
-            && let Some(device) = self
-                .view
-                .devices
-                .values()
-                .find(|d| d.kind == DeviceKind::Disk && d.online)
+            && let Some(device) = local().find(|d| d.kind == DeviceKind::Disk && d.online)
         {
             self.disk = device.id.clone();
         }
@@ -237,6 +230,7 @@ impl DesktopApp {
                 MetricKey::new(&self.network, "receive"),
                 MetricKey::new(&self.network, "send"),
             ],
+            Page::Remote => self.remote_query(),
             Page::Processes | Page::Settings => Vec::new(),
         };
         if keys != self.last_query || self.range != self.last_range {
@@ -299,6 +293,7 @@ impl DesktopApp {
                     (Page::Disk, &pixel::ICON_DISK),
                     (Page::Network, &pixel::ICON_NETWORK),
                     (Page::Processes, &pixel::ICON_PROCESS),
+                    (Page::Remote, &pixel::ICON_REMOTE),
                     (Page::Settings, &pixel::ICON_GEAR),
                 ] {
                     if theme::nav_button(
@@ -605,6 +600,7 @@ impl eframe::App for DesktopApp {
                             Page::Disk => self.disk(ui, &view),
                             Page::Network => self.network(ui, &view),
                             Page::Processes => {}
+                            Page::Remote => self.remote(ui, &view),
                             Page::Settings => self.settings(ui, &view),
                         }
                         ui.add_space(8.0);

@@ -325,3 +325,188 @@ fn processes_are_polled_while_watched_and_actions_report_back() {
     });
     runtime.shutdown();
 }
+
+struct FakeRemote {
+    secrets: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    connects: AtomicU64,
+}
+struct FakeSession;
+impl RemoteSession for FakeSession {
+    fn collect(&mut self) -> Result<SampleBatch, Reason> {
+        Ok(SampleBatch {
+            devices: vec![DeviceDescriptor::new("cpu", "Test CPU", DeviceKind::Cpu)],
+            samples: vec![MetricSample::new(
+                "cpu",
+                "usage",
+                Unit::Percent,
+                SampleValue::Gauge(12.5),
+                Instant::now(),
+            )],
+            complete_inventory: true,
+            ..Default::default()
+        })
+    }
+}
+impl RemotePlatform for FakeRemote {
+    fn connect(
+        &self,
+        endpoint: &RemoteEndpoint,
+        _: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Box<dyn RemoteSession>, Reason> {
+        self.connects.fetch_add(1, Ordering::Relaxed);
+        match self
+            .secrets
+            .lock()
+            .unwrap()
+            .get(&endpoint.id)
+            .map(String::as_str)
+        {
+            None => Err(Reason::NoPassword),
+            Some("right") => Ok(Box::new(FakeSession)),
+            Some(_) => Err(Reason::AuthFailed),
+        }
+    }
+    fn set_secret(&self, id: &str, secret: Option<&str>) -> Result<(), Reason> {
+        let mut secrets = self.secrets.lock().unwrap();
+        match secret {
+            Some(secret) => secrets.insert(id.into(), secret.into()),
+            None => secrets.remove(id),
+        };
+        Ok(())
+    }
+    fn presets(&self) -> Vec<RemotePreset> {
+        vec![RemotePreset {
+            alias: "lab".into(),
+            address: "10.0.0.2".into(),
+            port: 2222,
+            user: "ops".into(),
+            key_file: None,
+        }]
+    }
+}
+
+fn remote_host(id: &str) -> RemoteHost {
+    RemoteHost {
+        id: id.into(),
+        name: "Web".into(),
+        address: "web.example".into(),
+        port: 22,
+        user: "ops".into(),
+        auth: RemoteAuthKind::Password,
+        key_file: None,
+        host_key: None,
+    }
+}
+
+#[test]
+fn remote_hosts_wait_for_the_user_and_leave_no_trace_once_removed() {
+    let scratch = Scratch::new();
+    let mut loaded = ConfigStore::load(scratch.config());
+    loaded.config.remote_hosts = vec![remote_host("web")];
+    loaded.store.save(&loaded.config, true).unwrap();
+    let remote = Arc::new(FakeRemote {
+        secrets: Default::default(),
+        connects: AtomicU64::new(0),
+    });
+    let mut runtime = MonitorRuntime::start_with_remote(
+        Vec::new(),
+        Arc::new(NoProcessAccess),
+        remote.clone(),
+        ConfigStore::load(scratch.config()),
+    )
+    .unwrap();
+    let client = runtime.client();
+    let state = |client: &MonitorClient| {
+        client
+            .try_latest_view()
+            .and_then(|view| Some(view.remote.hosts.get("web")?.state.clone()))
+    };
+    wait_for(|| (state(&client)? == RemoteState::Failed(Reason::NoPassword)).then_some(()));
+    let view = client.try_latest_view().unwrap();
+    assert_eq!(view.remote.presets[0].alias, "lab");
+    assert!(view.diagnostics.collector_errors.is_empty());
+    // A failure that needs the user is not retried by itself.
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(remote.connects.load(Ordering::Relaxed), 1);
+
+    client
+        .try_command(MonitorCommand::RemoteSecret {
+            host: "web".into(),
+            secret: Some(Secret("right".into())),
+        })
+        .unwrap();
+    let view = wait_for(|| {
+        let view = client.try_latest_view()?;
+        (view.value("ssh:web/cpu", "usage") == Some(12.5)).then_some(view)
+    });
+    assert_eq!(state(&client), Some(RemoteState::Connected));
+    let cpu = &view.devices["ssh:web/cpu"];
+    assert_eq!(cpu.host.as_deref(), Some("web"));
+    assert_eq!(cpu.kind, DeviceKind::Cpu);
+
+    let mut config = view.config.clone();
+    config.remote_hosts.clear();
+    client
+        .try_command(MonitorCommand::SaveConfig {
+            config,
+            explicit: true,
+        })
+        .unwrap();
+    wait_for(|| {
+        let view = client.try_latest_view()?;
+        (view.remote.hosts.is_empty()
+            && !view.devices.keys().any(|id| id.starts_with("ssh:"))
+            && !view
+                .metrics
+                .keys()
+                .any(|key| key.device.starts_with("ssh:")))
+        .then_some(())
+    });
+    runtime.shutdown();
+    assert!(
+        ConfigStore::load(scratch.config())
+            .config
+            .remote_hosts
+            .is_empty()
+    );
+}
+
+struct NoProcessAccess;
+impl ProcessPlatform for NoProcessAccess {
+    fn hosts(&self) -> Vec<ProcessHost> {
+        Vec::new()
+    }
+    fn source(&self, _: &ProcessHost) -> Box<dyn ProcessSource> {
+        unreachable!()
+    }
+    fn act(&self, _: &ProcessId, _: ProcessAction) -> Result<(), Reason> {
+        Err(Reason::HostStopped)
+    }
+}
+
+#[test]
+fn each_remote_host_entry_recovers_on_its_own() {
+    let scratch = Scratch::new();
+    fs::write(
+        scratch.config(),
+        "animations = false\n\n[[remote_hosts]]\nid = \"web\"\naddress = \"web.example\"\nuser = \"ops\"\nauth = \"key\"\nkey_file = \"~/.ssh/id_ed25519\"\n\n[[remote_hosts]]\nid = \"bad id\"\naddress = \"db.example\"\nuser = \"ops\"\nauth = \"agent\"\n\n[[remote_hosts]]\nid = \"db\"\naddress = \"db.example\"\nuser = \"ops\"\nauth = \"telepathy\"\n",
+    )
+    .unwrap();
+    let mut loaded = ConfigStore::load(scratch.config());
+    assert!(!loaded.config.animations);
+    assert_eq!(loaded.config.remote_hosts.len(), 1);
+    let web = &loaded.config.remote_hosts[0];
+    assert_eq!(web.port, 22);
+    assert_eq!(web.label(), "web.example");
+    assert_eq!(
+        web.endpoint().auth,
+        RemoteAuth::Key("~/.ssh/id_ed25519".into())
+    );
+    assert!(loaded.warning.is_some());
+    loaded.config.remote_hosts.push(remote_host("api"));
+    loaded.store.save(&loaded.config, true).unwrap();
+    assert_eq!(ConfigStore::load(scratch.config()).config, loaded.config);
+    let mut twice = loaded.config.clone();
+    twice.remote_hosts.push(remote_host("api"));
+    assert_eq!(twice.validate(), Err(Notice::InvalidRemoteHost));
+}

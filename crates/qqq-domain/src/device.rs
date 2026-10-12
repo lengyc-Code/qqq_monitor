@@ -19,6 +19,8 @@ pub struct DeviceDescriptor {
     /// devices the system leaves unnamed, which the GUI names by kind and index.
     pub name: String,
     pub kind: DeviceKind,
+    /// Remote host the device belongs to; `None` for this computer.
+    pub host: Option<String>,
     pub online: bool,
     /// Pairs of a stable key such as `volume_label` and a value; enumerated values are
     /// stable tokens too, such as `physical` for `interface_type`.
@@ -32,6 +34,7 @@ impl DeviceDescriptor {
             persistent_id: None,
             name: name.into(),
             kind,
+            host: None,
             online: true,
             details: Vec::new(),
         }

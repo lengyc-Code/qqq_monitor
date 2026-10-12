@@ -1,6 +1,6 @@
 # qqq_monitor 架构设计
 
-本项目已建立一个 Cargo Workspace、四个库 crate 和一个启动包。领域模型与引擎不依赖 Windows 或 GUI；具体采集器由启动入口注入，页面只使用不可变监控视图。本文说明当前实现、扩展契约与已知边界，范围和验收目标分别见 [技术方案](TECHNICAL_PLAN.md) 与 [实施与验收计划](IMPLEMENTATION_PLAN.md)。
+本项目已建立一个 Cargo Workspace、五个库 crate 和一个启动包。领域模型与引擎不依赖 Windows 或 GUI；具体采集器由启动入口注入，页面只使用不可变监控视图。本文说明当前实现、扩展契约与已知边界，范围和验收目标分别见 [技术方案](TECHNICAL_PLAN.md) 与 [实施与验收计划](IMPLEMENTATION_PLAN.md)。
 
 ## 模块和依赖方向
 
@@ -9,23 +9,26 @@ flowchart TD
     BOOT[qqq_monitor 启动与组装] --> UI[qqq-ui 页面与组件]
     BOOT --> ENGINE[qqq-engine 监控引擎]
     BOOT --> WIN[qqq-platform-windows 采集实现]
+    BOOT --> REMOTE[qqq-remote SSH 远程采集]
     UI --> ENGINE
     UI --> DOMAIN[qqq-domain 模型与接口]
     ENGINE --> DOMAIN
     WIN --> DOMAIN
+    REMOTE --> DOMAIN
 ```
 
-箭头表示编译依赖。四个库对应不同变化原因：系统接口变化只影响平台层，指标语义变化进入领域层，调度与历史策略归引擎，布局和交互归 GUI。无需新增动态插件、数据库、系统服务或异步运行时即可扩展内置功能。
+箭头表示编译依赖。五个库对应不同变化原因：系统接口变化只影响平台层，SSH 协议与远程 Linux 的读取方式归远程采集，指标语义变化进入领域层，调度与历史策略归引擎，布局和交互归 GUI。异步运行时只在远程采集内部承载 SSH 连接，引擎与其他采集使用标准线程；无需新增动态插件、数据库或系统服务即可扩展内置功能。
 
 | 模块 | 当前职责 | 对外接口 |
 | --- | --- | --- |
-| `qqq-domain` | 设备、指标、单位、读数状态与不可用原因、采集工厂、进程实例与进程操作 | `Collector`、`CollectorFactory`、`ProcessPlatform`、`ProcessSource`、`Reason` 和模型 |
-| `qqq-platform-windows` | sysinfo、IP Helper、PDH、DXGI、卷 GUID、显示器工作区、用户显示语言、通知区域图标与任务栏按钮、Windows 进程枚举与操作、经 `wsl.exe` 读取和操作 WSL 进程、原生句柄 RAII | `collectors()`、`processes()`、显示器与鼠标状态查询、显示语言列表、窗口图标、托盘图标与任务栏按钮、安全的启动错误提示 |
-| `qqq-engine` | 采样调度、差分、历史、查询投影、进程轮询与进程 CPU 使用率、进程操作、配置（含界面语言）、命令确认与提示 | `MonitorRuntime`、`MonitorClient`、`MonitorView`、`ProcessView`、`ConfigStore`、`Language`、`Notice`、`SaveStatus` |
-| `qqq-ui` | 八个独立页面（含进程管理）、边缘吸附与迷你状态栏、托盘驻留、图表、设备选择、主题、三种语言的界面文本、CJK 字体、看板娘精灵 | `DesktopApp`、`Page`、截图选项、`Desktop` 显示器查询与托盘接口、`viewport()` 初始窗口、`i18n` 文本表 |
+| `qqq-domain` | 设备（含所属远程主机）、指标、单位、读数状态与不可用原因、采集工厂、进程实例与进程操作、远程主机端点与会话、密码存储 | `Collector`、`CollectorFactory`、`ProcessPlatform`、`ProcessSource`、`RemotePlatform`、`RemoteSession`、`SecretStore`、`Reason` 和模型 |
+| `qqq-platform-windows` | sysinfo、IP Helper、PDH、DXGI、卷 GUID、显示器工作区、用户显示语言、通知区域图标与任务栏按钮、Windows 进程枚举与操作、经 `wsl.exe` 读取和操作 WSL 进程、Windows 凭据管理器中的密码与口令、原生句柄 RAII | `collectors()`、`processes()`、`secrets()`、显示器与鼠标状态查询、显示语言列表、窗口图标、托盘图标与任务栏按钮、安全的启动错误提示 |
+| `qqq-remote` | SSH 连接与登录、主机密钥核对、远程 Linux 的 shell 程序与输出解析、按远程时钟换算速率、读取 `~/.ssh/config` | `ssh()`、`secret_name()`；示例 `wsl_sshd` 与 `probe` |
+| `qqq-engine` | 采样调度、差分、历史、查询投影、进程轮询与进程 CPU 使用率、进程操作、远程主机线程与重连、配置（含界面语言与远程主机）、命令确认与提示 | `MonitorRuntime`、`MonitorClient`、`MonitorView`、`ProcessView`、`RemoteView`、`ConfigStore`、`RemoteHost`、`Language`、`Notice`、`SaveStatus` |
+| `qqq-ui` | 九个独立页面（含进程管理与远程主机）、边缘吸附与迷你状态栏、托盘驻留、图表、设备选择、主题、三种语言的界面文本、CJK 字体、看板娘精灵 | `DesktopApp`、`Page`、截图选项、`Desktop` 显示器查询与托盘接口、`viewport()` 初始窗口、`i18n` 文本表 |
 | 根包 | 日志、组装、系统语言解析、DX12 窗口、程序图标资源、CLI 冒烟和关闭 | Windows EXE |
 
-领域、引擎、GUI 和启动包禁止 `unsafe`。Windows 必要的 FFI 集中在 `native.rs`、`tray.rs` 与 `process.rs`，说明每个调用的句柄、缓冲区和生命周期条件；调用方只看到安全接口。
+领域、引擎、远程采集、GUI 和启动包禁止 `unsafe`。Windows 必要的 FFI 集中在 `native.rs`、`tray.rs`、`process.rs` 与 `secret.rs`，说明每个调用的句柄、缓冲区和生命周期条件；调用方只看到安全接口。
 
 ## 当前目录
 
@@ -46,7 +49,8 @@ qqq_monitor/
 │   │   ├── metric.rs                # 指标键、单位、采样、状态和原因
 │   │   ├── device.rs                # 身份、类型、在线状态、详情
 │   │   ├── collector.rs             # 工厂、周期、批次和错误
-│   │   └── process.rs               # 进程宿主、实例标识、优先级、快照与进程操作接口
+│   │   ├── process.rs               # 进程宿主、实例标识、优先级、快照与进程操作接口
+│   │   └── remote.rs                # 远程主机端点、登录方式、会话、平台与密码存储接口
 │   ├── qqq-platform-windows/src/
 │   │   ├── lib.rs                   # 内置工厂注册
 │   │   ├── cpu_memory.rs            # 持久 System 实例
@@ -57,7 +61,17 @@ qqq_monitor/
 │   │   ├── native.rs                # IP Helper、PDH、DXGI、卷、显示器与显示语言 API 和 RAII
 │   │   ├── process.rs               # Windows 进程枚举、命令行与所有者、结束与优先级
 │   │   ├── wsl.rs                   # 运行中的 WSL 发行版及其进程的读取与操作
+│   │   ├── secret.rs                # Windows 凭据管理器中的密码与口令
 │   │   └── tray.rs                  # 通知区域图标、托盘菜单与任务栏按钮
+│   ├── qqq-remote/
+│   │   ├── src/
+│   │   │   ├── lib.rs               # SSH 远程平台与密码名称
+│   │   │   ├── session.rs           # 连接、登录、主机密钥核对与常驻 shell
+│   │   │   ├── linux.rs             # 远程 shell 程序、输出解析与速率换算
+│   │   │   └── presets.rs           # ~/.ssh/config 中的主机
+│   │   └── examples/
+│   │       ├── wsl_sshd.rs          # 把命令交给 WSL 执行的开发用 SSH 服务器
+│   │       └── probe.rs             # 按程序方式连接主机并输出读数
 │   ├── qqq-engine/
 │   │   ├── src/
 │   │   │   ├── lib.rs
@@ -65,10 +79,11 @@ qqq_monitor/
 │   │   │   ├── normalize.rs         # 实际时间差、预热与数据验证
 │   │   │   ├── history.rs           # 有界历史和显示投影
 │   │   │   ├── process.rs           # 进程轮询、CPU 使用率与进程操作线程
+│   │   │   ├── remote.rs            # 远程主机线程、连接状态与重连
 │   │   │   ├── view.rs              # 不可变 GUI 无关视图
 │   │   │   ├── config.rs            # 界面语言、校验、恢复和后台保存
 │   │   │   └── notice.rs            # 命令与配置提示、设置状态
-│   │   └── tests/runtime_flow.rs    # 可控假采集器的运行时测试
+│   │   └── tests/runtime_flow.rs    # 可控假采集器与假远程平台的运行时测试
 │   └── qqq-ui/
 │       ├── build.rs                 # 由看板娘插画生成像素精灵
 │       ├── assets/fonts/            # Noto Sans CJK SC 和 OFL 许可
@@ -96,6 +111,7 @@ qqq_monitor/
 │               ├── disk.rs
 │               ├── network.rs
 │               ├── processes.rs
+│               ├── remote.rs
 │               └── settings.rs
 └── docs/
     ├── TECHNICAL_PLAN.md
@@ -109,7 +125,7 @@ qqq_monitor/
 
 ## 设备和指标契约
 
-`DeviceDescriptor` 包含会话 ID、可选的跨启动身份 persistent_id、类型、名称、在线状态和详情。名称取系统提供的名称，如 CPU 型号、网卡别名、显卡描述和卷挂载点；内存、本机、物理磁盘与逻辑核心由系统留空，GUI 按类型和 ID 中的序号以当前语言命名。详情是稳定键与值的列表，键包括 `logical_cores`、`os`、`description`、`interface_guid`、`interface_type`、`link_speed`、`vendor`、`memory_type`、`adapter_luid`、`counter_instance`、`volume_label`、`file_system`、`volume_guid`；枚举值同样使用稳定标记，`interface_type` 为 `physical` 或 `virtual`，`memory_type` 为 `dedicated` 或 `shared`。GUI 负责措辞键名与标记。主键以身份而非名称构建：`cpu`、`core:索引`、`memory`、`system`、`disk:设备号`、`volume:卷GUID`、`net:LUID`、`gpu:adapter LUID`。物理磁盘设备号与 LUID 用于本次会话；网卡选择保存接口 GUID，启动后重新解析为本次 LUID。
+`DeviceDescriptor` 包含会话 ID、可选的跨启动身份 persistent_id、类型、名称、在线状态和详情。名称取系统提供的名称，如 CPU 型号、网卡别名、显卡描述和卷挂载点；内存、本机、物理磁盘与逻辑核心由系统留空，GUI 按类型和 ID 中的序号以当前语言命名。详情是稳定键与值的列表，键包括 `logical_cores`、`os`、`description`、`interface_guid`、`interface_type`、`link_speed`、`vendor`、`memory_type`、`adapter_luid`、`counter_instance`、`volume_label`、`file_system`、`volume_guid`、`kernel`、`architecture`、`default_route`、`device`；枚举值同样使用稳定标记，`interface_type` 为 `physical` 或 `virtual`，`memory_type` 为 `dedicated` 或 `shared`，`default_route` 为 `yes`。GUI 负责措辞键名与标记。主键以身份而非名称构建：`cpu`、`core:索引`、`memory`、`system`、`disk:设备号`、`volume:卷GUID`、`net:LUID`、`gpu:adapter LUID`，远程主机的设备另加 `ssh:主机ID/` 前缀。物理磁盘设备号与 LUID 用于本次会话；网卡选择保存接口 GUID，启动后重新解析为本次 LUID。
 
 `MetricKey` 由设备 ID 和指标名组成，例如 `(cpu, usage)`、`(memory, available)`、`(disk:0, read)`、`(net:LUID, receive)`、`(gpu:LUID, memory_usage)`。GPU 设备提供 `usage`、每类引擎的 `engine:类型`（如 `engine:3d`、`engine:videodecode`）、按显卡类型选取的 `memory_used`、`memory_total`、`memory_usage`，以及 `dedicated_used`、`dedicated_total`、`shared_used`、`shared_total`。引擎类型出现后持续上报，空闲时为 0。`MetricDescriptor` 声明单位；`MetricSample` 额外包含真实单调时间和 `SampleValue`：
 
@@ -120,6 +136,10 @@ qqq_monitor/
 引擎检查单位一致、采样时刻不倒退，以及同一个指标键不被两个采集源覆盖。百分比要求 0 至 100；所有 Gauge 要求非负且有限。合法零流量仍为有效数据。
 
 `MetricReading` 保存当前值、会话字节、状态、失败原因、最后成功时刻、最后尝试时刻和周期。无效采样保留上次成功值，但卡片和图表标注其状态和数据年龄。状态包括 `WarmingUp`、`Ready`、`Stale`、`Unsupported`、`Failed`、`Offline`；过期阈值为 `max(3 × 周期, 3 秒)`，30 秒容量指标不会在 3 秒后过期。
+
+`Unit` 包括百分比、字节、字节每秒、秒和计数，计数用于平均负载与进程数这类纯数值。
+
+远程主机的设备以 `ssh:主机ID/` 为前缀，后接会话报告的本地 ID，例如 `ssh:web/cpu`、`ssh:web/core:3`、`ssh:web/net:eth0`、`ssh:web/disk:sda`、`ssh:web/volume:/home`；`DeviceDescriptor.host` 记录所属主机，本机设备为 `None`，本机页面只列出本机设备。远程设备沿用本机的类型与指标名：`system` 名称为主机名，详情为 `os`、`kernel`、`architecture`，指标为 `uptime`、`load1`、`load5`、`load15`、`processes`；`cpu` 名称为处理器型号，指标为 `usage` 与 `iowait`；`memory` 另有 `swap_total`、`swap_used` 与有交换空间时的 `swap_usage`；网卡另有开机以来的累计字节 `received`、`sent`，详情 `default_route` 标记默认路由所在接口；卷的详情为 `device` 与 `file_system`。
 
 卷容量与物理磁盘 I/O 保持独立。当前未实现卷到物理磁盘的多对多映射，不把 I/O 硬套到盘符，也不加总虚拟网卡与物理网卡的流量。
 
@@ -156,6 +176,7 @@ pub trait CollectorFactory: Send + Sync {
 | 进程轮询线程 | 列出 GUI 正在查看的宿主的进程，并列出可用宿主 | 仅在进程页面显示时运行：Windows 为采样间隔且至少 1 秒，WSL 为采样间隔且至少 2 秒；宿主每 5 秒重新列出 |
 | 进程操作线程 | 结束进程与调整优先级 | 收到操作命令时执行，完成后立即重新轮询 |
 | 卷线程 | 发现本地卷并刷新容量 | 30 秒，支持手动提前刷新 |
+| 远程主机线程 | 每台主机一个：连接、登录、启动远程 shell，读取 `/proc` 与 `df` | 采样间隔且至少 1 秒；可自行恢复的失败按 2、4、8、16、30、60 秒退避重连 |
 | 配置写线程 | UTF-8 TOML 临时写入与替换 | 有待保存配置时写入；空闲轮询 20 ms |
 
 CPU/内存与网络使用独立线程，使网络 API 变慢也不会拖延 CPU 更新。sysinfo 未启用内部 multithread feature。设备目录直接随网络和磁盘采样更新，首版不再额外维护一个 10 秒的身份发现线程。
@@ -167,6 +188,7 @@ flowchart LR
     DISK[磁盘 I/O] --> CH
     GPU[GPU 与显存] --> CH
     VOL[卷容量] --> CH
+    SSH[远程主机] --> CH
     CH --> ENGINE[引擎 校验与差分]
     ENGINE --> HISTORY[有界原始历史]
     HISTORY --> PROJECTION[当前页面的显示投影]
@@ -187,6 +209,7 @@ eframe 的 `logic` 消费视图、命令结果和退出事件；`ui` 只绘制�
 | 数据 | 上限 | 满载策略 |
 | --- | --- | --- |
 | 每个采集源批次 | 8 批 | try_send 丢弃当前批次，累计丢批；后续批次携带该计数 |
+| 每台远程主机的更新 | 16 条 | 批次按采集源同样累计丢批；连接状态由后续批次或失败再次确定 |
 | 最新 UI 视图 | 1 个 Arc 槽 | 替换旧视图，不排队显示快照 |
 | 在途命令 | 32 个 | 立即返回繁忙；消费结果后释放名额 |
 | 命令结果 | 32 个 | 在途名额包含未消费结果，保证正常运行时每个接受请求有结果 |
@@ -232,6 +255,35 @@ WSL 宿主来自 `wsl.exe --list --running --quiet`，平台层设置 `WSL_UTF8=
 
 操作命令 `MonitorCommand::Process` 交给独立的进程操作线程，结果以普通命令结果返回，失败为 `Notice::Process(Reason)`，显示在状态栏。进程页面按宿主切换 Windows 与各个运行中的发行版，支持按名称、PID、用户和命令行搜索，点击表头按列排序，表格按可见行绘制。选中进程后可在工具栏或右键菜单结束进程、调整优先级，WSL 进程另有强制结束；结束前弹出确认对话框，Delete 键同样打开确认。
 
+## 远程主机
+
+远程主机是通过 SSH 监控的 Linux 主机。`AppConfig.remote_hosts` 保存主机列表，每项包含稳定 ID、显示名称、地址、端口、用户名、登录方式（`password`、`key`、`agent`）、私钥文件和用户信任的主机密钥；配置文件以 `[[remote_hosts]]` 表数组保存在末尾，读取时每项单独校验与恢复。密码与私钥口令经 `SecretStore` 保存在 Windows 凭据管理器的普通凭据 `qqq_monitor/ssh/主机ID` 中，配置文件只保存其余字段。
+
+```rust
+pub trait RemoteSession {
+    fn collect(&mut self) -> Result<SampleBatch, Reason>;
+}
+
+pub trait RemotePlatform: Send + Sync {
+    fn connect(&self, endpoint: &RemoteEndpoint, cancel: Arc<AtomicBool>)
+        -> Result<Box<dyn RemoteSession>, Reason>;
+    fn set_secret(&self, id: &str, secret: Option<&str>) -> Result<(), Reason>;
+    fn presets(&self) -> Vec<RemotePreset>;
+}
+```
+
+启动入口把 `qqq_remote::ssh(qqq_platform_windows::secrets())` 交给 `MonitorRuntime::start_with_remote`。引擎线程启动时读取一次 `presets()`，并按配置为每台主机启动一个线程；`SaveConfig` 应用新配置后对照主机列表启动新增主机、停止已删除的主机，连接设置变化的主机换用新线程。地址或端口变化与删除一样清除该主机已有的设备、读数与历史，只改名称时线程继续运行。旧线程通过自己的取消标志结束，正在进行的连接与读取会在 50 ms 内放弃。
+
+主机线程先发送“连接中”，再调用 `connect`；成功后按采样间隔且至少 1 秒调用 `collect`，批次经有界通道交给引擎。引擎给每个设备 ID 加上主机前缀、设置 `host`，然后与本机采集一样校验、写入历史和投影；采集失败把该主机的指标标为失败并在历史中留出缺口，但不计入本机的采集源诊断。`MonitorView.remote` 给出每台主机的状态（连接中、已连接、失败及原因）与 SSH 配置中的主机。连接断开、超时、被拒绝或握手失败时线程按 2 至 60 秒退避重连；主机密钥未受信任或已改变、登录被拒、缺少密码、私钥不可读或口令错误、没有 SSH 代理，以及主机不是 Linux 时，线程等待 `Reconnect` 命令或新的配置，避免反复登录失败触发服务器的封禁。`RemoteSecret` 命令保存或删除密码后立即重连该主机。
+
+`qqq-remote` 用 russh（ring 加密后端）实现 SSH。每个会话在自己的线程上持有一个单线程 tokio 运行时，只在连接与读取时驱动连接。登录方式为密码（服务器只接受键盘交互方式时用同一密码回答）、OpenSSH 或 PuTTY 格式的私钥文件（`~` 表示用户目录，加密私钥的口令来自密码存储）以及 SSH 代理（Windows OpenSSH 认证代理的命名管道，其次 Pageant）。主机密钥先与配置中信任的密钥比对；没有信任的密钥时查询用户的 `~/.ssh/known_hosts`。密钥未知时以 `Reason::HostKeyUnknown` 返回 OpenSSH 公钥行与 SHA-256 指纹，与已知密钥不同时返回 `Reason::HostKeyChanged`；用户在页面确认指纹后，GUI 把该公钥写入主机的 `host_key` 并保存配置。
+
+登录后会话执行 `sh -s`，通过标准输入发送一段 POSIX shell 程序。程序在循环条件中打印 `@@ ready` 与每次回答结尾的 `@@ end`，保证 shell 读完整个程序后才读取命令；`i` 命令输出主机名、内核、架构、逻辑处理器数、`os-release` 与处理器型号，`s` 命令输出 `/proc` 的 `uptime`、`loadavg`、`stat`、`meminfo`、`net/dev`、`net/route`、`diskstats`，`/sys/block` 与带 `device` 的 `/sys/class/net` 条目，以及 `df -kPTl` 的结果（不支持的系统依次退回 `df -kPT`、`df -kP`）。程序只使用 shell 内建命令、`uname`、`getconf`、`cat` 与 `df`，busybox 系统同样适用。每次回答最多等待 10 秒，连接、登录与启动 shell 合计最多 15 秒。
+
+`Sampler` 以远程主机的 `/proc/uptime` 为时钟换算速率：CPU 使用率为两次读取间非空闲时钟节拍占全部节拍的比例，I/O 等待单独计算；内存已用为 `MemTotal - MemAvailable`（旧内核按 `MemFree + Buffers + Cached`）；磁盘读写为扇区数 × 512 的增量；网卡为累计字节增量。首次读取、计数回退和时钟未前进时报告预热。磁盘只计入 `/sys/block` 中的整块磁盘，排除 `loop`、`ram`、`zram`、`dm-`、`md`、`sr`、`fd`、`nbd`；网卡排除 `lo` 与容器的 `veth` 对端。文件系统排除虚拟与只读镜像类型以及 `/proc`、`/sys`、`/dev`、`/run`（`/run/media` 除外）、`/snap`、容器目录下的挂载点，同一设备只保留最短的挂载点，使用率为 `已用 / (已用 + 可用)`，与 `df` 一致。每次读取都是完整目录，消失的网卡、磁盘和文件系统转为离线。
+
+远程页面在主机列表中切换主机，显示连接状态与重新连接、编辑、删除按钮，主机密钥待确认时显示指纹与信任按钮；页面内容包括 CPU、内存、所选磁盘与网卡的指标卡，CPU 与内存趋势图旁的设备档案，磁盘与网卡选择器及其读写、收发曲线，文件系统卡片和逻辑核心热力格。网卡默认选择默认路由所在接口。添加或编辑对话框可从 SSH 配置导入主机；保存时先发送 `RemoteSecret`，再与网卡选择一样立即保存配置；删除主机同时删除其密码。对话框中的密码只在打开期间保存在内存中，`Secret` 的调试输出隐藏内容。
+
 ## 界面语言
 
 界面提供简体中文、英语和日语。`AppConfig.language` 保存语言选择，`None` 表示跟随系统。启动入口通过平台层读取 Windows 首选显示语言列表，`Language::preferred` 取第一个受支持的语言，中文各地区变体归为简体中文，都不受支持时使用英语；配置以 BCP 47 标签保存，`zh-CN`、`en`、`ja`。命令行 `--lang` 与设置页面的选择效果相同。
@@ -248,7 +300,7 @@ WSL 宿主来自 `wsl.exe --list --running --quiet`，平台层设置 `WSL_UTF8=
 
 每个采集源的创建与采集被 catch_unwind 隔离，失败按 1、2、4、8、16、30 秒退避并重建对象，其他源继续工作。尚未返回的同步 API 不触发并行替代线程；数据由最后成功时刻变为过期。错误恢复不等于可以恢复 FFI 未定义行为，原生缓冲区和句柄仍需独立审查。
 
-关闭通过独立原子取消信号唤醒等待者，不依赖可能已满的命令通道。引擎处理已接受命令后通知配置线程完成最后保存。统一等待最多 2 秒，已经结束的线程 join；同步 API 仍阻塞的线程记录警告并脱离等待，最终由进程退出回收。不能承诺强制中断 Win32，也不能声称超时的保存已经完成。
+关闭通过独立原子取消信号唤醒等待者，不依赖可能已满的命令通道。引擎处理已接受命令后设置每台远程主机的取消标志并通知配置线程完成最后保存。会话结束时向主机发送断开消息，最多等待 300 ms。统一等待最多 2 秒，已经结束的线程 join；同步 API 仍阻塞的线程记录警告并脱离等待，最终由进程退出回收。不能承诺强制中断 Win32，也不能声称超时的保存已经完成。
 
 日志按日滚动并最多保留 7 个文件；日志目录不可写时回退 stderr。20 MiB 总量硬限制、采集耗时 p95 和详细调度延迟诊断尚未实现，不作为已交付能力。
 
@@ -258,11 +310,14 @@ WSL 宿主来自 `wsl.exe --list --running --quiet`，平台层设置 `WSL_UTF8=
 2. **新增页面**：在 pages 增加文件与 Page 路由，组合公共组件；在 app 的 query 中声明需要的指标。页面无需依赖 Windows API。
 3. **告警与导出**：告警放在归一化之后，规则包含持续时间、恢复阈值和去抖；导出通过引擎查询有缺口的数据区间，再交后台 I/O。需要长期存储时才增加持久化接口。
 4. **进程操作与进程宿主**：新操作在 `ProcessAction` 增加变体，由平台的 `act` 在确认实例后执行，GUI 在菜单与工具栏提供入口；新的宿主类型在 `ProcessHost` 增加变体，并由平台的 `hosts` 与 `source` 提供。
-5. **新增语言**：在 `Language` 中加入语言与 BCP 47 标签并扩展 `Language::preferred` 的匹配，在 `i18n/` 添加完整的 `Strings` 文本表，在 `i18n::t()` 与 `native_name()` 中登记。领域、平台和引擎层无需改动。
-6. **新平台**：另增平台 crate 并由启动入口选择；本轮不承诺跨平台可运行。第三方动态插件若有实际需求，再设计稳定 C ABI 或进程间协议，不跨 DLL 暴露 Rust trait object。
+5. **远程指标**：在 `qqq-remote` 的 shell 程序中输出新的数据段，在 `linux.rs` 解析并以本机同样的设备 ID 与指标名报告；引擎自动加上主机前缀，远程页面通过 `remote_device` 构造的 `MetricKey` 读取。
+6. **新增语言**：在 `Language` 中加入语言与 BCP 47 标签并扩展 `Language::preferred` 的匹配，在 `i18n/` 添加完整的 `Strings` 文本表，在 `i18n::t()` 与 `native_name()` 中登记。领域、平台和引擎层无需改动。
+7. **新平台**：另增平台 crate 并由启动入口选择；本轮不承诺跨平台可运行。第三方动态插件若有实际需求，再设计稳定 C ABI 或进程间协议，不跨 DLL 暴露 Rust trait object。
 
 ## 验证边界
 
-已有测试覆盖实际时间差、计数回退、Gauge 速率、合法零值、失败恢复、各周期过期、历史时间/点数/预算、投影缺口、慢采集隔离、在途命令上限、关闭保存（含吸附与托盘配置）、损坏配置保护、GPU 计数器实例解析与引擎聚合、吸附边缘判定与迷你状态栏定位、进程 CPU 使用率与实例匹配、进程轮询与操作结果、Windows 进程枚举与按实例结束和调整优先级、WSL 进程输出解析、优先级与 nice 值映射、系统语言匹配、界面语言配置保存，各语言文本表的启用与设备详情键覆盖，以及各语言看板娘台词在对话气泡内的宽度。真实 Windows 采集与 Windows、各运行中 WSL 发行版的进程列表由 CLI 的 `--smoke-test` 验证，在运行中的发行版里结束与调整优先级由忽略标记的测试 `cargo test -p qqq-platform-windows -- --ignored` 验证；八个页面与三种迷你状态栏由 `--capture` 配合 `--lang` 在三种语言下截图检查。
+已有测试覆盖实际时间差、计数回退、Gauge 速率、合法零值、失败恢复、各周期过期、历史时间/点数/预算、投影缺口、慢采集隔离、在途命令上限、关闭保存（含吸附与托盘配置）、损坏配置保护、GPU 计数器实例解析与引擎聚合、吸附边缘判定与迷你状态栏定位、进程 CPU 使用率与实例匹配、进程轮询与操作结果、Windows 进程枚举与按实例结束和调整优先级、WSL 进程输出解析、优先级与 nice 值映射、远程主机的连接状态与重连策略（需要用户处理的失败不自动重试、删除主机后不留设备与读数）、远程主机配置的逐项恢复、主机密钥核对、Linux `/proc` 与 `df` 输出解析与按远程时钟换算速率、`~/.ssh/config` 导入、远程 shell 回答的分段、连接错误分类、Windows 凭据管理器读写、系统语言匹配、界面语言配置保存，各语言文本表的启用与设备详情键覆盖，以及各语言看板娘台词在对话气泡内的宽度。真实 Windows 采集与 Windows、各运行中 WSL 发行版的进程列表由 CLI 的 `--smoke-test` 验证，在运行中的发行版里结束与调整优先级由忽略标记的测试 `cargo test -p qqq-platform-windows -- --ignored` 验证；九个页面与三种迷你状态栏由 `--capture` 配合 `--lang` 在三种语言下截图检查。
 
-吸附的拖动、贴边、换边、恢复和最大化往返已在单屏 150% 缩放下用真实鼠标输入检查。托盘已在同一环境检查：最小化后隐藏窗口并显示图标，吸附后移除任务栏按钮并显示图标，单击溢出区中的图标恢复完整窗口，右键菜单的“退出”保存配置并移除图标。进程页面已在同一环境用真实输入检查：切换 Windows 与 WSL 发行版、搜索、选中、确认后结束 Windows 进程、右键菜单调整优先级、强制结束 WSL 进程，以及结束受保护进程时状态栏显示无权限。还需验证以管理员身份运行时的进程操作、WSL 1 发行版、资源管理器重启后的托盘恢复、管理员权限运行时的托盘、通道真实溢出、设备消失后的清理、连续保存合并和写入失败、睡眠恢复、热插拔、键盘交互、多屏缩放与多屏吸附、集成显卡与多显卡读数及长期资源预算。构建成功和截图可读不能代替这些验收。
+远程主机已用 `qqq-remote` 的 `wsl_sshd` 示例在本机 Ubuntu 24.04（WSL 2）上端到端验证：首次连接给出指纹、信任后连接，密码、Ed25519 私钥、RSA 私钥与加密私钥登录成功；错误密码、缺少或错误口令、缺失的私钥文件、拒绝连接的端口、无法解析的主机名、不可达地址与未运行的 SSH 代理分别给出对应原因。GUI 在 150% 缩放下用真实输入完成了添加主机、信任主机密钥、编辑登录方式（密码随之从凭据管理器删除）与删除主机。
+
+吸附的拖动、贴边、换边、恢复和最大化往返已在单屏 150% 缩放下用真实鼠标输入检查。托盘已在同一环境检查：最小化后隐藏窗口并显示图标，吸附后移除任务栏按钮并显示图标，单击溢出区中的图标恢复完整窗口，右键菜单的“退出”保存配置并移除图标。进程页面已在同一环境用真实输入检查：切换 Windows 与 WSL 发行版、搜索、选中、确认后结束 Windows 进程、右键菜单调整优先级、强制结束 WSL 进程，以及结束受保护进程时状态栏显示无权限。还需验证真实网络中的各类 Linux 服务器（其他发行版、busybox、ARM、旧内核与 IPv6 地址）、SSH 代理登录、慢速与不稳定网络、多台远程主机长期运行、以管理员身份运行时的进程操作、WSL 1 发行版、资源管理器重启后的托盘恢复、管理员权限运行时的托盘、通道真实溢出、设备消失后的清理、连续保存合并和写入失败、睡眠恢复、热插拔、键盘交互、多屏缩放与多屏吸附、集成显卡与多显卡读数及长期资源预算。构建成功和截图可读不能代替这些验收。

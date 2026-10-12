@@ -33,6 +33,11 @@ pub enum Notice {
     System(String),
     /// A process action failed.
     Process(Reason),
+    /// A remote host entry lacks an address or user, uses an invalid port, or repeats the
+    /// identity of another entry.
+    InvalidRemoteHost,
+    /// The password or passphrase of a remote host could not be saved or removed.
+    SecretUnsaved(Reason),
 }
 
 /// State of the settings: how they were loaded, or what became of the latest save.

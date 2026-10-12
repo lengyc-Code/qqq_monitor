@@ -224,6 +224,18 @@ pub const ICON_PROCESS: Icon = [
     "#.......#",
     "#########",
 ];
+/// Two server units joined to the network.
+pub const ICON_REMOTE: Icon = [
+    "#########",
+    "#o.o....#",
+    "#########",
+    "#o.o....#",
+    "#########",
+    "....#....",
+    "....#....",
+    "###ooo###",
+    "...ooo...",
+];
 pub const ICON_DOCK_TOP: Icon = [
     "#########",
     "#ooooooo#",

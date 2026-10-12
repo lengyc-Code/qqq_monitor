@@ -29,7 +29,7 @@ fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|s| s == "--help") {
         println!(
-            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           截图页面：overview/cpu/memory/gpu/disk/network/processes/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja"
+            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           截图页面：overview/cpu/memory/gpu/disk/network/processes/remote/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja"
         );
         return Ok(());
     }
@@ -58,9 +58,10 @@ fn run() -> Result<(), String> {
             .map(String::as_str),
     );
     i18n::set(config.language.unwrap_or(system_language));
-    let mut runtime = MonitorRuntime::start_with_processes(
+    let mut runtime = MonitorRuntime::start_with_remote(
         qqq_platform_windows::collectors(),
         qqq_platform_windows::processes(),
+        qqq_remote::ssh(qqq_platform_windows::secrets()),
         loaded,
     )
     .map_err(|notice| i18n::notice(&notice))?;
@@ -83,6 +84,7 @@ fn run() -> Result<(), String> {
             "disk" => Page::Disk,
             "network" => Page::Network,
             "processes" => Page::Processes,
+            "remote" => Page::Remote,
             "settings" => Page::Settings,
             _ => return Err("未知截图页面".into()),
         };
@@ -179,6 +181,9 @@ fn smoke_test(runtime: &mut MonitorRuntime) -> Result<(), String> {
     for (source, error) in &view.diagnostics.collector_errors {
         eprintln!("{source}: {error:?}");
     }
+    for (host, status) in &view.remote.hosts {
+        println!("远程主机 {host}：{:?}", status.state);
+    }
     let cpu = view
         .reading("cpu", "usage")
         .is_some_and(|v| v.effective_state(view.now) == SampleState::Ready);
@@ -216,6 +221,7 @@ fn smoke_test(runtime: &mut MonitorRuntime) -> Result<(), String> {
     let ready_device = |kind| {
         view.devices.values().any(|d| {
             d.kind == kind
+                && d.host.is_none()
                 && d.online
                 && view.metrics.iter().any(|(key, v)| {
                     key.device == d.id && v.effective_state(view.now) == SampleState::Ready
