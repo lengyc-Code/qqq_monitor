@@ -1,3 +1,4 @@
+mod autostart;
 mod cpu_memory;
 mod disk_io;
 mod gpu;
@@ -12,6 +13,9 @@ mod wsl;
 use qqq_domain::*;
 use std::{sync::Arc, time::Duration};
 
+/// Whether the executable starts at sign-in, switching that on or off, and the argument the
+/// executable receives when started that way.
+pub use autostart::{ARGUMENT as AUTOSTART_ARGUMENT, enabled as autostart, set as set_autostart};
 /// Window icons from the icon resource embedded in the executable.
 pub use native::set_window_icon;
 /// The user's display languages, most preferred first.
@@ -20,8 +24,8 @@ pub use native::ui_languages;
 pub use native::{covers_point, monitor_at, mouse_button_held};
 /// Notification-area icon and taskbar button of the application window.
 pub use tray::{
-    attach as attach_tray, hide as hide_tray, opened as tray_opened, set_taskbar_button,
-    show as show_tray,
+    attach as attach_tray, cloak as cloak_window, hide as hide_tray, opened as tray_opened,
+    set_taskbar_button, show as show_tray,
 };
 
 struct BuiltinFactory {

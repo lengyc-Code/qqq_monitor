@@ -38,6 +38,8 @@ pub enum Notice {
     InvalidRemoteHost,
     /// The password or passphrase of a remote host could not be saved or removed.
     SecretUnsaved(Reason),
+    /// Starting at sign-in could not be switched on or off.
+    AutostartUnchanged(Reason),
 }
 
 /// State of the settings: how they were loaded, or what became of the latest save.

@@ -35,7 +35,7 @@ Navigation and the mascot sit on the left and the current page on the right. The
 | Network | Receive and send rates of the selected adapter, a history chart and the traffic of this session |
 | Processes | Processes of Windows and of each running WSL distribution: name, PID, user, CPU, memory, threads, priority and command line; search, sorting by column, ending processes and changing their priority |
 | Remote | Linux hosts over SSH: a device profile (host name, distribution, kernel and architecture, processor, memory and swap, uptime, load average), CPU and memory trends, read and write of a chosen disk, traffic of a chosen adapter, file system capacity and a heat grid of the logical cores |
-| Settings | Language, sampling interval, default history range, animations, edge docking and minimize to tray; runtime status, collector diagnostics, history memory and a manual device refresh |
+| Settings | Language, sampling interval, default history range, animations, edge docking, minimize to tray, autostart and starting hidden in the notification area; runtime status, collector diagnostics, history memory and a manual device refresh |
 
 Metric definitions:
 
@@ -72,6 +72,7 @@ Drag the window to the top, left or right screen edge and release it: the window
 
 - While docked as the mini bar, the window leaves the taskbar and an icon appears in the notification area.
 - Minimize to tray on the Settings page is on by default: minimizing the full window hides it and leaves only the icon.
+- Start hidden in the notification area on the Settings page is on by default: when Windows starts the app at sign-in, it shows only the icon, with no window, and samples in the background as usual.
 - Clicking the icon or choosing Show main window from its menu restores and activates the full window; Exit saves the configuration and closes the app.
 
 ### Process management
@@ -130,7 +131,7 @@ Pages, cards, charts, status and error messages, device names and details, MINT'
 
 ### Configuration
 
-The Settings page applies changes with Apply & save: the sampling interval (0.5, 1 or 2 seconds), the default history range, animations, edge docking and minimize to tray take effect at once, and a background thread writes them to a TOML file. The language takes effect and is saved as soon as you click it. The adapter selection, window position and size, docked edge and mini bar position are saved on close. Remote hosts are saved as soon as you add, edit or remove one or trust its host key; passwords and passphrases are kept in Windows Credential Manager, not in the configuration file.
+The Settings page applies changes with Apply & save: the sampling interval (0.5, 1 or 2 seconds), the default history range, animations, edge docking and minimize to tray take effect at once, and a background thread writes them to a TOML file. The language takes effect and is saved as soon as you click it. Autostart takes effect as soon as you tick or clear it: the program adds itself, started with `--autostart`, to the current user's Windows startup programs or removes itself from them, and the Startup apps page of Task Manager lists the entry as well; the checkbox shows the actual state of that entry, including when it is disabled in Task Manager. The option beneath it, Start hidden in the notification area, is on by default; it takes effect and is saved as soon as you click it, and can be changed while autostart is on. The adapter selection, window position and size, docked edge and mini bar position are saved on close. Remote hosts are saved as soon as you add, edit or remove one or trust its host key; passwords and passphrases are kept in Windows Credential Manager, not in the configuration file.
 
 | File | Location |
 | --- | --- |
@@ -163,6 +164,7 @@ The executable is `target\release\qqq_monitor.exe` and runs as is. A standard us
 | `--page PAGE` | Page for `--capture`: `overview`, `cpu`, `memory`, `gpu`, `disk`, `network`, `processes`, `remote`, `settings` |
 | `--dock EDGE` | Starts as the mini bar: `top`, `left`, `right`; with `--capture` it captures the mini bar |
 | `--lang LANG` | Starts in an interface language, like choosing it on the Settings page: `zh-CN`, `en`, `ja`; with `--capture` it captures pages in that language |
+| `--autostart` | The argument of the autostart entry; with Start hidden in the notification area on, only the icon appears |
 | `--help` | Lists the options (in Simplified Chinese) |
 
 ```powershell
@@ -193,7 +195,7 @@ flowchart TD
 | `src/` | Logging setup, wiring, system language detection, the DX12 window and window icon, the command-line smoke test and capture, orderly shutdown |
 | `build.rs`, `assets/` | Multi-size application icon and resource script, embedded into the EXE at build time |
 | `crates/qqq-domain/` | Devices, metrics, units, reading states and unavailability reasons, process instances and actions, remote host endpoints and sessions, plus the `Collector`, `CollectorFactory`, `ProcessPlatform`, `RemotePlatform` and `SecretStore` interfaces |
-| `crates/qqq-platform-windows/` | CPU and memory through sysinfo; network through IP Helper; disk I/O, GPU engines and GPU memory through PDH; graphics cards through DXGI; local volume capacity; monitor work areas and mouse state; the user's display languages; window icons from the EXE resources; the notification-area icon, its menu and the taskbar button; Windows processes listed in one system call, ended and reprioritized; processes of running WSL distributions read and handled through `wsl.exe`; remote host passwords and passphrases in Windows Credential Manager. Native calls live in `native.rs`, `tray.rs`, `process.rs` and `secret.rs`, with RAII handle management |
+| `crates/qqq-platform-windows/` | CPU and memory through sysinfo; network through IP Helper; disk I/O, GPU engines and GPU memory through PDH; graphics cards through DXGI; local volume capacity; monitor work areas and mouse state; the user's display languages; window icons from the EXE resources; the notification-area icon, its menu and the taskbar button; Windows processes listed in one system call, ended and reprioritized; processes of running WSL distributions read and handled through `wsl.exe`; remote host passwords and passphrases in Windows Credential Manager; autostart through the current user's `Run` registry key. Native calls live in `native.rs`, `tray.rs`, `process.rs`, `secret.rs` and `autostart.rs`, with RAII handle management |
 | `crates/qqq-engine/` | Sampling schedule, counter deltas and warm-up, bounded history and display projection, on-demand process polling with process CPU usage, process actions on their own thread, a connection thread with a reconnect policy for each remote host, immutable views, configuration (including the interface language and remote hosts) with background saving, and language-neutral command and configuration notices |
 | `crates/qqq-remote/` | SSH client (russh): sign-in with a password, a private key or the SSH agent, host key checks against the trusted key or `known_hosts`, a POSIX shell on the host that reads `/proc` and `df`, rates by the host's clock, and the hosts of `~/.ssh/config` for importing |
 | `crates/qqq-ui/` | Nine pages including process management and remote hosts, edge docking and the mini bar, the tray presence, charts and shared components, the theme, pixel drawing (bitmap font, icons, sprites), the mascot (pixel sprites generated from illustrations at build time), interface text in three languages and the embedded CJK font |
@@ -219,7 +221,7 @@ flowchart LR
 - **Backpressure**: every collector buffers at most 8 batches; when the buffer is full, the current batch is dropped and the history records a gap. At most 32 commands are in flight.
 - **Non-blocking rendering**: the engine builds views outside the lock, swaps a single `Arc` slot and requests a repaint; every frame, the GUI takes the latest view without blocking and submits history queries as needed.
 - **Remote hosts**: each host has a thread with its own SSH connection and single-threaded tokio runtime; its readings carry the device prefix `ssh:<host ID>/` and pass through the same checks, history and projection as those of this computer.
-- **Safety boundary**: the domain, engine, GUI, remote collection and launcher forbid `unsafe`; Windows FFI lives in `native.rs`, `tray.rs`, `process.rs` and `secret.rs` of the platform crate.
+- **Safety boundary**: the domain, engine, GUI, remote collection and launcher forbid `unsafe`; Windows FFI lives in `native.rs`, `tray.rs`, `process.rs`, `secret.rs` and `autostart.rs` of the platform crate.
 
 ### Extending
 

@@ -9,6 +9,7 @@
 
 use crate::i18n;
 use eframe::egui::{self, Pos2, Rect, Vec2, ViewportCommand, pos2, vec2};
+use qqq_domain::Reason;
 use qqq_engine::{AppConfig, DockEdge};
 use std::time::Duration;
 
@@ -56,6 +57,13 @@ pub struct Desktop {
     /// Shows or removes the taskbar button of the visible window; `false` while the window
     /// has not appeared yet.
     pub taskbar_button: fn(bool) -> bool,
+    /// Cloaks or reveals the application window: the compositor draws nothing of a cloaked
+    /// window, whose visibility stays as it is.
+    pub cloak: fn(bool),
+    /// Whether the program starts when the user signs in.
+    pub autostart: fn() -> bool,
+    /// Switches starting at sign-in on or off.
+    pub set_autostart: fn(bool) -> Result<(), Reason>,
 }
 
 /// Work area of the monitor around a window, in points, and which of its

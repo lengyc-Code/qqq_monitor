@@ -196,6 +196,9 @@ pub const STRINGS: Strings = Strings {
     edge_docking_option: "上端か左右の端へドラッグするとミニバーになる",
     minimize_to_tray: "トレイに最小化",
     minimize_to_tray_option: "最小化するとタスクトレイにアイコンだけを残す",
+    autostart: "自動起動",
+    autostart_option: "Windows へのサインイン時に QQQ Monitor を起動する",
+    autostart_to_tray_option: "自動起動時はタスクトレイに格納する",
     apply_save: "適用して保存",
     runtime_status: "動作状況",
     batches: |received, dropped| format!("受信バッチ {received}  ·  破棄バッチ {dropped}"),
@@ -400,6 +403,9 @@ fn notice(notice: &Notice) -> String {
         Notice::InvalidRemoteHost => "リモートホストの設定が無効です".into(),
         Notice::SecretUnsaved(reason) => {
             format!("パスワードを保存できません：{}", self::reason(reason))
+        }
+        Notice::AutostartUnchanged(reason) => {
+            format!("自動起動を変更できません：{}", self::reason(reason))
         }
     }
 }

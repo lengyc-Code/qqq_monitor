@@ -196,6 +196,9 @@ pub const STRINGS: Strings = Strings {
     edge_docking_option: "拖到屏幕顶部或左右边缘时收起为迷你状态栏",
     minimize_to_tray: "最小化到托盘",
     minimize_to_tray_option: "最小化时只在任务栏托盘保留图标",
+    autostart: "开机自动启动",
+    autostart_option: "登录 Windows 时自动启动 QQQ Monitor",
+    autostart_to_tray_option: "开机启动时直接收进托盘",
     apply_save: "应用并保存",
     runtime_status: "运行状态",
     batches: |received, dropped| format!("接收采样批次 {received}  ·  丢失批次 {dropped}"),
@@ -381,6 +384,9 @@ fn notice(notice: &Notice) -> String {
         Notice::Process(reason) => format!("进程操作失败：{}", self::reason(reason)),
         Notice::InvalidRemoteHost => "远程主机设置无效".into(),
         Notice::SecretUnsaved(reason) => format!("无法保存密码：{}", self::reason(reason)),
+        Notice::AutostartUnchanged(reason) => {
+            format!("无法更改开机自动启动：{}", self::reason(reason))
+        }
     }
 }
 

@@ -29,7 +29,7 @@ fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|s| s == "--help") {
         println!(
-            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           截图页面：overview/cpu/memory/gpu/disk/network/processes/remote/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja"
+            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           截图页面：overview/cpu/memory/gpu/disk/network/processes/remote/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja\n  --autostart           以开机自动启动的方式启动：开启“开机启动时直接收进托盘”时只显示托盘图标"
         );
         return Ok(());
     }
@@ -95,6 +95,11 @@ fn run() -> Result<(), String> {
     } else {
         None
     };
+    let start_in_tray = capture.is_none()
+        && config.autostart_to_tray
+        && args
+            .iter()
+            .any(|s| s == qqq_platform_windows::AUTOSTART_ARGUMENT);
     // An empty icon keeps eframe's default icon off the window; the embedded resource icon
     // is applied once the window exists.
     let viewport = qqq_ui::viewport(&config).with_icon(eframe::egui::IconData::default());
@@ -116,17 +121,21 @@ fn run() -> Result<(), String> {
         hide_tray: qqq_platform_windows::hide_tray,
         tray_opened: qqq_platform_windows::tray_opened,
         taskbar_button: qqq_platform_windows::set_taskbar_button,
+        cloak: qqq_platform_windows::cloak_window,
+        autostart: qqq_platform_windows::autostart,
+        set_autostart: qqq_platform_windows::set_autostart,
     };
     let result = eframe::run_native(
         "QQQ Monitor",
         options,
         Box::new(move |cc| {
+            let mut tray = false;
             if let Ok(handle) = cc.window_handle()
                 && let RawWindowHandle::Win32(handle) = handle.as_raw()
             {
                 qqq_platform_windows::set_window_icon(handle.hwnd.get());
                 let context = cc.egui_ctx.clone();
-                qqq_platform_windows::attach_tray(handle.hwnd.get(), move || {
+                tray = qqq_platform_windows::attach_tray(handle.hwnd.get(), move || {
                     context.request_repaint()
                 });
             }
@@ -137,6 +146,8 @@ fn run() -> Result<(), String> {
                 capture,
                 desktop,
                 system_language,
+                // Only the icon can bring back a window that starts in the tray.
+                start_in_tray && tray,
             )))
         }),
     )

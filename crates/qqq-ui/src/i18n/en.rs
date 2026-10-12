@@ -199,6 +199,9 @@ pub const STRINGS: Strings = Strings {
     edge_docking_option: "Dragging to the top or a side edge shows the mini bar",
     minimize_to_tray: "Minimize to tray",
     minimize_to_tray_option: "Minimizing leaves only an icon in the notification area",
+    autostart: "Autostart",
+    autostart_option: "Start QQQ Monitor when you sign in to Windows",
+    autostart_to_tray_option: "Start hidden in the notification area",
     apply_save: "Apply & save",
     runtime_status: "Status",
     batches: |received, dropped| format!("Batches received {received}  ·  dropped {dropped}"),
@@ -403,6 +406,9 @@ fn notice(notice: &Notice) -> String {
         Notice::InvalidRemoteHost => "Invalid remote host settings".into(),
         Notice::SecretUnsaved(reason) => {
             format!("The password could not be saved: {}", self::reason(reason))
+        }
+        Notice::AutostartUnchanged(reason) => {
+            format!("Autostart could not be changed: {}", self::reason(reason))
         }
     }
 }

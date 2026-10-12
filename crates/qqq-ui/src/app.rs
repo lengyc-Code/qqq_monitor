@@ -89,6 +89,8 @@ pub struct DesktopApp {
     remote: pages::remote::RemotePage,
     /// Language the "follow system" setting resolves to.
     system_language: Language,
+    /// Whether the program starts at sign-in, read when the settings page opens.
+    autostart: Option<bool>,
 }
 
 impl DesktopApp {
@@ -99,6 +101,7 @@ impl DesktopApp {
         capture: Option<CaptureOptions>,
         desktop: dock::Desktop,
         system_language: Language,
+        start_in_tray: bool,
     ) -> Self {
         i18n::set(config.language.unwrap_or(system_language));
         theme::install_fonts(&cc.egui_ctx);
@@ -112,10 +115,15 @@ impl DesktopApp {
         Self {
             dock: dock::Dock::new(&config),
             desktop,
-            tray: tray::Tray::default(),
+            tray: if start_in_tray {
+                tray::Tray::hidden(&desktop)
+            } else {
+                tray::Tray::default()
+            },
             process: Default::default(),
             remote: Default::default(),
             system_language,
+            autostart: None,
             range: config.history_secs,
             active_config: config.clone(),
             config,
@@ -431,6 +439,10 @@ impl eframe::App for DesktopApp {
         if language != i18n::language() {
             i18n::set(language);
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(i18n::t().window_title.into()));
+        }
+        if self.page != Page::Settings {
+            // Task Manager can switch starting at sign-in while the page is closed.
+            self.autostart = None;
         }
         self.select_initial_devices();
         self.query();

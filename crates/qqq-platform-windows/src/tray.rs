@@ -13,6 +13,7 @@ use std::{
 use windows::{
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+        Graphics::Dwm::{DWMWA_CLOAK, DwmSetWindowAttribute},
         System::{
             Com::{
                 CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
@@ -36,7 +37,7 @@ use windows::{
             },
         },
     },
-    core::{HSTRING, PCWSTR, w},
+    core::{BOOL, HSTRING, PCWSTR, w},
 };
 
 /// Message carrying the icon's notifications.
@@ -85,14 +86,14 @@ fn with<R>(f: impl FnOnce(&Tray) -> R) -> Option<R> {
 
 /// Prepares the tray for the application window `main` on the calling GUI thread. `wake` is
 /// called when the user asks for the window from the icon, so the GUI polls [`opened`].
-/// The icon itself appears with [`show`].
-pub fn attach(main: isize, wake: impl Fn() + 'static) {
+/// The icon itself appears with [`show`]. Returns whether the tray is ready.
+pub fn attach(main: isize, wake: impl Fn() + 'static) -> bool {
     if with(|_| ()).is_some() {
-        return;
+        return true;
     }
     // SAFETY: a null module name returns the running executable, which outlives the tray.
     let Ok(module) = (unsafe { GetModuleHandleW(PCWSTR::null()) }) else {
-        return;
+        return false;
     };
     let class = w!("QqqMonitorTray");
     let description = WNDCLASSW {
@@ -122,7 +123,7 @@ pub fn attach(main: isize, wake: impl Fn() + 'static) {
             None,
         )
     }) else {
-        return;
+        return false;
     };
     // SAFETY: the message name is a static NUL-terminated string.
     let taskbar_created = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
@@ -147,6 +148,7 @@ pub fn attach(main: isize, wake: impl Fn() + 'static) {
             wake: Box::new(wake),
         });
     });
+    true
 }
 
 /// The embedded application icon at the size the notification area uses at system DPI.
@@ -207,6 +209,24 @@ pub fn set_taskbar_button(shown: bool) -> bool {
         true
     })
     .unwrap_or(true)
+}
+
+/// Cloaks or reveals the application window. The compositor draws nothing of a cloaked
+/// window, while its visibility and the rest of its state stay as they are.
+pub fn cloak(cloaked: bool) {
+    with(|tray| {
+        let value = BOOL::from(cloaked);
+        // SAFETY: `value` outlives the call and its exact size is given; an invalid handle
+        // only fails the call.
+        let _ = unsafe {
+            DwmSetWindowAttribute(
+                tray.main,
+                DWMWA_CLOAK,
+                (&raw const value).cast(),
+                size_of::<BOOL>() as u32,
+            )
+        };
+    });
 }
 
 /// Whether the user asked for the application window from the icon since the last call.

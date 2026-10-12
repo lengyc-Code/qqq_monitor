@@ -163,6 +163,7 @@ fn in_flight_limit_is_explicit_and_shutdown_flushes_accepted_save() {
         history_secs: 300,
         edge_docking: false,
         minimize_to_tray: false,
+        autostart_to_tray: false,
         dock: Some(DockEdge::Left),
         dock_position: Some([12.0, 240.0]),
         ..Default::default()

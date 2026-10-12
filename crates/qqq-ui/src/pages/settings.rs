@@ -1,7 +1,7 @@
 use super::super::DesktopApp;
 use crate::{components::*, i18n, mascot, pixel, theme};
 use eframe::egui::{self, RichText, vec2};
-use qqq_engine::{Language, MonitorCommand, MonitorView};
+use qqq_engine::{Language, MonitorCommand, MonitorView, Notice};
 
 /// History budget shown in diagnostics; matches the engine's allocation limit.
 const HISTORY_BUDGET: f64 = 16.0 * 1024.0 * 1024.0;
@@ -36,6 +36,7 @@ impl DesktopApp {
                         t.animations,
                         t.edge_docking,
                         t.minimize_to_tray,
+                        t.autostart,
                     ],
                     14.0,
                 ) + 8.0;
@@ -110,6 +111,46 @@ impl DesktopApp {
                     row_label(ui, t.minimize_to_tray);
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                     ui.checkbox(&mut self.config.minimize_to_tray, t.minimize_to_tray_option);
+                });
+                ui.horizontal(|ui| {
+                    row_label(ui, t.autostart);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    ui.vertical(|ui| {
+                        // A system setting rather than a preference: it changes at once, and
+                        // so does the choice beneath it.
+                        let mut enabled =
+                            *self.autostart.get_or_insert_with(self.desktop.autostart);
+                        if ui.checkbox(&mut enabled, t.autostart_option).changed() {
+                            match (self.desktop.set_autostart)(enabled) {
+                                Ok(())
+                                    if matches!(
+                                        self.message,
+                                        Some(Notice::AutostartUnchanged(_))
+                                    ) =>
+                                {
+                                    self.message = None
+                                }
+                                Ok(()) => {}
+                                Err(reason) => {
+                                    self.message = Some(Notice::AutostartUnchanged(reason))
+                                }
+                            }
+                            self.autostart = None;
+                        }
+                        let mut to_tray = self.config.autostart_to_tray;
+                        if ui
+                            .add_enabled(
+                                enabled,
+                                egui::Checkbox::new(&mut to_tray, t.autostart_to_tray_option),
+                            )
+                            .changed()
+                        {
+                            self.config.autostart_to_tray = to_tray;
+                            let mut config = self.active_config.clone();
+                            config.autostart_to_tray = to_tray;
+                            self.save_config(config, true);
+                        }
+                    });
                 });
                 ui.horizontal(|ui| {
                     let width = (label_width(ui, &[t.apply_save], 14.0) + 76.0).max(150.0);

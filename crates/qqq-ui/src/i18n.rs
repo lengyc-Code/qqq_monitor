@@ -203,6 +203,9 @@ pub struct Strings {
     pub edge_docking_option: &'static str,
     pub minimize_to_tray: &'static str,
     pub minimize_to_tray_option: &'static str,
+    pub autostart: &'static str,
+    pub autostart_option: &'static str,
+    pub autostart_to_tray_option: &'static str,
     pub apply_save: &'static str,
     pub runtime_status: &'static str,
     /// Received and dropped sample batches.

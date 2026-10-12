@@ -167,6 +167,8 @@ pub struct AppConfig {
     pub edge_docking: bool,
     /// Hide a minimized window in the notification area.
     pub minimize_to_tray: bool,
+    /// Start with only the notification-area icon when Windows starts the program at sign-in.
+    pub autostart_to_tray: bool,
     /// Edge of the compact status bar; `None` shows the full window.
     pub dock: Option<DockEdge>,
     /// Outer position of the compact status bar, in points.
@@ -188,6 +190,7 @@ impl Default for AppConfig {
             window_position: None,
             edge_docking: true,
             minimize_to_tray: true,
+            autostart_to_tray: true,
             dock: None,
             dock_position: None,
             remote_hosts: Vec::new(),
@@ -289,6 +292,7 @@ impl ConfigStore {
                     field!(window_position, Option<[f32; 2]>);
                     field!(edge_docking, bool);
                     field!(minimize_to_tray, bool);
+                    field!(autostart_to_tray, bool);
                     field!(dock, Option<DockEdge>);
                     field!(dock_position, Option<[f32; 2]>);
                     // Each host recovers on its own, so one bad entry keeps the others.
