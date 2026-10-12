@@ -57,6 +57,13 @@ impl DesktopApp {
                     }
                 });
                 ui.horizontal(|ui| {
+                    row_label(ui, "边缘吸附");
+                    ui.checkbox(
+                        &mut self.config.edge_docking,
+                        "拖到屏幕顶部或左右边缘时收起为迷你状态栏",
+                    );
+                });
+                ui.horizontal(|ui| {
                     if theme::pixel_button(
                         ui,
                         "应用并保存",

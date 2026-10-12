@@ -6,6 +6,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Screen edge the window docks to as a compact status bar.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DockEdge {
+    Top,
+    Left,
+    Right,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppConfig {
@@ -15,6 +24,12 @@ pub struct AppConfig {
     pub selected_network: Option<String>,
     pub window_size: [f32; 2],
     pub window_position: Option<[f32; 2]>,
+    /// Dock a window dragged against the top, left or right screen edge.
+    pub edge_docking: bool,
+    /// Edge of the compact status bar; `None` shows the full window.
+    pub dock: Option<DockEdge>,
+    /// Outer position of the compact status bar, in points.
+    pub dock_position: Option<[f32; 2]>,
 }
 
 impl Default for AppConfig {
@@ -26,6 +41,9 @@ impl Default for AppConfig {
             selected_network: None,
             window_size: [1280.0, 800.0],
             window_position: None,
+            edge_docking: true,
+            dock: None,
+            dock_position: None,
         }
     }
 }
@@ -45,9 +63,10 @@ impl AppConfig {
         {
             return Err("窗口尺寸无效".into());
         }
-        if self
-            .window_position
-            .is_some_and(|p| !p.iter().all(|v| v.is_finite()))
+        if [self.window_position, self.dock_position]
+            .iter()
+            .flatten()
+            .any(|p| !p.iter().all(|v| v.is_finite()))
         {
             return Err("窗口位置无效".into());
         }
@@ -103,6 +122,9 @@ impl ConfigStore {
                     field!(selected_network, Option<String>);
                     field!(window_size, [f32; 2]);
                     field!(window_position, Option<[f32; 2]>);
+                    field!(edge_docking, bool);
+                    field!(dock, Option<DockEdge>);
+                    field!(dock_position, Option<[f32; 2]>);
                 }
                 Err(_) => {
                     protected = true;

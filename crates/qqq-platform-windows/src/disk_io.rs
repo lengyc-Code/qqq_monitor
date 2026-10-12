@@ -2,13 +2,16 @@ use qqq_domain::*;
 use std::time::Instant;
 
 pub struct DiskIo {
-    query: super::native::DiskQuery,
+    query: super::native::CounterQuery,
     previous: Option<Instant>,
 }
 impl DiskIo {
     pub fn new() -> Result<Self, CollectorError> {
         Ok(Self {
-            query: super::native::DiskQuery::new()?,
+            query: super::native::CounterQuery::new(&[
+                r"\PhysicalDisk(*)\Disk Read Bytes/sec",
+                r"\PhysicalDisk(*)\Disk Write Bytes/sec",
+            ])?,
             previous: None,
         })
     }
@@ -22,7 +25,10 @@ impl Collector for DiskIo {
             .previous
             .is_some_and(|old| at.saturating_duration_since(old) <= context.period * 3);
         self.previous = Some(at);
-        let values = self.query.values();
+        let values = self
+            .query
+            .values(0)
+            .and_then(|read| Ok((read, self.query.values(1)?)));
         if !warmed && values.is_err() {
             batch.finished_at = Instant::now();
             return Ok(batch);

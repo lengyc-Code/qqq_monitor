@@ -64,6 +64,15 @@ pub const NETWORK: Tone = Tone {
     main: BLUE,
     soft: BLUE_SOFT,
 };
+/// The bell's gold and the gem's blue, for the graphics card and its memory.
+pub const GPU: Tone = Tone {
+    main: GOLD,
+    soft: GOLD_SOFT,
+};
+pub const VRAM: Tone = Tone {
+    main: BLUE,
+    soft: BLUE_SOFT,
+};
 pub const ACCENT: Tone = Tone {
     main: PINK,
     soft: PINK_SOFT,
@@ -247,7 +256,7 @@ pub fn pixel_button(
     selected: bool,
     size: egui::Vec2,
 ) -> egui::Response {
-    push_button(ui, text, icon, selected, size, false)
+    push_button(ui, text, icon, selected, size, false, true)
 }
 
 /// Pixel push button for the dark navigation frame.
@@ -258,7 +267,19 @@ pub fn nav_button(
     selected: bool,
     size: egui::Vec2,
 ) -> egui::Response {
-    push_button(ui, text, Some(icon), selected, size, true)
+    push_button(ui, text, Some(icon), selected, size, true, true)
+}
+
+/// Pixel push button showing only a centered icon; `label` names it for
+/// assistive technology and the hover tooltip.
+pub fn icon_button(
+    ui: &mut egui::Ui,
+    icon: &pixel::Icon,
+    label: &str,
+    size: egui::Vec2,
+    night: bool,
+) -> egui::Response {
+    push_button(ui, label, Some(icon), false, size, night, false).on_hover_text(label)
 }
 
 fn push_button(
@@ -268,6 +289,7 @@ fn push_button(
     selected: bool,
     size: egui::Vec2,
     night: bool,
+    show_text: bool,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     response
@@ -300,11 +322,13 @@ fn push_button(
     let galley = painter.layout_no_wrap(text.to_owned(), FontId::proportional(14.0), ink);
     let mut x = face.center().x - galley.size().x / 2.0;
     if let Some(icon) = icon {
-        let unit = pixel::unit(&ctx, 2.0);
-        let origin = pixel::snap(
-            &ctx,
-            egui::pos2(face.left() + 14.0, face.center().y - 4.5 * unit),
-        );
+        let unit = pixel::unit(&ctx, if show_text { 2.0 } else { 1.5 });
+        let left = if show_text {
+            face.left() + 14.0
+        } else {
+            face.center().x - 4.5 * unit
+        };
+        let origin = pixel::snap(&ctx, egui::pos2(left, face.center().y - 4.5 * unit));
         let mut shapes = Vec::new();
         let accent = match (selected, night) {
             (true, _) => PAPER,
@@ -315,11 +339,13 @@ fn push_button(
         painter.extend(shapes);
         x = origin.x + 9.0 * unit + 12.0;
     }
-    painter.galley(
-        egui::pos2(x, face.center().y - galley.size().y / 2.0),
-        galley,
-        ink,
-    );
+    if show_text {
+        painter.galley(
+            egui::pos2(x, face.center().y - galley.size().y / 2.0),
+            galley,
+            ink,
+        );
+    }
     if response.has_focus() {
         painter.rect_stroke(
             face.expand(3.0),

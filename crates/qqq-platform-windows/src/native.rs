@@ -2,10 +2,23 @@ use qqq_domain::CollectorError;
 use std::{collections::BTreeMap, mem::size_of, ptr};
 use windows::{
     Win32::{
+        Foundation::{POINT, RECT},
+        Graphics::{
+            Dxgi::{
+                CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_ERROR_NOT_FOUND, IDXGIFactory1,
+            },
+            Gdi::{
+                GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL, MONITORINFO,
+                MonitorFromPoint,
+            },
+        },
         NetworkManagement::{IpHelper::*, Ndis::IfOperStatusUp},
         Storage::FileSystem::{GetDriveTypeW, GetVolumeNameForVolumeMountPointW},
         System::Performance::*,
-        UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW},
+        UI::{
+            Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON},
+            WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW},
+        },
     },
     core::{HSTRING, PCWSTR, w},
 };
@@ -106,12 +119,12 @@ pub fn show_error(message: &str) {
     }
 }
 
-pub struct DiskQuery {
+/// Live PDH query over wildcard counter paths; values are read back by path index.
+pub struct CounterQuery {
     handle: PDH_HQUERY,
-    read: PDH_HCOUNTER,
-    write: PDH_HCOUNTER,
+    counters: Vec<PDH_HCOUNTER>,
 }
-impl Drop for DiskQuery {
+impl Drop for CounterQuery {
     fn drop(&mut self) {
         /* SAFETY: owned query, released on its creating thread exactly once. */
         unsafe {
@@ -119,9 +132,9 @@ impl Drop for DiskQuery {
         }
     }
 }
-type Values = BTreeMap<String, Option<f64>>;
-impl DiskQuery {
-    pub fn new() -> Result<Self, CollectorError> {
+pub type Values = BTreeMap<String, Option<f64>>;
+impl CounterQuery {
+    pub fn new(paths: &[&str]) -> Result<Self, CollectorError> {
         let mut handle = PDH_HQUERY::default();
         // SAFETY: output pointer is valid; None requests live system counters.
         let status = unsafe { PdhOpenQueryW(PCWSTR::null(), 0, &mut handle) };
@@ -130,21 +143,18 @@ impl DiskQuery {
         }
         let mut query = Self {
             handle,
-            read: PDH_HCOUNTER::default(),
-            write: PDH_HCOUNTER::default(),
+            counters: Vec::with_capacity(paths.len()),
         };
-        for (path, counter) in [
-            (w!(r"\PhysicalDisk(*)\Disk Read Bytes/sec"), &mut query.read),
-            (
-                w!(r"\PhysicalDisk(*)\Disk Write Bytes/sec"),
-                &mut query.write,
-            ),
-        ] {
-            // SAFETY: query is open, static UTF-16 path is valid, and output handle storage lives through call.
-            let status = unsafe { PdhAddEnglishCounterW(query.handle, path, 0, counter) };
+        for path in paths {
+            let mut counter = PDH_HCOUNTER::default();
+            // SAFETY: query is open, the NUL-terminated path and output handle storage live through the call.
+            let status = unsafe {
+                PdhAddEnglishCounterW(query.handle, &HSTRING::from(*path), 0, &mut counter)
+            };
             if status != 0 {
                 return Err(error("PdhAddEnglishCounterW", status));
             }
+            query.counters.push(counter);
         }
         Ok(query)
     }
@@ -157,8 +167,9 @@ impl DiskQuery {
             Err(error("PdhCollectQueryData", status))
         }
     }
-    pub fn values(&self) -> Result<(Values, Values), CollectorError> {
-        Ok((self.array(self.read)?, self.array(self.write)?))
+    /// Instance values of the counter added at `index`; invalid samples are `None`.
+    pub fn values(&self, index: usize) -> Result<Values, CollectorError> {
+        self.array(self.counters[index])
     }
     fn array(&self, counter: PDH_HCOUNTER) -> Result<Values, CollectorError> {
         let mut bytes = 0_u32;
@@ -174,7 +185,8 @@ impl DiskQuery {
             return Ok(BTreeMap::new());
         }
         for _ in 0..3 {
-            if bytes as usize > 1024 * 1024 {
+            // GPU engine counters list one instance per process and engine.
+            if bytes as usize > 4 * 1024 * 1024 {
                 return Err(CollectorError("性能计数器缓冲区异常".into()));
             }
             // u64 provides at least the alignment required by the PDH item structure.
@@ -238,8 +250,83 @@ impl DiskQuery {
             }
             return Ok(values);
         }
-        Err(CollectorError(
-            "设备变化频繁，暂时无法读取磁盘计数器".into(),
-        ))
+        Err(CollectorError("计数器实例变化频繁，暂时无法读取".into()))
     }
+}
+
+pub struct GpuAdapter {
+    /// Adapter LUID as `HighPart << 32 | LowPart`, matching PDH instance names.
+    pub luid: u64,
+    pub name: String,
+    /// PCI vendor ID.
+    pub vendor: u32,
+    pub dedicated: u64,
+    pub shared: u64,
+    pub software: bool,
+}
+
+pub fn gpu_adapters() -> Result<Vec<GpuAdapter>, CollectorError> {
+    let failed = |api: &str, e: windows::core::Error| CollectorError(format!("{api} 失败：{e}"));
+    // SAFETY: factory creation has no preconditions; the COM wrapper releases it on drop.
+    let factory: IDXGIFactory1 =
+        unsafe { CreateDXGIFactory1() }.map_err(|e| failed("CreateDXGIFactory1", e))?;
+    let mut adapters = Vec::new();
+    for index in 0.. {
+        // SAFETY: indices are enumerated in order until DXGI_ERROR_NOT_FOUND; wrappers release adapters.
+        let adapter = match unsafe { factory.EnumAdapters1(index) } {
+            Ok(adapter) => adapter,
+            Err(e) if e.code() == DXGI_ERROR_NOT_FOUND => break,
+            Err(e) => return Err(failed("EnumAdapters1", e)),
+        };
+        // SAFETY: the adapter is alive and GetDesc1 fills a plain descriptor value.
+        let desc = unsafe { adapter.GetDesc1() }.map_err(|e| failed("GetDesc1", e))?;
+        adapters.push(GpuAdapter {
+            luid: (desc.AdapterLuid.HighPart as u32 as u64) << 32 | desc.AdapterLuid.LowPart as u64,
+            name: text(&desc.Description),
+            vendor: desc.VendorId,
+            dedicated: desc.DedicatedVideoMemory as u64,
+            shared: desc.SharedSystemMemory as u64,
+            software: desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0,
+        });
+    }
+    Ok(adapters)
+}
+
+fn point(at: [f32; 2]) -> POINT {
+    POINT {
+        x: at[0].round() as i32,
+        y: at[1].round() as i32,
+    }
+}
+
+/// Bounds and work area of the monitor nearest to a point, as `[left, top, right, bottom]`
+/// in physical pixels of the virtual screen.
+pub fn monitor_at(at: [f32; 2]) -> Option<([f32; 4], [f32; 4])> {
+    let mut info = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: the point is passed by value and `info` is a writable MONITORINFO with its size set.
+    unsafe {
+        let monitor = MonitorFromPoint(point(at), MONITOR_DEFAULTTONEAREST);
+        if monitor.is_invalid() || !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return None;
+        }
+    }
+    let edges = |r: RECT| [r.left as f32, r.top as f32, r.right as f32, r.bottom as f32];
+    Some((edges(info.rcMonitor), edges(info.rcWork)))
+}
+
+/// Whether a physical-pixel point lies on any monitor.
+pub fn covers_point(at: [f32; 2]) -> bool {
+    // SAFETY: plain value arguments; the returned handle is only compared.
+    !unsafe { MonitorFromPoint(point(at), MONITOR_DEFAULTTONULL) }.is_invalid()
+}
+
+/// Whether a mouse button is physically held, including during a system window move.
+pub fn mouse_button_held() -> bool {
+    [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON]
+        .iter()
+        // SAFETY: reads the asynchronous key state of a valid virtual-key code.
+        .any(|key| unsafe { GetAsyncKeyState(key.0 as i32) } < 0)
 }

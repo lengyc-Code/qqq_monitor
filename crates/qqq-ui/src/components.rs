@@ -1,7 +1,7 @@
 use crate::{pixel, theme};
 use eframe::egui::{self, Color32, FontId, RichText, Sense, pos2, vec2};
 use egui_plot::{HoverPosition, Line, Plot};
-use qqq_domain::{DeviceKind, MetricKey, MetricReading, SampleState, Unit};
+use qqq_domain::{DeviceDescriptor, DeviceKind, MetricKey, MetricReading, SampleState, Unit};
 use qqq_engine::MonitorView;
 
 /// Widest strings the big pixel numbers must fit, so a row of cards shares one size.
@@ -337,6 +337,27 @@ pub fn segment_bar(ui: &mut egui::Ui, percent: Option<f64>, color: Color32, heig
     }
 }
 
+/// Right-to-left legend of the heat colors used by [`heat_tile`].
+pub fn heat_legend(ui: &mut egui::Ui) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        ui.label(RichText::new("100%").size(11.0).color(theme::MUTED));
+        for level in [100.0, 75.0, 50.0, 25.0, 0.0] {
+            swatch(ui, theme::core_fill(level));
+        }
+        ui.label(RichText::new("0%").size(11.0).color(theme::MUTED));
+    });
+}
+
+/// The graphics card with the most memory, which is the discrete card when there is one.
+pub fn primary_gpu(view: &MonitorView) -> Option<&DeviceDescriptor> {
+    let total = |d: &DeviceDescriptor| view.value(&d.id, "memory_total").unwrap_or(0.0);
+    view.devices
+        .values()
+        .filter(|d| d.kind == DeviceKind::Gpu && d.online)
+        .max_by(|a, b| total(a).total_cmp(&total(b)))
+}
+
 pub fn swatch(ui: &mut egui::Ui, color: Color32) {
     let unit = pixel::unit(ui.ctx(), 2.0);
     let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(unit * 5.0), Sense::hover());
@@ -569,4 +590,108 @@ pub fn device_picker(
             changed
         })
         .inner
+}
+
+/// Clickable pixel tile whose heat-colored level rises with a load; `label`
+/// sits top left in the bitmap font when it can, the value bottom right.
+pub fn heat_tile(
+    ui: &mut egui::Ui,
+    label: &str,
+    name: &str,
+    value: Option<f64>,
+    selected: bool,
+) -> egui::Response {
+    let ctx = ui.ctx().clone();
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 54.0), Sense::click());
+    let text = format_value(value, Unit::Percent);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Button,
+            true,
+            selected,
+            format!("{name} {text}"),
+        )
+    });
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let lift = pixel::unit(&ctx, 3.0);
+    let border = pixel::unit(&ctx, 2.0);
+    let small = pixel::unit(&ctx, 1.5);
+    let face = pixel::snap_rect(
+        &ctx,
+        egui::Rect::from_min_max(rect.min, rect.max - egui::Vec2::splat(lift)),
+    );
+    let hovered = response.hovered() || response.has_focus();
+    let shadow = if selected {
+        theme::PINK
+    } else if hovered {
+        theme::PINK_SOFT
+    } else {
+        theme::SHADOW
+    };
+    let mut shapes = vec![pixel::panel(
+        &ctx,
+        face,
+        theme::PAPER,
+        if selected { theme::PINK } else { theme::INK },
+        Some((shadow, 3.0)),
+    )];
+    let inner = face.shrink(border);
+    if let Some(value) = value.filter(|v| *v > 0.0) {
+        let height = (inner.height() * (value / 100.0).min(1.0) as f32 / border).ceil() * border;
+        shapes.push(egui::Shape::rect_filled(
+            egui::Rect::from_min_max(pos2(inner.left(), inner.bottom() - height), inner.max),
+            0.0,
+            theme::core_fill(value),
+        ));
+    }
+    let corner = pixel::snap(&ctx, inner.min + vec2(6.0, 6.0));
+    if pixel::supports(label) {
+        pixel::text_shapes(&mut shapes, corner, label, small, theme::INK);
+    } else {
+        let galley =
+            ui.painter()
+                .layout_no_wrap(label.to_owned(), FontId::proportional(12.0), theme::INK);
+        // Centred on the line a bitmap label would occupy.
+        let top = corner.y + 3.5 * small - galley.size().y / 2.0;
+        shapes.push(egui::Shape::galley(pos2(corner.x, top), galley, theme::INK));
+    }
+    let value_size = pixel::text_size(&text, border);
+    pixel::text_shapes(
+        &mut shapes,
+        pixel::snap(
+            &ctx,
+            pos2(
+                inner.right() - 6.0 - value_size.x,
+                inner.bottom() - 6.0 - value_size.y,
+            ),
+        ),
+        &text,
+        border,
+        theme::INK,
+    );
+    if selected {
+        pixel::icon_shapes(
+            &mut shapes,
+            pixel::snap(
+                &ctx,
+                pos2(inner.right() - 4.0 - 9.0 * small, inner.top() + 4.0),
+            ),
+            small,
+            &pixel::ICON_HEART,
+            theme::INK,
+            theme::PINK,
+        );
+    }
+    ui.painter().extend(shapes);
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            face.expand(2.0),
+            0.0,
+            egui::Stroke::new(2.0, theme::BLUE),
+            egui::StrokeKind::Outside,
+        );
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }

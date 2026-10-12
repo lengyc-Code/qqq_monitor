@@ -7,6 +7,7 @@ pub enum DeviceKind {
     Disk,
     Volume,
     Network,
+    Gpu,
 }
 
 #[derive(Clone, Debug)]

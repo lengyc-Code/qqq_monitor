@@ -1,10 +1,10 @@
 #[path = "pages/mod.rs"]
 mod pages;
 
-use crate::{components, mascot, pixel, theme};
+use crate::{components, dock, mascot, minibar, pixel, theme};
 use eframe::egui::{self, RichText, pos2, vec2};
 use qqq_domain::{DeviceKind, MetricKey};
-use qqq_engine::{AppConfig, CommandOutcome, MonitorClient, MonitorCommand, MonitorView};
+use qqq_engine::{AppConfig, CommandOutcome, DockEdge, MonitorClient, MonitorCommand, MonitorView};
 use std::{
     path::PathBuf,
     sync::Arc,
@@ -16,6 +16,7 @@ pub enum Page {
     Overview,
     Cpu,
     Memory,
+    Gpu,
     Disk,
     Network,
     Settings,
@@ -26,6 +27,7 @@ impl Page {
             Self::Overview => "系统总览",
             Self::Cpu => "处理器",
             Self::Memory => "物理内存",
+            Self::Gpu => "显卡",
             Self::Disk => "磁盘与存储",
             Self::Network => "网络流量",
             Self::Settings => "设置",
@@ -36,6 +38,7 @@ impl Page {
             Self::Overview => "OVERVIEW",
             Self::Cpu => "PROCESSOR",
             Self::Memory => "MEMORY",
+            Self::Gpu => "GPU",
             Self::Disk => "STORAGE",
             Self::Network => "NETWORK",
             Self::Settings => "CONFIG",
@@ -46,6 +49,7 @@ impl Page {
             Self::Overview => "实时掌握电脑的运行状态",
             Self::Cpu => "观察整体负载与每个逻辑核心",
             Self::Memory => "系统可用物理内存与使用趋势",
+            Self::Gpu => "显卡利用率、各引擎占用与显存",
             Self::Disk => "物理磁盘读写与本地卷容量",
             Self::Network => "查看所选网卡的实时收发",
             Self::Settings => "按你的使用习惯调整监控",
@@ -66,6 +70,9 @@ pub struct DesktopApp {
     network: String,
     disk: String,
     core: String,
+    gpu: String,
+    /// Metric name of the engine whose history the GPU page charts, e.g. `engine:3d`.
+    gpu_engine: String,
     range: u64,
     last_query: Vec<MetricKey>,
     last_range: u64,
@@ -75,6 +82,8 @@ pub struct DesktopApp {
     capture_requested: bool,
     started: Instant,
     closing: bool,
+    dock: dock::Dock,
+    desktop: dock::Desktop,
 }
 
 impl DesktopApp {
@@ -83,6 +92,7 @@ impl DesktopApp {
         client: MonitorClient,
         config: AppConfig,
         capture: Option<CaptureOptions>,
+        desktop: dock::Desktop,
     ) -> Self {
         theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx, config.animations);
@@ -93,6 +103,8 @@ impl DesktopApp {
             .unwrap_or_else(|| Arc::new(MonitorView::empty(config.clone())));
         let page = capture.as_ref().map(|v| v.page).unwrap_or(Page::Overview);
         Self {
+            dock: dock::Dock::new(&config),
+            desktop,
             range: config.history_secs,
             active_config: config.clone(),
             config,
@@ -102,6 +114,8 @@ impl DesktopApp {
             network: String::new(),
             disk: String::new(),
             core: String::new(),
+            gpu: String::new(),
+            gpu_engine: String::new(),
             last_query: Vec::new(),
             last_range: 0,
             message: String::new(),
@@ -173,6 +187,11 @@ impl DesktopApp {
         {
             self.disk = device.id.clone();
         }
+        if self.gpu.is_empty()
+            && let Some(device) = components::primary_gpu(&self.view)
+        {
+            self.gpu = device.id.clone();
+        }
     }
     fn query(&mut self) {
         let keys = match self.page {
@@ -192,6 +211,16 @@ impl DesktopApp {
                 keys
             }
             Page::Memory => vec![MetricKey::new("memory", "usage")],
+            Page::Gpu => {
+                let mut keys = vec![
+                    MetricKey::new(&self.gpu, "usage"),
+                    MetricKey::new(&self.gpu, "memory_usage"),
+                ];
+                if !self.gpu_engine.is_empty() {
+                    keys.push(MetricKey::new(&self.gpu, &self.gpu_engine));
+                }
+                keys
+            }
             Page::Disk => vec![
                 MetricKey::new(&self.disk, "read"),
                 MetricKey::new(&self.disk, "write"),
@@ -258,6 +287,7 @@ impl DesktopApp {
                     (Page::Overview, &pixel::ICON_STAR, "总览"),
                     (Page::Cpu, &pixel::ICON_CPU, "CPU"),
                     (Page::Memory, &pixel::ICON_MEMORY, "内存"),
+                    (Page::Gpu, &pixel::ICON_GPU, "GPU"),
                     (Page::Disk, &pixel::ICON_DISK, "磁盘"),
                     (Page::Network, &pixel::ICON_NETWORK, "网络"),
                     (Page::Settings, &pixel::ICON_GEAR, "设置"),
@@ -382,16 +412,13 @@ impl eframe::App for DesktopApp {
         }
         self.select_initial_devices();
         self.query();
+        self.dock
+            .update(ctx, &self.desktop, self.active_config.edge_docking);
         if !self.closing && ctx.input(|i| i.viewport().close_requested()) {
             self.closing = true;
             if self.capture.is_none() {
                 let mut config = self.active_config.clone();
-                if let Some(rect) = ctx.input(|i| i.viewport().inner_rect) {
-                    config.window_size = [rect.width().max(960.0), rect.height().max(640.0)];
-                }
-                if let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
-                    config.window_position = Some([rect.left(), rect.top()]);
-                }
+                self.dock.store(ctx, &mut config);
                 self.save_config(config, false);
             }
         }
@@ -427,6 +454,12 @@ impl eframe::App for DesktopApp {
     }
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
         let view = Arc::clone(&self.view);
+        if let Some(edge) = self.dock.edge() {
+            if minibar::show(ui, &view, edge, &self.gpu) {
+                self.dock.restore(ui.ctx(), &self.desktop, None);
+            }
+            return;
+        }
         let status = egui::Panel::bottom("status")
             .resizable(false)
             .show_separator_line(false)
@@ -464,6 +497,24 @@ impl eframe::App for DesktopApp {
                         ui.add_space(8.0);
                         ui.label(RichText::new(&self.message).size(12.0).color(theme::GOLD));
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for (edge, icon, label) in [
+                            (DockEdge::Right, &pixel::ICON_DOCK_RIGHT, "吸附到屏幕右侧"),
+                            (DockEdge::Left, &pixel::ICON_DOCK_LEFT, "吸附到屏幕左侧"),
+                            (DockEdge::Top, &pixel::ICON_DOCK_TOP, "吸附到屏幕顶部"),
+                        ] {
+                            if theme::icon_button(ui, icon, label, vec2(26.0, 22.0), true).clicked()
+                            {
+                                self.dock.dock_to(ui.ctx(), &self.desktop, edge);
+                            }
+                        }
+                        ui.label(
+                            RichText::new("迷你状态栏")
+                                .size(12.0)
+                                .color(theme::NIGHT_MUTED),
+                        );
+                    });
                 });
             });
         let rect = status.response.rect;
@@ -499,6 +550,7 @@ impl eframe::App for DesktopApp {
                             Page::Overview => self.overview(ui, &view),
                             Page::Cpu => self.cpu(ui, &view),
                             Page::Memory => self.memory(ui, &view),
+                            Page::Gpu => self.gpu(ui, &view),
                             Page::Disk => self.disk(ui, &view),
                             Page::Network => self.network(ui, &view),
                             Page::Settings => self.settings(ui, &view),

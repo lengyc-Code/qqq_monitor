@@ -20,9 +20,9 @@ flowchart TD
 | 模块 | 当前职责 | 对外接口 |
 | --- | --- | --- |
 | `qqq-domain` | 设备、指标、单位、读数状态、采集工厂 | `Collector`、`CollectorFactory` 和模型 |
-| `qqq-platform-windows` | sysinfo、IP Helper、PDH、卷 GUID、原生句柄 RAII | `collectors()`、安全的启动错误提示 |
+| `qqq-platform-windows` | sysinfo、IP Helper、PDH、DXGI、卷 GUID、显示器工作区、原生句柄 RAII | `collectors()`、显示器与鼠标状态查询、安全的启动错误提示 |
 | `qqq-engine` | 采样调度、差分、历史、查询投影、配置、命令确认 | `MonitorRuntime`、`MonitorClient`、`MonitorView`、`ConfigStore` |
-| `qqq-ui` | 六个独立页面、图表、设备选择、主题、中文字体 | `DesktopApp`、`Page`、截图选项 |
+| `qqq-ui` | 七个独立页面、边缘吸附与迷你状态栏、图表、设备选择、主题、中文字体 | `DesktopApp`、`Page`、截图选项、`Desktop` 显示器查询接口、`viewport()` 初始窗口 |
 | 根包 | 日志、组装、DX12 窗口、CLI 冒烟和关闭 | Windows EXE |
 
 领域、引擎、GUI 和启动包禁止 `unsafe`。Windows 必要的 FFI 集中在 `native.rs`，说明每个调用的句柄、缓冲区和生命周期条件；调用方只看到安全接口。
@@ -47,8 +47,9 @@ qqq_monitor/
 │   │   ├── cpu_memory.rs            # 持久 System 实例
 │   │   ├── network.rs               # 网卡计数与身份
 │   │   ├── disk_io.rs               # 物理磁盘 PDH 读写
+│   │   ├── gpu.rs                   # 显卡利用率与显存聚合
 │   │   ├── inventory.rs             # 本地卷发现与容量
-│   │   └── native.rs                # IP Helper、PDH、卷 API 和 RAII
+│   │   └── native.rs                # IP Helper、PDH、DXGI、卷与显示器 API 和 RAII
 │   ├── qqq-engine/
 │   │   ├── src/
 │   │   │   ├── lib.rs
@@ -63,13 +64,18 @@ qqq_monitor/
 │       └── src/
 │           ├── lib.rs
 │           ├── app.rs               # 导航、查询、UI 状态和生命周期
+│           ├── dock.rs              # 边缘吸附、窗口几何与初始窗口
+│           ├── minibar.rs           # 吸附时的迷你状态栏
 │           ├── theme.rs             # 配色、字体、控件和卡片
+│           ├── pixel.rs             # 像素图标、位图字体与精灵
+│           ├── mascot.rs            # 看板娘
 │           ├── components.rs        # 格式、图表、状态、设备选择
 │           └── pages/
 │               ├── mod.rs
 │               ├── overview.rs
 │               ├── cpu.rs
 │               ├── memory.rs
+│               ├── gpu.rs
 │               ├── disk.rs
 │               ├── network.rs
 │               └── settings.rs
@@ -84,9 +90,9 @@ qqq_monitor/
 
 ## 设备和指标契约
 
-`DeviceDescriptor` 包含会话 ID、可选的跨启动身份 persistent_id、类型、名称、在线状态和详情。主键以身份而非名称构建：`cpu`、`core:索引`、`memory`、`system`、`disk:设备号`、`volume:卷GUID`、`net:LUID`。物理磁盘设备号与 LUID 用于本次会话；网卡选择保存接口 GUID，启动后重新解析为本次 LUID。
+`DeviceDescriptor` 包含会话 ID、可选的跨启动身份 persistent_id、类型、名称、在线状态和详情。主键以身份而非名称构建：`cpu`、`core:索引`、`memory`、`system`、`disk:设备号`、`volume:卷GUID`、`net:LUID`、`gpu:adapter LUID`。物理磁盘设备号与 LUID 用于本次会话；网卡选择保存接口 GUID，启动后重新解析为本次 LUID。
 
-`MetricKey` 由设备 ID 和指标名组成，例如 `(cpu, usage)`、`(memory, available)`、`(disk:0, read)`、`(net:LUID, receive)`。`MetricDescriptor` 声明单位；`MetricSample` 额外包含真实单调时间和 `SampleValue`：
+`MetricKey` 由设备 ID 和指标名组成，例如 `(cpu, usage)`、`(memory, available)`、`(disk:0, read)`、`(net:LUID, receive)`、`(gpu:LUID, memory_usage)`。GPU 设备提供 `usage`、每类引擎的 `engine:类型`（如 `engine:3d`、`engine:videodecode`）、按显卡类型选取的 `memory_used`、`memory_total`、`memory_usage`，以及 `dedicated_used`、`dedicated_total`、`shared_used`、`shared_total`。引擎类型出现后持续上报，空闲时为 0。`MetricDescriptor` 声明单位；`MetricSample` 额外包含真实单调时间和 `SampleValue`：
 
 - `Gauge(f64)` 是已经归一化的值，包括 CPU 百分比、容量和 PDH 格式化 B/s。
 - `Counter(u64)` 是累计计数；当前用于网络字节，由引擎计算速率。
@@ -127,6 +133,7 @@ pub trait CollectorFactory: Send + Sync {
 | CPU/内存线程 | 复用 sysinfo System | 0.5、1 或 2 秒 |
 | 网络线程 | GetIfTable2 字节、身份和状态 | 跟随采样间隔；目录随批次更新 |
 | 磁盘线程 | 持久 PDH 查询和实例数组 | 跟随采样间隔 |
+| GPU 线程 | 持久 PDH 引擎与显存查询；DXGI 枚举硬件 adapter | 跟随采样间隔；计数器出现未知 adapter 时最多每 10 秒重新枚举 |
 | 卷线程 | 发现本地卷并刷新容量 | 30 秒，支持手动提前刷新 |
 | 配置写线程 | UTF-8 TOML 临时写入与替换 | 有待保存配置时写入；空闲轮询 20 ms |
 
@@ -137,6 +144,7 @@ flowchart LR
     CPU[CPU 与内存] --> CH[各自有界批次通道]
     NET[网络] --> CH
     DISK[磁盘 I/O] --> CH
+    GPU[GPU 与显存] --> CH
     VOL[卷容量] --> CH
     CH --> ENGINE[引擎 校验与差分]
     ENGINE --> HISTORY[有界原始历史]
@@ -183,7 +191,11 @@ CPU 核心网格使用最新读数，点击核心后才请求其历史。离线�
 
 配置按字段恢复类型或范围错误，语法损坏时保留原文件并提示。未经用户主动保存，不自动替换损坏文件。保存使用同目录临时文件、UTF-8、sync_all、关闭句柄、rename 替换；失败不先删除旧配置，只清理本次临时文件。
 
-GUI 复用指标卡片、历史图表、状态和设备选择组件；六个页面在独立文件维护。主题、格式和中文字体集中管理，容量、速率和时间显示不改变指标口径。
+窗口吸附由 `dock.rs` 管理。启动入口注入 `Desktop`：按点查询所在显示器的边界与工作区、判断某点是否落在任何显示器上，以及读取鼠标按键状态，均为物理像素，由平台层实现。窗口位置变化后，等到窗口静止 0.2 秒且没有按住鼠标键才判定一次移动结束；尺寸未变的纯移动若触及没有相邻显示器的顶部、左侧或右侧工作区边缘，就去掉标题栏、置顶并缩为迷你状态栏。系统贴靠和最大化会改变尺寸，因此保持系统行为。迷你状态栏被拖动后，24 逻辑像素内靠近某条开放边缘则贴齐该边缘，离开所有边缘则在落点恢复完整窗口并限制在工作区内；双击或展开按钮按吸附前的位置、尺寸和最大化状态恢复。只有用户移动后的静止参与判定，应用自身几何命令带来的变化只更新基准。`viewport()` 按配置直接创建完整窗口或迷你状态栏，关闭时保存吸附边缘、迷你状态栏位置和完整窗口几何信息。
+
+`minibar.rs` 只读取最新视图中的 CPU、内存和 GPU 页面所选显卡的读数，所选显卡默认取在线且显存总量最大的 GPU；过期值变暗保留，不可用时显示 `—`。顶部横条绘制数字与分段条，左右竖条按物理像素栅格逐格计算 270° 环形仪表盘，分段点亮。
+
+GUI 复用指标卡片、历史图表、状态和设备选择组件；七个页面在独立文件维护，CPU 核心与 GPU 引擎共用热力格组件。主题、格式和中文字体集中管理，容量、速率和时间显示不改变指标口径。
 
 ## 生命周期和故障隔离
 
@@ -197,7 +209,7 @@ GUI 复用指标卡片、历史图表、状态和设备选择组件；六个页�
 
 ## 扩展方式
 
-1. **新增指标**：领域层增加必要单位或设备类型；平台实现 CollectorFactory，平台注册并交给引擎；页面通过 MetricKey 读取和查询。引擎无需识别具体采集器名称。温度、GPU 和厂商 SDK 应各自独立采集，缺少能力只影响对应指标。
+1. **新增指标**：领域层增加必要单位或设备类型；平台实现 CollectorFactory，平台注册并交给引擎；页面通过 MetricKey 读取和查询。引擎无需识别具体采集器名称。温度和厂商 SDK 应各自独立采集，缺少能力只影响对应指标。
 2. **新增页面**：在 pages 增加文件与 Page 路由，组合公共组件；在 app 的 query 中声明需要的指标。页面无需依赖 Windows API。
 3. **告警与导出**：告警放在归一化之后，规则包含持续时间、恢复阈值和去抖；导出通过引擎查询有缺口的数据区间，再交后台 I/O。需要长期存储时才增加持久化接口。
 4. **进程管理**：领域层增加 PID 与创建时间组成的实例标识及只读/控制接口；控制操作作为命令而非 Collector，操作前验证实例仍匹配，再按需申请权限。
@@ -205,6 +217,6 @@ GUI 复用指标卡片、历史图表、状态和设备选择组件；六个页�
 
 ## 验证边界
 
-已有测试覆盖实际时间差、计数回退、Gauge 速率、合法零值、失败恢复、各周期过期、历史时间/点数/预算、投影缺口、慢采集隔离、在途命令上限、关闭保存和损坏配置保护。真实 Windows 采集与六页面截图由 CLI 验证，完整结果见 [实现验证记录](VALIDATION.md)。
+已有测试覆盖实际时间差、计数回退、Gauge 速率、合法零值、失败恢复、各周期过期、历史时间/点数/预算、投影缺口、慢采集隔离、在途命令上限、关闭保存（含吸附配置）、损坏配置保护、GPU 计数器实例解析与引擎聚合，以及吸附边缘判定与迷你状态栏定位。真实 Windows 采集与七个页面截图由 CLI 验证，完整结果见 [实现验证记录](VALIDATION.md)。
 
-还需验证通道真实溢出、设备消失后的清理、连续保存合并和写入失败、睡眠恢复、热插拔、键盘交互、多屏缩放及长期资源预算。构建成功和截图可读不能代替这些验收。
+吸附的拖动、贴边、换边、恢复和最大化往返已在单屏 150% 缩放下用真实鼠标输入检查。还需验证通道真实溢出、设备消失后的清理、连续保存合并和写入失败、睡眠恢复、热插拔、键盘交互、多屏缩放与多屏吸附、集成显卡与多显卡读数及长期资源预算。构建成功和截图可读不能代替这些验收。

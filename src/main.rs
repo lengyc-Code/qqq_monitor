@@ -4,8 +4,8 @@
 mod bootstrap;
 
 use qqq_domain::{DeviceKind, SampleState};
-use qqq_engine::{ConfigStore, MonitorRuntime};
-use qqq_ui::{CaptureOptions, DesktopApp, Page};
+use qqq_engine::{ConfigStore, DockEdge, MonitorRuntime};
+use qqq_ui::{CaptureOptions, Desktop, DesktopApp, Page};
 use std::{
     path::PathBuf,
     thread,
@@ -28,12 +28,20 @@ fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|s| s == "--help") {
         println!(
-            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           截图页面：overview/cpu/memory/disk/network/settings"
+            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           截图页面：overview/cpu/memory/gpu/disk/network/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right"
         );
         return Ok(());
     }
     let loaded = ConfigStore::load_default();
-    let config = loaded.config.clone();
+    let mut config = loaded.config.clone();
+    if let Some(index) = args.iter().position(|s| s == "--dock") {
+        config.dock = Some(match args.get(index + 1).map(String::as_str) {
+            Some("top") => DockEdge::Top,
+            Some("left") => DockEdge::Left,
+            Some("right") => DockEdge::Right,
+            _ => return Err("--dock 需要 top、left 或 right".into()),
+        });
+    }
     let mut runtime = MonitorRuntime::start(qqq_platform_windows::collectors(), loaded)?;
     if args.iter().any(|s| s == "--smoke-test") {
         return smoke_test(&mut runtime);
@@ -50,6 +58,7 @@ fn run() -> Result<(), String> {
             "overview" => Page::Overview,
             "cpu" => Page::Cpu,
             "memory" => Page::Memory,
+            "gpu" => Page::Gpu,
             "disk" => Page::Disk,
             "network" => Page::Network,
             "settings" => Page::Settings,
@@ -62,25 +71,30 @@ fn run() -> Result<(), String> {
     } else {
         None
     };
+    let viewport = qqq_ui::viewport(&config);
     let mut options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size(config.window_size)
-            .with_min_inner_size([960.0, 640.0]),
-        centered: config.window_position.is_none(),
+        centered: viewport.position.is_none(),
+        viewport,
         ..Default::default()
     };
-    if let Some(position) = config.window_position {
-        options.viewport = options.viewport.with_position(position);
-    }
     let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
     setup.power_preference = eframe::wgpu::PowerPreference::LowPower;
     options.wgpu_options.wgpu_setup = eframe::egui_wgpu::WgpuSetup::CreateNew(setup);
     let client = runtime.client();
+    let desktop = Desktop {
+        monitor_at: qqq_platform_windows::monitor_at,
+        covers: qqq_platform_windows::covers_point,
+        button_held: qqq_platform_windows::mouse_button_held,
+    };
     let result = eframe::run_native(
         "QQQ Monitor · 性能监控",
         options,
-        Box::new(move |cc| Ok(Box::new(DesktopApp::new(cc, client, config, capture)))),
+        Box::new(move |cc| {
+            Ok(Box::new(DesktopApp::new(
+                cc, client, config, capture, desktop,
+            )))
+        }),
     )
     .map_err(|e| e.to_string());
     runtime.shutdown();

@@ -1,11 +1,15 @@
 mod cpu_memory;
 mod disk_io;
+mod gpu;
 mod inventory;
 mod native;
 mod network;
 
 use qqq_domain::*;
 use std::{sync::Arc, time::Duration};
+
+/// Screen geometry and pointer state for docking the window, in physical pixels.
+pub use native::{covers_point, monitor_at, mouse_button_held};
 
 struct BuiltinFactory {
     descriptor: CollectorDescriptor,
@@ -42,6 +46,13 @@ pub fn collectors() -> Vec<Arc<dyn CollectorFactory>> {
                 period: SamplingPeriod::Configured,
             },
             constructor: || Ok(Box::new(disk_io::DiskIo::new()?)),
+        }),
+        Arc::new(BuiltinFactory {
+            descriptor: CollectorDescriptor {
+                id: "gpu",
+                period: SamplingPeriod::Configured,
+            },
+            constructor: || Ok(Box::new(gpu::Gpu::new()?)),
         }),
         Arc::new(BuiltinFactory {
             descriptor: CollectorDescriptor {

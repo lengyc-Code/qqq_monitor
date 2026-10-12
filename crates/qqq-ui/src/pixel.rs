@@ -190,6 +190,62 @@ pub const ICON_SPARKLE: Icon = [
     "....#....",
     "....#....",
 ];
+pub const ICON_GPU: Icon = [
+    ".........",
+    "########.",
+    "#......##",
+    "#.ooo..##",
+    "#.o.o..##",
+    "#.ooo..##",
+    "#......##",
+    "########.",
+    ".#.#.#...",
+];
+/// Diagonal arrows: grow the docked bar back into the full window.
+pub const ICON_EXPAND: Icon = [
+    "oooo.....",
+    "oo.......",
+    "o.#......",
+    "o..#.....",
+    ".........",
+    ".....#..o",
+    "......#.o",
+    ".......oo",
+    ".....oooo",
+];
+pub const ICON_DOCK_TOP: Icon = [
+    "#########",
+    "#ooooooo#",
+    "#ooooooo#",
+    "#.......#",
+    "#.......#",
+    "#.......#",
+    "#.......#",
+    "#########",
+    "...###...",
+];
+pub const ICON_DOCK_LEFT: Icon = [
+    "#########",
+    "#oo.....#",
+    "#oo.....#",
+    "#oo.....#",
+    "#oo.....#",
+    "#oo.....#",
+    "#oo.....#",
+    "#########",
+    "...###...",
+];
+pub const ICON_DOCK_RIGHT: Icon = [
+    "#########",
+    "#.....oo#",
+    "#.....oo#",
+    "#.....oo#",
+    "#.....oo#",
+    "#.....oo#",
+    "#.....oo#",
+    "#########",
+    "...###...",
+];
 
 pub fn icon_shapes(
     shapes: &mut Vec<Shape>,
