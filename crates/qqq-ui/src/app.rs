@@ -22,6 +22,7 @@ pub enum Page {
     Gpu,
     Disk,
     Network,
+    Processes,
     Settings,
 }
 impl Page {
@@ -34,6 +35,7 @@ impl Page {
             Self::Gpu => &t.gpu_page,
             Self::Disk => &t.disk_page,
             Self::Network => &t.network_page,
+            Self::Processes => &t.processes_page,
             Self::Settings => &t.settings_page,
         }
     }
@@ -46,6 +48,7 @@ impl Page {
             Self::Gpu => "GPU",
             Self::Disk => "STORAGE",
             Self::Network => "NETWORK",
+            Self::Processes => "PROCESSES",
             Self::Settings => "CONFIG",
         }
     }
@@ -79,6 +82,7 @@ pub struct DesktopApp {
     dock: dock::Dock,
     desktop: dock::Desktop,
     tray: tray::Tray,
+    process: pages::processes::ProcessPage,
     /// Language the "follow system" setting resolves to.
     system_language: Language,
 }
@@ -105,6 +109,7 @@ impl DesktopApp {
             dock: dock::Dock::new(&config),
             desktop,
             tray: tray::Tray::default(),
+            process: Default::default(),
             system_language,
             range: config.history_secs,
             active_config: config.clone(),
@@ -232,7 +237,7 @@ impl DesktopApp {
                 MetricKey::new(&self.network, "receive"),
                 MetricKey::new(&self.network, "send"),
             ],
-            Page::Settings => Vec::new(),
+            Page::Processes | Page::Settings => Vec::new(),
         };
         if keys != self.last_query || self.range != self.last_range {
             match self.client.try_command(MonitorCommand::SetQuery {
@@ -293,6 +298,7 @@ impl DesktopApp {
                     (Page::Gpu, &pixel::ICON_GPU),
                     (Page::Disk, &pixel::ICON_DISK),
                     (Page::Network, &pixel::ICON_NETWORK),
+                    (Page::Processes, &pixel::ICON_PROCESS),
                     (Page::Settings, &pixel::ICON_GEAR),
                 ] {
                     if theme::nav_button(
@@ -343,7 +349,7 @@ impl DesktopApp {
                         .size(12.0),
                 );
             });
-            if self.page != Page::Settings {
+            if !matches!(self.page, Page::Processes | Page::Settings) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     for (secs, label) in [
@@ -411,6 +417,10 @@ impl eframe::App for DesktopApp {
             self.view = view;
         }
         for result in self.client.take_results() {
+            if self.process.finished(result.id) {
+                self.process_result(result.result.map(|_| ()));
+                continue;
+            }
             if self.latest_save.is_some_and(|id| result.id < id) {
                 continue;
             }
@@ -429,6 +439,7 @@ impl eframe::App for DesktopApp {
         }
         self.select_initial_devices();
         self.query();
+        self.watch_processes(ctx);
         if self.capture.is_none() {
             self.tray.update(
                 ctx,
@@ -578,6 +589,11 @@ impl eframe::App for DesktopApp {
                 backdrop(ui);
                 self.header(ui);
                 ui.add_space(6.0);
+                // The process table scrolls by itself and fills the page.
+                if self.page == Page::Processes {
+                    self.processes(ui, &view);
+                    return;
+                }
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -588,6 +604,7 @@ impl eframe::App for DesktopApp {
                             Page::Gpu => self.gpu(ui, &view),
                             Page::Disk => self.disk(ui, &view),
                             Page::Network => self.network(ui, &view),
+                            Page::Processes => {}
                             Page::Settings => self.settings(ui, &view),
                         }
                         ui.add_space(8.0);

@@ -4,7 +4,9 @@ mod gpu;
 mod inventory;
 mod native;
 mod network;
+mod process;
 mod tray;
+mod wsl;
 
 use qqq_domain::*;
 use std::{sync::Arc, time::Duration};
@@ -72,6 +74,32 @@ pub fn collectors() -> Vec<Arc<dyn CollectorFactory>> {
             constructor: || Ok(Box::new(inventory::Inventory)),
         }),
     ]
+}
+
+struct Processes;
+impl ProcessPlatform for Processes {
+    fn hosts(&self) -> Vec<ProcessHost> {
+        std::iter::once(ProcessHost::Windows)
+            .chain(wsl::running().into_iter().map(ProcessHost::Wsl))
+            .collect()
+    }
+    fn source(&self, host: &ProcessHost) -> Box<dyn ProcessSource> {
+        match host {
+            ProcessHost::Windows => Box::new(process::WindowsProcesses::new()),
+            ProcessHost::Wsl(distro) => Box::new(wsl::WslProcesses::new(distro)),
+        }
+    }
+    fn act(&self, id: &ProcessId, action: ProcessAction) -> Result<(), Reason> {
+        match &id.host {
+            ProcessHost::Windows => process::act(id.pid, id.start, action),
+            ProcessHost::Wsl(distro) => wsl::act(distro, id.pid, id.start, action),
+        }
+    }
+}
+
+/// Windows processes and those of running WSL distributions.
+pub fn processes() -> Arc<dyn ProcessPlatform> {
+    Arc::new(Processes)
 }
 
 pub fn show_startup_error(title: &str, message: &str) {

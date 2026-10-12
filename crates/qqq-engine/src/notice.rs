@@ -1,3 +1,5 @@
+use qqq_domain::Reason;
+
 /// Outcome of a command or a configuration operation that the user should see. Notices
 /// are language-neutral; the GUI phrases them in the interface language.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,6 +31,8 @@ pub enum Notice {
     InvalidDirectory,
     /// An operating system or library error, with its own description.
     System(String),
+    /// A process action failed.
+    Process(Reason),
 }
 
 /// State of the settings: how they were loaded, or what became of the latest save.

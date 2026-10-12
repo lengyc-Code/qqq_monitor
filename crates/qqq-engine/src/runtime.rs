@@ -1,7 +1,8 @@
 use crate::{
-    AppConfig, ConfigStore, LoadedConfig, MonitorView, Notice, SaveStatus,
+    AppConfig, ConfigStore, LoadedConfig, MonitorView, Notice, ProcessTable, SaveStatus,
     history::{History, HistoryPoint},
     normalize::Normalizer,
+    process::{self, ActionJob, NoProcesses, ProcessEvent},
 };
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use qqq_domain::*;
@@ -29,6 +30,13 @@ pub enum MonitorCommand {
         explicit: bool,
     },
     RefreshInventory,
+    /// Lists the processes of a host until another host, or `None`, is watched.
+    WatchProcesses(Option<ProcessHost>),
+    /// Acts on a process; the result arrives once the platform has carried it out.
+    Process {
+        process: ProcessId,
+        action: ProcessAction,
+    },
 }
 
 #[derive(Debug)]
@@ -58,23 +66,27 @@ struct CollectorEvent {
     dropped: u64,
 }
 
-struct Control {
-    stop: AtomicBool,
+pub(crate) struct Control {
+    pub(crate) stop: AtomicBool,
     engine_done: AtomicBool,
-    sampling_ms: AtomicU64,
+    pub(crate) sampling_ms: AtomicU64,
     refresh: AtomicU64,
+    /// Host whose processes are polled.
+    pub(crate) process_watch: Mutex<Option<ProcessHost>>,
+    /// Bumped to poll the watched host at once.
+    pub(crate) process_refresh: AtomicU64,
     sleep_lock: Mutex<()>,
-    sleep: Condvar,
+    pub(crate) sleep: Condvar,
     wake: Mutex<Option<UiWake>>,
 }
 impl Control {
-    fn notify_ui(&self) {
+    pub(crate) fn notify_ui(&self) {
         let wake = self.wake.lock().unwrap().clone();
         if let Some(wake) = wake {
             wake();
         }
     }
-    fn wait(&self, duration: Duration) {
+    pub(crate) fn wait(&self, duration: Duration) {
         let lock = self.sleep_lock.lock().unwrap();
         if !self.stop.load(Ordering::Acquire) {
             let _ = self
@@ -139,8 +151,16 @@ pub struct MonitorRuntime {
     threads: Vec<JoinHandle<()>>,
 }
 impl MonitorRuntime {
+    /// Starts the engine without process access.
     pub fn start(
         factories: Vec<Arc<dyn CollectorFactory>>,
+        loaded: LoadedConfig,
+    ) -> Result<Self, Notice> {
+        Self::start_with_processes(factories, Arc::new(NoProcesses), loaded)
+    }
+    pub fn start_with_processes(
+        factories: Vec<Arc<dyn CollectorFactory>>,
+        processes: Arc<dyn ProcessPlatform>,
         loaded: LoadedConfig,
     ) -> Result<Self, Notice> {
         loaded.config.validate()?;
@@ -151,6 +171,8 @@ impl MonitorRuntime {
             engine_done: AtomicBool::new(true),
             sampling_ms: AtomicU64::new(loaded.config.sampling_ms),
             refresh: AtomicU64::new(0),
+            process_watch: Mutex::new(None),
+            process_refresh: AtomicU64::new(0),
             sleep_lock: Mutex::new(()),
             sleep: Condvar::new(),
             wake: Mutex::new(None),
@@ -191,6 +213,26 @@ impl MonitorRuntime {
                 .spawn(move || config_worker(loaded.store, writer_pending, save_tx, writer_control))
                 .map_err(|e| Notice::System(e.to_string()))?,
         );
+        let (process_tx, process_rx) = bounded(8);
+        let poll_platform = Arc::clone(&processes);
+        let poll_control = Arc::clone(&control);
+        runtime.threads.push(
+            thread::Builder::new()
+                .name("process-poll".into())
+                .spawn(move || process::poll_worker(poll_platform, process_tx, poll_control))
+                .map_err(|e| Notice::System(e.to_string()))?,
+        );
+        let (action_tx, action_rx) = bounded(8);
+        let action_results = results_tx.clone();
+        let action_control = Arc::clone(&control);
+        runtime.threads.push(
+            thread::Builder::new()
+                .name("process-actions".into())
+                .spawn(move || {
+                    process::action_worker(processes, action_rx, action_results, action_control)
+                })
+                .map_err(|e| Notice::System(e.to_string()))?,
+        );
         let engine_client = runtime.client.clone();
         control.engine_done.store(false, Ordering::Release);
         match thread::Builder::new()
@@ -203,6 +245,8 @@ impl MonitorRuntime {
                     results_tx,
                     pending,
                     save_rx,
+                    process_rx,
+                    action_tx,
                     loaded.config,
                     loaded.warning,
                 )
@@ -360,8 +404,26 @@ struct EngineState {
     range: u64,
     latest_save: Option<u64>,
     start: Instant,
+    /// Host whose processes the GUI watches.
+    watched: Option<ProcessHost>,
 }
 impl EngineState {
+    fn receive_processes(&mut self, event: ProcessEvent) {
+        let processes = &mut self.view.processes;
+        match event {
+            ProcessEvent::Hosts(hosts) => processes.hosts = hosts,
+            ProcessEvent::Table(host, result) if self.watched.as_ref() == Some(&host) => {
+                match result {
+                    Ok(rows) => {
+                        processes.table = Some(Arc::new(ProcessTable { host, rows }));
+                        processes.error = None;
+                    }
+                    Err(reason) => processes.error = Some(reason),
+                }
+            }
+            ProcessEvent::Table(..) => {}
+        }
+    }
     fn receive(&mut self, event: CollectorEvent) {
         let old_dropped = self
             .dropped
@@ -548,6 +610,8 @@ fn engine_worker(
     results: Sender<CommandResult>,
     pending: Arc<Mutex<Option<SaveJob>>>,
     saves: Receiver<CommandResult>,
+    process_events: Receiver<ProcessEvent>,
+    actions: Sender<ActionJob>,
     config: AppConfig,
     warning: Option<Notice>,
 ) {
@@ -565,6 +629,7 @@ fn engine_worker(
         range,
         latest_save: None,
         start: Instant::now(),
+        watched: None,
     };
     let mut last_publish = Instant::now();
     while !client.control.stop.load(Ordering::Acquire) || !requests.is_empty() {
@@ -574,6 +639,10 @@ fn engine_worker(
                 state.receive(event);
                 dirty = true;
             }
+        }
+        for event in process_events.try_iter().take(8) {
+            state.receive_processes(event);
+            dirty = true;
         }
         for saved in saves.try_iter() {
             if state.latest_save == Some(saved.id) {
@@ -596,6 +665,30 @@ fn engine_worker(
                         Ok(CommandOutcome::Applied)
                     }
                 }
+                MonitorCommand::WatchProcesses(host) => {
+                    if state.watched != host {
+                        state.view.processes.table = None;
+                        state.view.processes.error = None;
+                    }
+                    state.watched.clone_from(&host);
+                    *client.control.process_watch.lock().unwrap() = host;
+                    client
+                        .control
+                        .process_refresh
+                        .fetch_add(1, Ordering::Release);
+                    client.control.sleep.notify_all();
+                    Ok(CommandOutcome::Applied)
+                }
+                MonitorCommand::Process { process, action } => match actions.try_send(ActionJob {
+                    id: request.id,
+                    process,
+                    action,
+                }) {
+                    // The action thread answers once the platform has acted.
+                    Ok(()) => continue,
+                    Err(TrySendError::Full(_)) => Err(Notice::Busy),
+                    Err(TrySendError::Disconnected(_)) => Err(Notice::Stopped),
+                },
                 MonitorCommand::RefreshInventory => {
                     client.control.refresh.fetch_add(1, Ordering::Release);
                     client.control.sleep.notify_all();

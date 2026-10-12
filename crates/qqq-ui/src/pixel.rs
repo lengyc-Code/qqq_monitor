@@ -213,6 +213,17 @@ pub const ICON_EXPAND: Icon = [
     ".......oo",
     ".....oooo",
 ];
+pub const ICON_PROCESS: Icon = [
+    "#########",
+    "#ooooooo#",
+    "#########",
+    "#.......#",
+    "#.o.###.#",
+    "#.......#",
+    "#.o.###.#",
+    "#.......#",
+    "#########",
+];
 pub const ICON_DOCK_TOP: Icon = [
     "#########",
     "#ooooooo#",

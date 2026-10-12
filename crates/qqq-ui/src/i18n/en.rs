@@ -38,6 +38,11 @@ pub const STRINGS: Strings = Strings {
         title: "Network Traffic",
         hint: "Live traffic of the selected adapter",
     },
+    processes_page: PageText {
+        nav: "Processes",
+        title: "Processes",
+        hint: "Manage the processes of Windows and of running WSL distributions",
+    },
     settings_page: PageText {
         nav: "Settings",
         title: "Settings",
@@ -197,6 +202,39 @@ pub const STRINGS: Strings = Strings {
     refresh_devices: "Refresh devices",
     about_mint: "MINT, the mascot, changes her expression with CPU and memory load: relaxed, calm, busy and overloaded.",
     about_animations: "With animations off, her expression still follows the load, but she stops bobbing and the window does not redraw for her.",
+
+    process_name: "Name",
+    process_user: "User",
+    process_memory: "Memory",
+    process_threads: "Threads",
+    process_priority: "Priority",
+    process_command: "Command line",
+    process_search: "Search name, PID, user or command line",
+    process_count: |shown, total| {
+        if shown == total {
+            format!("{total} processes")
+        } else {
+            format!("{shown} of {total} processes")
+        }
+    },
+    processes_loading: "Reading processes…",
+    processes_none: "No matching processes",
+    processes_failed: |reason| format!("Cannot read processes: {reason}"),
+    wsl_hint: "Running WSL distributions appear here",
+    end_process: "End process",
+    kill_process: "Force end",
+    end_confirm: |name, pid| format!("End \u{201c}{name}\u{201d} (PID {pid})?"),
+    end_warning: "Unsaved data in the process will be lost.",
+    kill_warning: "Force end stops the process at once; unsaved data will be lost.",
+    cancel: "Cancel",
+    priorities: [
+        "Low",
+        "Below normal",
+        "Normal",
+        "Above normal",
+        "High",
+        "Realtime",
+    ],
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -248,6 +286,9 @@ fn reason(reason: &Reason) -> String {
         Reason::InstancesChanging => "Counter instances change too often to read".into(),
         Reason::CallFailed { api, code } => format!("{api} failed with error 0x{code:08X}"),
         Reason::BadData { api } => format!("{api} returned invalid data"),
+        Reason::ProcessGone => "the process has exited".into(),
+        Reason::AccessDenied => "access denied; run as administrator and try again".into(),
+        Reason::HostStopped => "the WSL distribution has stopped".into(),
     }
 }
 
@@ -274,6 +315,7 @@ fn notice(notice: &Notice) -> String {
         }
         Notice::InvalidDirectory => "Invalid settings folder".into(),
         Notice::System(error) => error.clone(),
+        Notice::Process(reason) => format!("Process action failed: {}", self::reason(reason)),
     }
 }
 

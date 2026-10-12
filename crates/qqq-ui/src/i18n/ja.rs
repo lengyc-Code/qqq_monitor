@@ -38,6 +38,11 @@ pub const STRINGS: Strings = Strings {
         title: "ネットワーク通信",
         hint: "選択したアダプターのリアルタイム送受信",
     },
+    processes_page: PageText {
+        nav: "プロセス",
+        title: "プロセス",
+        hint: "Windows と実行中の WSL ディストリビューションのプロセスを管理",
+    },
     settings_page: PageText {
         nav: "設定",
         title: "設定",
@@ -194,6 +199,32 @@ pub const STRINGS: Strings = Strings {
     refresh_devices: "デバイスを再検出",
     about_mint: "看板娘の MINT ちゃんは CPU とメモリの負荷に合わせて、のんびり・おだやか・いそがしい・オーバーロードの表情に変わります。",
     about_animations: "アニメーションをオフにしても表情は負荷に合わせて変わりますが、揺れなくなり、そのための再描画も行いません。",
+
+    process_name: "名前",
+    process_user: "ユーザー",
+    process_memory: "メモリ",
+    process_threads: "スレッド",
+    process_priority: "優先度",
+    process_command: "コマンドライン",
+    process_search: "名前、PID、ユーザー、コマンドラインで検索",
+    process_count: |shown, total| {
+        if shown == total {
+            format!("{total} 個のプロセス")
+        } else {
+            format!("{total} 個中 {shown} 個のプロセス")
+        }
+    },
+    processes_loading: "プロセスを読み込んでいます…",
+    processes_none: "一致するプロセスはありません",
+    processes_failed: |reason| format!("プロセスを読み込めません：{reason}"),
+    wsl_hint: "実行中の WSL ディストリビューションがここに表示されます",
+    end_process: "プロセスを終了",
+    kill_process: "強制終了",
+    end_confirm: |name, pid| format!("「{name}」（PID {pid}）を終了しますか？"),
+    end_warning: "プロセスの保存されていないデータは失われます。",
+    kill_warning: "強制終了するとプロセスはすぐに停止し、保存されていないデータは失われます。",
+    cancel: "キャンセル",
+    priorities: ["低", "通常以下", "通常", "通常以上", "高", "リアルタイム"],
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -251,6 +282,11 @@ fn reason(reason: &Reason) -> String {
             format!("{api} が失敗しました（エラーコード 0x{code:08X}）")
         }
         Reason::BadData { api } => format!("{api} が無効なデータを返しました"),
+        Reason::ProcessGone => "プロセスは終了しています".into(),
+        Reason::AccessDenied => {
+            "アクセスが拒否されました。管理者として実行してからやり直してください".into()
+        }
+        Reason::HostStopped => "WSL ディストリビューションは停止しています".into(),
     }
 }
 
@@ -274,6 +310,7 @@ fn notice(notice: &Notice) -> String {
         }
         Notice::InvalidDirectory => "設定フォルダーが無効です".into(),
         Notice::System(error) => error.clone(),
+        Notice::Process(reason) => format!("プロセスの操作に失敗しました：{}", self::reason(reason)),
     }
 }
 

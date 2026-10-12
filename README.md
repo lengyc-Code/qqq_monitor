@@ -13,7 +13,7 @@
   <b>English</b> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a>
 </p>
 
-QQQ Monitor is a multi-purpose task manager for Windows, written in Rust. Version 0.1.0 focuses on real-time performance monitoring: it collects CPU, memory, GPU, disk and network data from native Windows APIs, shows history charts and device details in a native GUI, and can dock to a screen edge as an always-on-top mini bar. Docked or minimized, it stays in the notification area. Process management and alerts are planned for later versions.
+QQQ Monitor is a multi-purpose task manager for Windows, written in Rust. Version 0.1.0 focuses on real-time performance monitoring: it collects CPU, memory, GPU, disk and network data from native Windows APIs, shows history charts and device details in a native GUI, and can dock to a screen edge as an always-on-top mini bar. Docked or minimized, it stays in the notification area. It also lists and manages the processes of Windows and of running WSL distributions. Alerts are planned for a later version.
 
 ## Main window
 
@@ -33,6 +33,7 @@ Navigation and the mascot sit on the left and the current page on the right. The
 | GPU | GPU usage from the busiest engine (matching Task Manager), the load of each engine type (3D, copy, video encode and decode, compute and more), dedicated and shared GPU memory; switch between graphics cards and click an engine to see its history |
 | Disk | Physical disk read and write rates with history; label, file system, free and total space of every local volume |
 | Network | Receive and send rates of the selected adapter, a history chart and the traffic of this session |
+| Processes | Processes of Windows and of each running WSL distribution: name, PID, user, CPU, memory, threads, priority and command line; search, sorting by column, ending processes and changing their priority |
 | Settings | Language, sampling interval, default history range, animations, edge docking and minimize to tray; runtime status, collector diagnostics, history memory and a manual device refresh |
 
 Metric definitions:
@@ -71,6 +72,14 @@ Drag the window to the top, left or right screen edge and release it: the window
 - While docked as the mini bar, the window leaves the taskbar and an icon appears in the notification area.
 - Minimize to tray on the Settings page is on by default: minimizing the full window hides it and leaves only the icon.
 - Clicking the icon or choosing Show main window from its menu restores and activates the full window; Exit saves the configuration and closes the app.
+
+### Process management
+
+- The buttons at the top switch between Windows and each running WSL distribution; while WSL is not running, only Windows is listed.
+- The search box filters by name, PID, user and command line; clicking a column title sorts by that column, CPU from highest first by default. CPU is a share of all logical processors; memory is the private working set on Windows and the resident set under WSL.
+- With a process selected, the toolbar or the context menu ends it or changes its priority (High, Above normal, Normal, Below normal, Low); WSL processes also offer Force end. Ending asks for confirmation, and the Delete key ends the selected process too.
+- Windows processes are handled with the rights of the current account, so system processes and those of other accounts need the app to run as administrator. WSL processes are handled as root. Every action first checks the start time of the process, so a PID that a new process reuses never reaches the new process.
+- Processes are read only while the Processes page is shown: every second on Windows and every 2 seconds under WSL. Each read first confirms that the distribution still runs, so a stopped distribution never starts; while its processes are shown, the distribution keeps running.
 
 ### MINT, the mascot
 
@@ -136,9 +145,9 @@ The executable is `target\release\qqq_monitor.exe` and runs as is. A standard us
 
 | Option | Effect |
 | --- | --- |
-| `--smoke-test` | Runs for about 8 seconds, checks that CPU, memory, physical disk I/O, network and volume capacity all have valid readings, and prints every metric including the GPU; exits with code 0 when every check passes |
+| `--smoke-test` | Runs for about 8 seconds, checks that CPU, memory, physical disk I/O, network, volume capacity and the Windows process list all have valid readings, and prints every metric including the GPU and the process count of each running WSL distribution; exits with code 0 when every check passes |
 | `--capture PATH` | Starts the real GUI, saves the window as a PNG after about 8 seconds and exits, leaving the user configuration as it is; the parent folder of `PATH` must exist |
-| `--page PAGE` | Page for `--capture`: `overview`, `cpu`, `memory`, `gpu`, `disk`, `network`, `settings` |
+| `--page PAGE` | Page for `--capture`: `overview`, `cpu`, `memory`, `gpu`, `disk`, `network`, `processes`, `settings` |
 | `--dock EDGE` | Starts as the mini bar: `top`, `left`, `right`; with `--capture` it captures the mini bar |
 | `--lang LANG` | Starts in an interface language, like choosing it on the Settings page: `zh-CN`, `en`, `ja`; with `--capture` it captures pages in that language |
 | `--help` | Lists the options (in Simplified Chinese) |
@@ -168,10 +177,10 @@ flowchart TD
 | --- | --- |
 | `src/` | Logging setup, wiring, system language detection, the DX12 window and window icon, the command-line smoke test and capture, orderly shutdown |
 | `build.rs`, `assets/` | Multi-size application icon and resource script, embedded into the EXE at build time |
-| `crates/qqq-domain/` | Devices, metrics, units, reading states and unavailability reasons, plus the `Collector` and `CollectorFactory` interfaces |
-| `crates/qqq-platform-windows/` | CPU and memory through sysinfo; network through IP Helper; disk I/O, GPU engines and GPU memory through PDH; graphics cards through DXGI; local volume capacity; monitor work areas and mouse state; the user's display languages; window icons from the EXE resources; the notification-area icon, its menu and the taskbar button. Native calls live in `native.rs` and `tray.rs`, with RAII handle management |
-| `crates/qqq-engine/` | Sampling schedule, counter deltas and warm-up, bounded history and display projection, immutable views, configuration (including the interface language) with background saving, and language-neutral command and configuration notices |
-| `crates/qqq-ui/` | Seven pages, edge docking and the mini bar, the tray presence, charts and shared components, the theme, pixel drawing (bitmap font, icons, sprites), the mascot (pixel sprites generated from illustrations at build time), interface text in three languages and the embedded CJK font |
+| `crates/qqq-domain/` | Devices, metrics, units, reading states and unavailability reasons, process instances and actions, plus the `Collector`, `CollectorFactory` and `ProcessPlatform` interfaces |
+| `crates/qqq-platform-windows/` | CPU and memory through sysinfo; network through IP Helper; disk I/O, GPU engines and GPU memory through PDH; graphics cards through DXGI; local volume capacity; monitor work areas and mouse state; the user's display languages; window icons from the EXE resources; the notification-area icon, its menu and the taskbar button; Windows processes listed in one system call, ended and reprioritized; processes of running WSL distributions read and handled through `wsl.exe`. Native calls live in `native.rs`, `tray.rs` and `process.rs`, with RAII handle management |
+| `crates/qqq-engine/` | Sampling schedule, counter deltas and warm-up, bounded history and display projection, on-demand process polling with process CPU usage, process actions on their own thread, immutable views, configuration (including the interface language) with background saving, and language-neutral command and configuration notices |
+| `crates/qqq-ui/` | Eight pages including process management, edge docking and the mini bar, the tray presence, charts and shared components, the theme, pixel drawing (bitmap font, icons, sprites), the mascot (pixel sprites generated from illustrations at build time), interface text in three languages and the embedded CJK font |
 
 ### Data flow
 
@@ -193,7 +202,7 @@ flowchart LR
 - **Collector threads**: every collector creates, uses and releases its resources on its own thread and runs at the sampling interval or a fixed period (30 seconds for volume capacity). A failing collector is recreated with a backoff of 1 to 30 seconds while the others keep working.
 - **Backpressure**: every collector buffers at most 8 batches; when the buffer is full, the current batch is dropped and the history records a gap. At most 32 commands are in flight.
 - **Non-blocking rendering**: the engine builds views outside the lock, swaps a single `Arc` slot and requests a repaint; every frame, the GUI takes the latest view without blocking and submits history queries as needed.
-- **Safety boundary**: the domain, engine, GUI and launcher forbid `unsafe`; Windows FFI lives in `native.rs` of the platform crate.
+- **Safety boundary**: the domain, engine, GUI and launcher forbid `unsafe`; Windows FFI lives in `native.rs`, `tray.rs` and `process.rs` of the platform crate.
 
 ### Extending
 
@@ -212,7 +221,9 @@ cargo test --workspace --release
 cargo run --release -- --smoke-test
 ```
 
-The automated tests cover rate calculation, warm-up and failure recovery, staleness, the history budget and projection gaps, slow collector isolation, the command limit, configuration saving and corruption protection, GPU counter parsing, docking edge detection and mini bar placement, system language matching, the text table of every language and the width of MINT's lines. Runtime tests drive the complete engine with controllable fake collectors.
+With a WSL distribution running, `cargo test -p qqq-platform-windows -- --ignored` starts and ends a test process inside it to check ending and reprioritizing WSL processes.
+
+The automated tests cover rate calculation, warm-up and failure recovery, staleness, the history budget and projection gaps, slow collector isolation, the command limit, configuration saving and corruption protection, GPU counter parsing, docking edge detection and mini bar placement, process CPU usage and instance matching, process polling and action results, Windows process enumeration and per-instance actions, WSL process output parsing, system language matching, the text table of every language and the width of MINT's lines. Runtime tests drive the complete engine with controllable fake collectors.
 
 ## Design documents
 

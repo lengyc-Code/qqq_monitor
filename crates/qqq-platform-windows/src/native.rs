@@ -34,7 +34,7 @@ fn error(api: &'static str, code: u32) -> CollectorError {
 fn bad_data(api: &'static str) -> CollectorError {
     CollectorError(Reason::BadData { api })
 }
-fn text(value: &[u16]) -> String {
+pub(crate) fn text(value: &[u16]) -> String {
     String::from_utf16_lossy(&value[..value.iter().position(|v| *v == 0).unwrap_or(value.len())])
 }
 

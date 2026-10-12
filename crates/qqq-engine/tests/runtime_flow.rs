@@ -198,3 +198,130 @@ fn config_recovers_fields_and_preserves_corrupt_file_until_explicit_save() {
     loaded.store.save(&loaded.config, true).unwrap();
     assert_eq!(ConfigStore::load(scratch.config()).config, loaded.config);
 }
+
+struct FakeProcesses {
+    acted: Sender<(ProcessId, ProcessAction)>,
+}
+struct FakeSource {
+    clock: f64,
+}
+impl ProcessSource for FakeSource {
+    fn snapshot(&mut self) -> Result<ProcessSnapshot, Reason> {
+        self.clock += 1.0;
+        Ok(ProcessSnapshot {
+            clock: self.clock,
+            processors: 2,
+            processes: vec![ProcessInfo {
+                id: ProcessId {
+                    host: ProcessHost::Windows,
+                    pid: 42,
+                    start: 7,
+                },
+                parent: None,
+                name: "busy.exe".into(),
+                command: String::new(),
+                user: String::new(),
+                cpu_time: self.clock * 0.5,
+                memory: 1024,
+                threads: 1,
+                priority: Some(Priority::Normal),
+            }],
+        })
+    }
+}
+impl ProcessPlatform for FakeProcesses {
+    fn hosts(&self) -> Vec<ProcessHost> {
+        vec![ProcessHost::Windows, ProcessHost::Wsl("Test".into())]
+    }
+    fn source(&self, _: &ProcessHost) -> Box<dyn ProcessSource> {
+        Box::new(FakeSource { clock: 0.0 })
+    }
+    fn act(&self, id: &ProcessId, action: ProcessAction) -> Result<(), Reason> {
+        if id.start != 7 {
+            return Err(Reason::ProcessGone);
+        }
+        self.acted.send((id.clone(), action)).unwrap();
+        Ok(())
+    }
+}
+
+fn wait_for<T>(mut probe: impl FnMut() -> Option<T>) -> T {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(value) = probe() {
+            return value;
+        }
+        assert!(Instant::now() < deadline, "timed out");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn processes_are_polled_while_watched_and_actions_report_back() {
+    let scratch = Scratch::new();
+    let (acted_tx, acted_rx) = bounded(4);
+    let mut runtime = MonitorRuntime::start_with_processes(
+        Vec::new(),
+        Arc::new(FakeProcesses { acted: acted_tx }),
+        ConfigStore::load(scratch.config()),
+    )
+    .unwrap();
+    let client = runtime.client();
+    std::thread::sleep(Duration::from_millis(200));
+    let view = client.try_latest_view().unwrap();
+    assert!(view.processes.hosts.is_empty() && view.processes.table.is_none());
+
+    client
+        .try_command(MonitorCommand::WatchProcesses(Some(ProcessHost::Windows)))
+        .unwrap();
+    // Half a second of CPU time per second on two processors.
+    let table = wait_for(|| {
+        let table = client.try_latest_view()?.processes.table.clone()?;
+        table.rows[0].cpu.is_some().then_some(table)
+    });
+    assert_eq!(table.host, ProcessHost::Windows);
+    assert_eq!(table.rows[0].cpu, Some(25.0));
+    let view = client.try_latest_view().unwrap();
+    assert_eq!(view.processes.hosts.len(), 2);
+
+    let id = table.rows[0].info.id.clone();
+    let end = client
+        .try_command(MonitorCommand::Process {
+            process: id.clone(),
+            action: ProcessAction::End,
+        })
+        .unwrap();
+    let gone = client
+        .try_command(MonitorCommand::Process {
+            process: ProcessId { start: 8, ..id },
+            action: ProcessAction::SetPriority(Priority::High),
+        })
+        .unwrap();
+    let mut results = Vec::new();
+    wait_for(|| {
+        results.extend(client.take_results());
+        (results
+            .iter()
+            .filter(|r| r.id == end || r.id == gone)
+            .count()
+            == 2)
+            .then_some(())
+    });
+    let outcome = |id| &results.iter().find(|r| r.id == id).unwrap().result;
+    assert!(matches!(outcome(end), Ok(CommandOutcome::Applied)));
+    assert_eq!(
+        outcome(gone).as_ref().unwrap_err(),
+        &Notice::Process(Reason::ProcessGone)
+    );
+    assert_eq!(acted_rx.try_recv().unwrap().1, ProcessAction::End);
+
+    client
+        .try_command(MonitorCommand::WatchProcesses(None))
+        .unwrap();
+    wait_for(|| {
+        client
+            .try_latest_view()
+            .filter(|view| view.processes.table.is_none())
+    });
+    runtime.shutdown();
+}

@@ -6,7 +6,7 @@ mod en;
 mod ja;
 mod zh;
 
-use qqq_domain::Reason;
+use qqq_domain::{Priority, Reason};
 use qqq_engine::{Language, Notice, SaveStatus};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -30,6 +30,7 @@ pub struct Strings {
     pub gpu_page: PageText,
     pub disk_page: PageText,
     pub network_page: PageText,
+    pub processes_page: PageText,
     pub settings_page: PageText,
 
     // Header and status bar.
@@ -210,6 +211,31 @@ pub struct Strings {
     pub refresh_devices: &'static str,
     pub about_mint: &'static str,
     pub about_animations: &'static str,
+
+    // Processes.
+    pub process_name: &'static str,
+    pub process_user: &'static str,
+    pub process_memory: &'static str,
+    pub process_threads: &'static str,
+    pub process_priority: &'static str,
+    pub process_command: &'static str,
+    pub process_search: &'static str,
+    /// Shown and total process counts.
+    pub process_count: fn(usize, usize) -> String,
+    pub processes_loading: &'static str,
+    pub processes_none: &'static str,
+    /// The latest list could not be read, with the reason.
+    pub processes_failed: fn(&str) -> String,
+    pub wsl_hint: &'static str,
+    pub end_process: &'static str,
+    pub kill_process: &'static str,
+    /// Confirmation question for a process name and PID.
+    pub end_confirm: fn(&str, u32) -> String,
+    pub end_warning: &'static str,
+    pub kill_warning: &'static str,
+    pub cancel: &'static str,
+    /// Priority classes from idle to realtime, in the order of `Priority`.
+    pub priorities: [&'static str; 6],
 }
 
 /// Index of the active language in [`Language::ALL`].
@@ -252,6 +278,11 @@ pub fn reason(reason: &Reason) -> String {
 
 pub fn notice(notice: &Notice) -> String {
     (t().notice)(notice)
+}
+
+/// Name of a priority class.
+pub fn priority(priority: Priority) -> &'static str {
+    t().priorities[priority as usize]
 }
 
 pub fn save_status(status: &SaveStatus) -> String {

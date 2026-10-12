@@ -4,8 +4,8 @@
 mod bootstrap;
 
 use eframe::wgpu::rwh::{HasWindowHandle, RawWindowHandle};
-use qqq_domain::{DeviceKind, SampleState};
-use qqq_engine::{ConfigStore, DockEdge, Language, MonitorRuntime};
+use qqq_domain::{DeviceKind, ProcessHost, SampleState};
+use qqq_engine::{ConfigStore, DockEdge, Language, MonitorCommand, MonitorRuntime};
 use qqq_ui::{CaptureOptions, Desktop, DesktopApp, Page, i18n};
 use std::{
     path::PathBuf,
@@ -29,7 +29,7 @@ fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|s| s == "--help") {
         println!(
-            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           截图页面：overview/cpu/memory/gpu/disk/network/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja"
+            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           截图页面：overview/cpu/memory/gpu/disk/network/processes/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja"
         );
         return Ok(());
     }
@@ -58,8 +58,12 @@ fn run() -> Result<(), String> {
             .map(String::as_str),
     );
     i18n::set(config.language.unwrap_or(system_language));
-    let mut runtime = MonitorRuntime::start(qqq_platform_windows::collectors(), loaded)
-        .map_err(|notice| i18n::notice(&notice))?;
+    let mut runtime = MonitorRuntime::start_with_processes(
+        qqq_platform_windows::collectors(),
+        qqq_platform_windows::processes(),
+        loaded,
+    )
+    .map_err(|notice| i18n::notice(&notice))?;
     if args.iter().any(|s| s == "--smoke-test") {
         return smoke_test(&mut runtime);
     }
@@ -78,6 +82,7 @@ fn run() -> Result<(), String> {
             "gpu" => Page::Gpu,
             "disk" => Page::Disk,
             "network" => Page::Network,
+            "processes" => Page::Processes,
             "settings" => Page::Settings,
             _ => return Err("未知截图页面".into()),
         };
@@ -142,6 +147,12 @@ fn run() -> Result<(), String> {
 
 fn smoke_test(runtime: &mut MonitorRuntime) -> Result<(), String> {
     let client = runtime.client();
+    let watch = |host: Option<ProcessHost>| {
+        client
+            .try_command(MonitorCommand::WatchProcesses(host))
+            .map_err(|notice| i18n::notice(&notice))
+    };
+    watch(Some(ProcessHost::Windows))?;
     let deadline = Instant::now() + Duration::from_secs(8);
     while Instant::now() < deadline {
         thread::sleep(Duration::from_millis(100));
@@ -174,6 +185,34 @@ fn smoke_test(runtime: &mut MonitorRuntime) -> Result<(), String> {
     let memory = view
         .reading("memory", "usage")
         .is_some_and(|v| v.effective_state(view.now) == SampleState::Ready);
+    let rows = |host: &ProcessHost| {
+        client
+            .try_latest_view()?
+            .processes
+            .table
+            .as_ref()
+            .filter(|table| table.host == *host)
+            .map(|table| table.rows.len())
+    };
+    let windows = rows(&ProcessHost::Windows).unwrap_or(0);
+    println!("Windows 进程 {windows} 个");
+    for host in &view.processes.hosts {
+        let ProcessHost::Wsl(distro) = host else {
+            continue;
+        };
+        watch(Some(host.clone()))?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut count = None;
+        while count.is_none() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(100));
+            count = rows(host);
+        }
+        match count {
+            Some(count) => println!("WSL {distro} 进程 {count} 个"),
+            None => eprintln!("WSL {distro}：未能读取进程"),
+        }
+    }
+    watch(None)?;
     let ready_device = |kind| {
         view.devices.values().any(|d| {
             d.kind == kind
@@ -186,11 +225,12 @@ fn smoke_test(runtime: &mut MonitorRuntime) -> Result<(), String> {
     runtime.shutdown();
     if cpu
         && memory
+        && windows > 0
         && ready_device(DeviceKind::Disk)
         && ready_device(DeviceKind::Network)
         && ready_device(DeviceKind::Volume)
     {
-        println!("PASS：CPU、内存、物理磁盘 I/O、网络和卷容量采集正常");
+        println!("PASS：CPU、内存、物理磁盘 I/O、网络、卷容量和进程列表采集正常");
         Ok(())
     } else {
         Err("核心采集检查未通过，请查看上述指标状态和采集器错误".into())

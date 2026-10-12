@@ -66,6 +66,12 @@ pub enum Reason {
     CallFailed { api: &'static str, code: u32 },
     /// A system call returned data that failed validation.
     BadData { api: &'static str },
+    /// The process has exited, or its PID now belongs to another process.
+    ProcessGone,
+    /// The system denied access to the process.
+    AccessDenied,
+    /// The WSL distribution is no longer running.
+    HostStopped,
 }
 
 #[derive(Clone, Debug)]

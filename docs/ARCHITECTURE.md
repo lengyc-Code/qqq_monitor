@@ -19,13 +19,13 @@ flowchart TD
 
 | 模块 | 当前职责 | 对外接口 |
 | --- | --- | --- |
-| `qqq-domain` | 设备、指标、单位、读数状态与不可用原因、采集工厂 | `Collector`、`CollectorFactory`、`Reason` 和模型 |
-| `qqq-platform-windows` | sysinfo、IP Helper、PDH、DXGI、卷 GUID、显示器工作区、用户显示语言、通知区域图标与任务栏按钮、原生句柄 RAII | `collectors()`、显示器与鼠标状态查询、显示语言列表、窗口图标、托盘图标与任务栏按钮、安全的启动错误提示 |
-| `qqq-engine` | 采样调度、差分、历史、查询投影、配置（含界面语言）、命令确认与提示 | `MonitorRuntime`、`MonitorClient`、`MonitorView`、`ConfigStore`、`Language`、`Notice`、`SaveStatus` |
-| `qqq-ui` | 七个独立页面、边缘吸附与迷你状态栏、托盘驻留、图表、设备选择、主题、三种语言的界面文本、CJK 字体、看板娘精灵 | `DesktopApp`、`Page`、截图选项、`Desktop` 显示器查询与托盘接口、`viewport()` 初始窗口、`i18n` 文本表 |
+| `qqq-domain` | 设备、指标、单位、读数状态与不可用原因、采集工厂、进程实例与进程操作 | `Collector`、`CollectorFactory`、`ProcessPlatform`、`ProcessSource`、`Reason` 和模型 |
+| `qqq-platform-windows` | sysinfo、IP Helper、PDH、DXGI、卷 GUID、显示器工作区、用户显示语言、通知区域图标与任务栏按钮、Windows 进程枚举与操作、经 `wsl.exe` 读取和操作 WSL 进程、原生句柄 RAII | `collectors()`、`processes()`、显示器与鼠标状态查询、显示语言列表、窗口图标、托盘图标与任务栏按钮、安全的启动错误提示 |
+| `qqq-engine` | 采样调度、差分、历史、查询投影、进程轮询与进程 CPU 使用率、进程操作、配置（含界面语言）、命令确认与提示 | `MonitorRuntime`、`MonitorClient`、`MonitorView`、`ProcessView`、`ConfigStore`、`Language`、`Notice`、`SaveStatus` |
+| `qqq-ui` | 八个独立页面（含进程管理）、边缘吸附与迷你状态栏、托盘驻留、图表、设备选择、主题、三种语言的界面文本、CJK 字体、看板娘精灵 | `DesktopApp`、`Page`、截图选项、`Desktop` 显示器查询与托盘接口、`viewport()` 初始窗口、`i18n` 文本表 |
 | 根包 | 日志、组装、系统语言解析、DX12 窗口、程序图标资源、CLI 冒烟和关闭 | Windows EXE |
 
-领域、引擎、GUI 和启动包禁止 `unsafe`。Windows 必要的 FFI 集中在 `native.rs` 与 `tray.rs`，说明每个调用的句柄、缓冲区和生命周期条件；调用方只看到安全接口。
+领域、引擎、GUI 和启动包禁止 `unsafe`。Windows 必要的 FFI 集中在 `native.rs`、`tray.rs` 与 `process.rs`，说明每个调用的句柄、缓冲区和生命周期条件；调用方只看到安全接口。
 
 ## 当前目录
 
@@ -45,7 +45,8 @@ qqq_monitor/
 │   │   ├── lib.rs
 │   │   ├── metric.rs                # 指标键、单位、采样、状态和原因
 │   │   ├── device.rs                # 身份、类型、在线状态、详情
-│   │   └── collector.rs             # 工厂、周期、批次和错误
+│   │   ├── collector.rs             # 工厂、周期、批次和错误
+│   │   └── process.rs               # 进程宿主、实例标识、优先级、快照与进程操作接口
 │   ├── qqq-platform-windows/src/
 │   │   ├── lib.rs                   # 内置工厂注册
 │   │   ├── cpu_memory.rs            # 持久 System 实例
@@ -54,6 +55,8 @@ qqq_monitor/
 │   │   ├── gpu.rs                   # 显卡利用率与显存聚合
 │   │   ├── inventory.rs             # 本地卷发现与容量
 │   │   ├── native.rs                # IP Helper、PDH、DXGI、卷、显示器与显示语言 API 和 RAII
+│   │   ├── process.rs               # Windows 进程枚举、命令行与所有者、结束与优先级
+│   │   ├── wsl.rs                   # 运行中的 WSL 发行版及其进程的读取与操作
 │   │   └── tray.rs                  # 通知区域图标、托盘菜单与任务栏按钮
 │   ├── qqq-engine/
 │   │   ├── src/
@@ -61,6 +64,7 @@ qqq_monitor/
 │   │   │   ├── runtime.rs           # 线程、命令、退出与故障隔离
 │   │   │   ├── normalize.rs         # 实际时间差、预热与数据验证
 │   │   │   ├── history.rs           # 有界历史和显示投影
+│   │   │   ├── process.rs           # 进程轮询、CPU 使用率与进程操作线程
 │   │   │   ├── view.rs              # 不可变 GUI 无关视图
 │   │   │   ├── config.rs            # 界面语言、校验、恢复和后台保存
 │   │   │   └── notice.rs            # 命令与配置提示、设置状态
@@ -91,6 +95,7 @@ qqq_monitor/
 │               ├── gpu.rs
 │               ├── disk.rs
 │               ├── network.rs
+│               ├── processes.rs
 │               └── settings.rs
 └── docs/
     ├── TECHNICAL_PLAN.md
@@ -148,6 +153,8 @@ pub trait CollectorFactory: Send + Sync {
 | 网络线程 | GetIfTable2 字节、身份和状态 | 跟随采样间隔；目录随批次更新 |
 | 磁盘线程 | 持久 PDH 查询和实例数组 | 跟随采样间隔 |
 | GPU 线程 | 持久 PDH 引擎与显存查询；DXGI 枚举硬件 adapter | 跟随采样间隔；计数器出现未知 adapter 时最多每 10 秒重新枚举 |
+| 进程轮询线程 | 列出 GUI 正在查看的宿主的进程，并列出可用宿主 | 仅在进程页面显示时运行：Windows 为采样间隔且至少 1 秒，WSL 为采样间隔且至少 2 秒；宿主每 5 秒重新列出 |
+| 进程操作线程 | 结束进程与调整优先级 | 收到操作命令时执行，完成后立即重新轮询 |
 | 卷线程 | 发现本地卷并刷新容量 | 30 秒，支持手动提前刷新 |
 | 配置写线程 | UTF-8 TOML 临时写入与替换 | 有待保存配置时写入；空闲轮询 20 ms |
 
@@ -211,7 +218,19 @@ CPU 核心网格使用最新读数，点击核心后才请求其历史。离线�
 
 `minibar.rs` 只读取最新视图中的 CPU、内存和 GPU 页面所选显卡的读数，所选显卡默认取在线且显存总量最大的 GPU；过期值变暗保留，不可用时显示 `—`。顶部横条绘制数字与分段条，左右竖条按物理像素栅格逐格计算 270° 环形仪表盘，分段点亮。
 
-GUI 复用指标卡片、历史图表、状态和设备选择组件；七个页面在独立文件维护，CPU 核心与 GPU 引擎共用热力格组件。主题、格式、界面文本和 CJK 字体集中管理，容量、速率和时间显示不改变指标口径。
+GUI 复用指标卡片、历史图表、状态和设备选择组件；八个页面在独立文件维护，CPU 核心与 GPU 引擎共用热力格组件。主题、格式、界面文本和 CJK 字体集中管理，容量、速率和时间显示不改变指标口径。
+
+## 进程管理
+
+进程以宿主区分：`ProcessHost::Windows` 或 `ProcessHost::Wsl(发行版名)`。`ProcessId` 由宿主、PID 和启动时刻组成，Windows 取 100 ns 单位的创建时间，WSL 取开机后的时钟节拍；PID 被新进程复用后，旧标识不再匹配。平台通过 `ProcessPlatform` 提供三件事：列出当前可用的宿主、为宿主创建在轮询线程上使用的 `ProcessSource`，以及在确认实例仍然存在后执行 `ProcessAction`。
+
+GUI 在进程页面显示时发送 `WatchProcesses(Some(宿主))`，切到其他页面、吸附为迷你状态栏或最小化时发送 `WatchProcesses(None)`。轮询线程只为正在查看的宿主取快照，切换宿主时重建数据源；引擎把最新进程表以 `Arc` 放入 `MonitorView.processes`，同时给出可用宿主和最近一次失败的原因。快照提供宿主时钟、逻辑处理器数和每个进程累计的处理器时间，`CpuTracker` 用同一实例在两次快照间多用的处理器时间除以“间隔 × 逻辑处理器数”得到 0 至 100% 的 CPU 使用率；首次出现的进程显示为空。
+
+Windows 数据源用一次 `NtQuerySystemInformation(SystemProcessInformation)` 取得全部进程的名称、父进程、创建时间、处理器时间、专用工作集、线程数和基本优先级，System Idle Process 不列出。命令行（`ProcessCommandLineInformation`，读不到时取映像路径）和所有者账户在进程首次出现时读取一次，账户名按 SID 缓存；无权打开的进程保留空白。操作重新以最小权限打开进程，确认创建时间一致且仍在运行后调用 `TerminateProcess` 或 `SetPriorityClass`；拒绝访问和实例不符分别报告为 `Reason::AccessDenied` 与 `Reason::ProcessGone`。
+
+WSL 宿主来自 `wsl.exe --list --running --quiet`，平台层设置 `WSL_UTF8=1` 并兼容 UTF-16 输出。每次轮询和操作前先确认发行版仍在运行，再以 `wsl.exe -d 发行版 --cd / -e sh -s` 从标准输入执行 POSIX shell 脚本，脚本只用 shell 内建命令、`getconf`、`nproc` 和 `tr` 输出 `/proc/*/stat`、`Uid`、命令行和 `/etc/passwd`，busybox 发行版同样适用。解析时去掉本次会话自身的 `sh`、`Relay` 与 `SessionLeader` 进程；内存取常驻集，名称取命令行中的程序名并补全内核截断的 15 字节名称，优先级按 nice 值映射到同一组优先级类。操作以 `-u root` 执行，脚本先核对 `/proc/PID/stat` 中的启动时刻，再执行 `kill -s TERM`、`kill -s KILL` 或 `renice`。`wsl.exe` 以无窗口方式启动，10 秒内未结束即终止。查看某个发行版的进程期间，周期性的 `wsl.exe` 使该发行版保持运行。
+
+操作命令 `MonitorCommand::Process` 交给独立的进程操作线程，结果以普通命令结果返回，失败为 `Notice::Process(Reason)`，显示在状态栏。进程页面按宿主切换 Windows 与各个运行中的发行版，支持按名称、PID、用户和命令行搜索，点击表头按列排序，表格按可见行绘制。选中进程后可在工具栏或右键菜单结束进程、调整优先级，WSL 进程另有强制结束；结束前弹出确认对话框，Delete 键同样打开确认。
 
 ## 界面语言
 
@@ -238,12 +257,12 @@ GUI 复用指标卡片、历史图表、状态和设备选择组件；七个页�
 1. **新增指标**：领域层增加必要单位或设备类型；平台实现 CollectorFactory，平台注册并交给引擎；页面通过 MetricKey 读取和查询。引擎无需识别具体采集器名称。温度和厂商 SDK 应各自独立采集，缺少能力只影响对应指标。
 2. **新增页面**：在 pages 增加文件与 Page 路由，组合公共组件；在 app 的 query 中声明需要的指标。页面无需依赖 Windows API。
 3. **告警与导出**：告警放在归一化之后，规则包含持续时间、恢复阈值和去抖；导出通过引擎查询有缺口的数据区间，再交后台 I/O。需要长期存储时才增加持久化接口。
-4. **进程管理**：领域层增加 PID 与创建时间组成的实例标识及只读/控制接口；控制操作作为命令而非 Collector，操作前验证实例仍匹配，再按需申请权限。
+4. **进程操作与进程宿主**：新操作在 `ProcessAction` 增加变体，由平台的 `act` 在确认实例后执行，GUI 在菜单与工具栏提供入口；新的宿主类型在 `ProcessHost` 增加变体，并由平台的 `hosts` 与 `source` 提供。
 5. **新增语言**：在 `Language` 中加入语言与 BCP 47 标签并扩展 `Language::preferred` 的匹配，在 `i18n/` 添加完整的 `Strings` 文本表，在 `i18n::t()` 与 `native_name()` 中登记。领域、平台和引擎层无需改动。
 6. **新平台**：另增平台 crate 并由启动入口选择；本轮不承诺跨平台可运行。第三方动态插件若有实际需求，再设计稳定 C ABI 或进程间协议，不跨 DLL 暴露 Rust trait object。
 
 ## 验证边界
 
-已有测试覆盖实际时间差、计数回退、Gauge 速率、合法零值、失败恢复、各周期过期、历史时间/点数/预算、投影缺口、慢采集隔离、在途命令上限、关闭保存（含吸附与托盘配置）、损坏配置保护、GPU 计数器实例解析与引擎聚合、吸附边缘判定与迷你状态栏定位、系统语言匹配、界面语言配置保存，各语言文本表的启用与设备详情键覆盖，以及各语言看板娘台词在对话气泡内的宽度。真实 Windows 采集由 CLI 的 `--smoke-test` 验证，七个页面与三种迷你状态栏由 `--capture` 配合 `--lang` 在三种语言下截图检查。
+已有测试覆盖实际时间差、计数回退、Gauge 速率、合法零值、失败恢复、各周期过期、历史时间/点数/预算、投影缺口、慢采集隔离、在途命令上限、关闭保存（含吸附与托盘配置）、损坏配置保护、GPU 计数器实例解析与引擎聚合、吸附边缘判定与迷你状态栏定位、进程 CPU 使用率与实例匹配、进程轮询与操作结果、Windows 进程枚举与按实例结束和调整优先级、WSL 进程输出解析、优先级与 nice 值映射、系统语言匹配、界面语言配置保存，各语言文本表的启用与设备详情键覆盖，以及各语言看板娘台词在对话气泡内的宽度。真实 Windows 采集与 Windows、各运行中 WSL 发行版的进程列表由 CLI 的 `--smoke-test` 验证，在运行中的发行版里结束与调整优先级由忽略标记的测试 `cargo test -p qqq-platform-windows -- --ignored` 验证；八个页面与三种迷你状态栏由 `--capture` 配合 `--lang` 在三种语言下截图检查。
 
-吸附的拖动、贴边、换边、恢复和最大化往返已在单屏 150% 缩放下用真实鼠标输入检查。托盘已在同一环境检查：最小化后隐藏窗口并显示图标，吸附后移除任务栏按钮并显示图标，单击溢出区中的图标恢复完整窗口，右键菜单的“退出”保存配置并移除图标。还需验证资源管理器重启后的托盘恢复、管理员权限运行时的托盘、通道真实溢出、设备消失后的清理、连续保存合并和写入失败、睡眠恢复、热插拔、键盘交互、多屏缩放与多屏吸附、集成显卡与多显卡读数及长期资源预算。构建成功和截图可读不能代替这些验收。
+吸附的拖动、贴边、换边、恢复和最大化往返已在单屏 150% 缩放下用真实鼠标输入检查。托盘已在同一环境检查：最小化后隐藏窗口并显示图标，吸附后移除任务栏按钮并显示图标，单击溢出区中的图标恢复完整窗口，右键菜单的“退出”保存配置并移除图标。进程页面已在同一环境用真实输入检查：切换 Windows 与 WSL 发行版、搜索、选中、确认后结束 Windows 进程、右键菜单调整优先级、强制结束 WSL 进程，以及结束受保护进程时状态栏显示无权限。还需验证以管理员身份运行时的进程操作、WSL 1 发行版、资源管理器重启后的托盘恢复、管理员权限运行时的托盘、通道真实溢出、设备消失后的清理、连续保存合并和写入失败、睡眠恢复、热插拔、键盘交互、多屏缩放与多屏吸附、集成显卡与多显卡读数及长期资源预算。构建成功和截图可读不能代替这些验收。

@@ -38,6 +38,11 @@ pub const STRINGS: Strings = Strings {
         title: "网络流量",
         hint: "查看所选网卡的实时收发",
     },
+    processes_page: PageText {
+        nav: "进程",
+        title: "进程",
+        hint: "查看并管理 Windows 与运行中的 WSL 发行版里的进程",
+    },
     settings_page: PageText {
         nav: "设置",
         title: "设置",
@@ -194,6 +199,32 @@ pub const STRINGS: Strings = Strings {
     refresh_devices: "立即刷新设备",
     about_mint: "看板娘 MINT 酱会根据 CPU 与内存负载切换表情：悠闲、平静、忙碌和超载。",
     about_animations: "关闭界面动效后表情仍会随负载变化，但不再晃动，也不会额外刷新界面。",
+
+    process_name: "名称",
+    process_user: "用户",
+    process_memory: "内存",
+    process_threads: "线程",
+    process_priority: "优先级",
+    process_command: "命令行",
+    process_search: "搜索名称、PID、用户或命令行",
+    process_count: |shown, total| {
+        if shown == total {
+            format!("共 {total} 个进程")
+        } else {
+            format!("显示 {shown} / {total} 个进程")
+        }
+    },
+    processes_loading: "正在读取进程…",
+    processes_none: "没有匹配的进程",
+    processes_failed: |reason| format!("无法读取进程：{reason}"),
+    wsl_hint: "WSL 发行版运行后会显示在这里",
+    end_process: "结束进程",
+    kill_process: "强制结束",
+    end_confirm: |name, pid| format!("结束进程“{name}”（PID {pid}）？"),
+    end_warning: "进程中未保存的数据会丢失。",
+    kill_warning: "强制结束会立即终止进程，未保存的数据会丢失。",
+    cancel: "取消",
+    priorities: ["低", "低于正常", "正常", "高于正常", "高", "实时"],
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -245,6 +276,9 @@ fn reason(reason: &Reason) -> String {
         Reason::InstancesChanging => "计数器实例变化频繁，暂时无法读取".into(),
         Reason::CallFailed { api, code } => format!("{api} 失败，错误码 0x{code:08X}"),
         Reason::BadData { api } => format!("{api} 返回的数据无效"),
+        Reason::ProcessGone => "进程已经退出".into(),
+        Reason::AccessDenied => "没有权限，可以管理员身份运行后重试".into(),
+        Reason::HostStopped => "WSL 发行版已停止".into(),
     }
 }
 
@@ -266,6 +300,7 @@ fn notice(notice: &Notice) -> String {
         Notice::CorruptKept => "已保留损坏的配置，请在设置页面主动保存".into(),
         Notice::InvalidDirectory => "配置目录无效".into(),
         Notice::System(error) => error.clone(),
+        Notice::Process(reason) => format!("进程操作失败：{}", self::reason(reason)),
     }
 }
 
