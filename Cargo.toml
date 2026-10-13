@@ -1,6 +1,6 @@
 [package]
 name = "qqq_monitor"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT"
@@ -10,7 +10,7 @@ members = ["crates/qqq-domain", "crates/qqq-engine", "crates/qqq-platform-window
 resolver = "3"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT"
