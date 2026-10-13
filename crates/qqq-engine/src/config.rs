@@ -1,4 +1,4 @@
-use crate::Notice;
+use crate::{AlertRule, MAX_ALERT_RULES, Notice};
 use directories::ProjectDirs;
 use qqq_domain::{RemoteAuth, RemoteEndpoint};
 use serde::{Deserialize, Serialize};
@@ -173,9 +173,13 @@ pub struct AppConfig {
     pub dock: Option<DockEdge>,
     /// Outer position of the compact status bar, in points.
     pub dock_position: Option<[f32; 2]>,
-    /// Linux hosts monitored over SSH, in the order the GUI lists them. Saved last, as
-    /// an array of tables.
+    /// Count the frames of the application in the foreground.
+    pub frame_monitoring: bool,
+    /// Linux hosts monitored over SSH, in the order the GUI lists them. Saved after the
+    /// plain values, as an array of tables.
     pub remote_hosts: Vec<RemoteHost>,
+    /// Alert rules, in the order the GUI lists them. Saved last, as an array of tables.
+    pub alerts: Vec<AlertRule>,
 }
 
 impl Default for AppConfig {
@@ -193,7 +197,9 @@ impl Default for AppConfig {
             autostart_to_tray: true,
             dock: None,
             dock_position: None,
+            frame_monitoring: false,
             remote_hosts: Vec::new(),
+            alerts: Vec::new(),
         }
     }
 }
@@ -227,6 +233,15 @@ impl AppConfig {
             host.validate()?;
             if self.remote_hosts[..index].iter().any(|h| h.id == host.id) {
                 return Err(Notice::InvalidRemoteHost);
+            }
+        }
+        if self.alerts.len() > MAX_ALERT_RULES {
+            return Err(Notice::InvalidAlertRule);
+        }
+        for (index, rule) in self.alerts.iter().enumerate() {
+            rule.validate()?;
+            if self.alerts[..index].iter().any(|r| r.id == rule.id) {
+                return Err(Notice::InvalidAlertRule);
             }
         }
         Ok(())
@@ -295,30 +310,37 @@ impl ConfigStore {
                     field!(autostart_to_tray, bool);
                     field!(dock, Option<DockEdge>);
                     field!(dock_position, Option<[f32; 2]>);
-                    // Each host recovers on its own, so one bad entry keeps the others.
-                    if let Some(value) = table.get("remote_hosts") {
-                        match value.as_array() {
-                            Some(items) => {
-                                for item in items {
-                                    match item.clone().try_into::<RemoteHost>() {
-                                        Ok(host)
-                                            if host.validate().is_ok()
-                                                && config.remote_hosts.len() < MAX_REMOTE_HOSTS
-                                                && !config
-                                                    .remote_hosts
-                                                    .iter()
-                                                    .any(|h| h.id == host.id) =>
-                                        {
-                                            config.remote_hosts.push(host)
+                    field!(frame_monitoring, bool);
+                    // Each entry recovers on its own, so one bad entry keeps the others.
+                    macro_rules! entries {
+                        ($name:ident, $ty:ty, $limit:expr) => {
+                            if let Some(value) = table.get(stringify!($name)) {
+                                match value.as_array() {
+                                    Some(items) => {
+                                        for item in items {
+                                            match item.clone().try_into::<$ty>() {
+                                                Ok(entry)
+                                                    if entry.validate().is_ok()
+                                                        && config.$name.len() < $limit
+                                                        && !config
+                                                            .$name
+                                                            .iter()
+                                                            .any(|e| e.id == entry.id) =>
+                                                {
+                                                    config.$name.push(entry)
+                                                }
+                                                Ok(_) => warning = Some(Notice::InvalidValue),
+                                                Err(_) => warning = Some(Notice::InvalidType),
+                                            }
                                         }
-                                        Ok(_) => warning = Some(Notice::InvalidValue),
-                                        Err(_) => warning = Some(Notice::InvalidType),
                                     }
+                                    None => warning = Some(Notice::InvalidType),
                                 }
                             }
-                            None => warning = Some(Notice::InvalidType),
-                        }
+                        };
                     }
+                    entries!(remote_hosts, RemoteHost, MAX_REMOTE_HOSTS);
+                    entries!(alerts, AlertRule, MAX_ALERT_RULES);
                 }
                 Err(_) => {
                     protected = true;

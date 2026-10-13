@@ -249,6 +249,13 @@ fn command_line(process: &Handle) -> Option<String> {
         .filter(|line| !line.is_empty())
 }
 
+/// File name of a process's executable, such as `game.exe`.
+pub(crate) fn image_name(pid: u32) -> Option<String> {
+    let process = open(pid, PROCESS_QUERY_LIMITED_INFORMATION).ok()?;
+    let path = image_path(&process)?;
+    Some(path.rsplit(['\\', '/']).next().unwrap_or(&path).to_owned())
+}
+
 fn image_path(process: &Handle) -> Option<String> {
     let mut buffer = [0_u16; 1024];
     let mut length = buffer.len() as u32;

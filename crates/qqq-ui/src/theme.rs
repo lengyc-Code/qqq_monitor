@@ -388,6 +388,17 @@ pub fn lerp(from: Color32, to: Color32, t: f32) -> Color32 {
     )
 }
 
+/// Color for a frame rate: red below 30 frames per second, orange below 50.
+pub fn fps_color(fps: f64, normal: Color32) -> Color32 {
+    if fps < 30.0 {
+        ERROR
+    } else if fps < 50.0 {
+        WARM
+    } else {
+        normal
+    }
+}
+
 /// Color for a fill level such as memory or volume usage.
 pub fn level_color(percent: f64, normal: Color32) -> Color32 {
     if percent >= 90.0 {

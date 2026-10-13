@@ -40,6 +40,13 @@ pub enum Notice {
     SecretUnsaved(Reason),
     /// Starting at sign-in could not be switched on or off.
     AutostartUnchanged(Reason),
+    /// An alert rule lacks a device or metric, has an invalid threshold or hold time, or
+    /// repeats the identity of another rule.
+    InvalidAlertRule,
+    /// A notification could not be shown.
+    NotificationFailed(Reason),
+    /// The application could not start again with administrator rights.
+    ElevationFailed(Reason),
 }
 
 /// State of the settings: how they were loaded, or what became of the latest save.

@@ -169,6 +169,27 @@ fn card_size(ctx: &egui::Context, unit: f32, pose: Pose) -> Vec2 {
     vec2(width as f32, height as f32) * unit + vec2(border * 2.0 + 8.0, border * 2.0 + 6.0)
 }
 
+/// Height of the sidebar card around a bubble of `text_height`.
+fn card_height(ctx: &egui::Context, text_height: f32) -> f32 {
+    let unit = pixel::unit(ctx, 2.0);
+    let bubble = text_height + (BUBBLE_PADDING + unit) * 2.0;
+    let card = card_size(ctx, pixel::unit(ctx, 1.0), Pose::Bust);
+    bubble + 3.0 * unit + 4.0 + card.y + 6.0 + NAME_HEIGHT
+}
+
+/// Room the sidebar keeps below the navigation for the card with a two-line bubble.
+pub fn room(ui: &egui::Ui) -> f32 {
+    let lines = ui
+        .painter()
+        .layout_no_wrap("M\nM".into(), FontId::proportional(12.0), theme::INK);
+    card_height(ui.ctx(), lines.size().y) + CARD_GAP
+}
+
+const BUBBLE_PADDING: f32 = 8.0;
+const NAME_HEIGHT: f32 = 16.0;
+/// Least space left between the navigation and the card.
+const CARD_GAP: f32 = 12.0;
+
 /// Speech bubble, character card and name tag pinned to the bottom of the
 /// sidebar. Skipped when the window is too short to fit them below the navigation.
 pub fn show(ui: &mut egui::Ui, view: &MonitorView, animate: bool) {
@@ -177,7 +198,7 @@ pub fn show(ui: &mut egui::Ui, view: &MonitorView, animate: bool) {
     let unit = pixel::unit(&ctx, 2.0);
     let sprite_unit = pixel::unit(&ctx, 1.0);
     let width = ui.available_width();
-    let padding = 8.0;
+    let padding = BUBBLE_PADDING;
     let galley = ui.painter().layout(
         speech.clone(),
         FontId::proportional(12.0),
@@ -186,10 +207,9 @@ pub fn show(ui: &mut egui::Ui, view: &MonitorView, animate: bool) {
     );
     let bubble_height = galley.size().y + (padding + unit) * 2.0;
     let card = card_size(&ctx, sprite_unit, Pose::Bust);
-    let name_height = 16.0;
-    let height = bubble_height + 3.0 * unit + 4.0 + card.y + 6.0 + name_height;
+    let height = card_height(&ctx, galley.size().y);
     let available = ui.available_rect_before_wrap();
-    if available.height() < height + 12.0 {
+    if available.height() < height + CARD_GAP {
         return;
     }
     let rect = Rect::from_min_size(

@@ -511,3 +511,151 @@ fn each_remote_host_entry_recovers_on_its_own() {
     twice.remote_hosts.push(remote_host("api"));
     assert_eq!(twice.validate(), Err(Notice::InvalidRemoteHost));
 }
+
+/// Frames of a fake game at 20 frames per second; `live` counts the collectors in use.
+struct FakeFrames {
+    live: Arc<AtomicU64>,
+}
+struct FakeFrameCollector {
+    live: Arc<AtomicU64>,
+}
+impl CollectorFactory for FakeFrames {
+    fn descriptor(&self) -> CollectorDescriptor {
+        CollectorDescriptor {
+            id: "frames",
+            period: SamplingPeriod::Fixed(Duration::from_millis(10)),
+        }
+    }
+    fn create(&self) -> Result<Box<dyn Collector>, CollectorError> {
+        self.live.fetch_add(1, Ordering::Relaxed);
+        Ok(Box::new(FakeFrameCollector {
+            live: self.live.clone(),
+        }))
+    }
+}
+impl Collector for FakeFrameCollector {
+    fn collect(&mut self, _: &CollectContext) -> Result<SampleBatch, CollectorError> {
+        Ok(SampleBatch {
+            devices: vec![DeviceDescriptor::new(
+                "frames",
+                "game.exe",
+                DeviceKind::Frames,
+            )],
+            samples: vec![MetricSample::new(
+                "frames",
+                "fps",
+                Unit::FramesPerSecond,
+                SampleValue::Gauge(20.0),
+                Instant::now(),
+            )],
+            complete_inventory: true,
+            ..Default::default()
+        })
+    }
+}
+impl Drop for FakeFrameCollector {
+    fn drop(&mut self) {
+        self.live.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+#[test]
+fn frames_run_only_while_switched_on_and_alerts_notify_once() {
+    let scratch = Scratch::new();
+    let mut loaded = ConfigStore::load(scratch.config());
+    loaded.config.alerts = vec![AlertRule {
+        id: "low-fps".into(),
+        enabled: true,
+        device: "frames".into(),
+        metric: "fps".into(),
+        condition: AlertCondition::Below,
+        threshold: 30.0,
+        hold_secs: 0,
+    }];
+    let live = Arc::new(AtomicU64::new(0));
+    let (notified_tx, notified_rx) = bounded(8);
+    let mut runtime = MonitorRuntime::start_with_services(
+        Vec::new(),
+        Services {
+            frames: Some(Arc::new(FakeFrames { live: live.clone() })),
+            notify: Arc::new(move |event: &AlertEvent| {
+                let _ = notified_tx.try_send(event.clone());
+            }),
+            ..Services::default()
+        },
+        loaded,
+    )
+    .unwrap();
+    let client = runtime.client();
+    let view = wait_for(|| {
+        let view = client.try_latest_view()?;
+        view.alerts.states.contains_key("low-fps").then_some(view)
+    });
+    assert!(!view.devices.contains_key("frames"));
+    assert_eq!(live.load(Ordering::Relaxed), 0);
+    assert_eq!(view.alerts.states["low-fps"], AlertState::NoData);
+
+    let mut config = view.config.clone();
+    config.frame_monitoring = true;
+    client
+        .try_command(MonitorCommand::SaveConfig {
+            config: config.clone(),
+            explicit: true,
+        })
+        .unwrap();
+    let event = notified_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(event.rule.id, "low-fps");
+    assert_eq!(event.value, 20.0);
+    assert_eq!(event.device.name, "game.exe");
+    assert_eq!(event.unit, Unit::FramesPerSecond);
+    let view = wait_for(|| {
+        let view = client.try_latest_view()?;
+        matches!(view.alerts.states["low-fps"], AlertState::Firing { .. }).then_some(view)
+    });
+    assert_eq!(view.alerts.recent.len(), 1);
+    // The reading stays low, so the rule keeps firing without another notification.
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(notified_rx.try_recv().is_err());
+    assert_eq!(live.load(Ordering::Relaxed), 1);
+
+    config.frame_monitoring = false;
+    client
+        .try_command(MonitorCommand::SaveConfig {
+            config,
+            explicit: true,
+        })
+        .unwrap();
+    wait_for(|| {
+        let view = client.try_latest_view()?;
+        (!view.devices.get("frames")?.online
+            && view.reading("frames", "fps")?.state == SampleState::Offline
+            && view.alerts.states["low-fps"] == AlertState::NoData
+            && live.load(Ordering::Relaxed) == 0)
+            .then_some(())
+    });
+    runtime.shutdown();
+}
+
+#[test]
+fn alert_rules_round_trip_and_recover_one_by_one() {
+    let scratch = Scratch::new();
+    fs::write(
+        scratch.config(),
+        "frame_monitoring = true\n\n[[alerts]]\nid = \"cpu\"\ndevice = \"cpu\"\nmetric = \"usage\"\ncondition = \"above\"\nthreshold = 90.0\nhold_secs = 10\n\n[[alerts]]\nid = \"nan\"\ndevice = \"memory\"\nmetric = \"usage\"\ncondition = \"above\"\nthreshold = nan\n\n[[alerts]]\nid = \"odd\"\ndevice = \"memory\"\nmetric = \"usage\"\ncondition = \"sideways\"\nthreshold = 1.0\n",
+    )
+    .unwrap();
+    let mut loaded = ConfigStore::load(scratch.config());
+    assert!(loaded.config.frame_monitoring);
+    assert_eq!(loaded.config.alerts.len(), 1);
+    let cpu = &loaded.config.alerts[0];
+    assert!(cpu.enabled);
+    assert_eq!(cpu.condition, AlertCondition::Above);
+    assert_eq!(cpu.hold_secs, 10);
+    assert!(loaded.warning.is_some());
+    loaded.config.remote_hosts.push(remote_host("api"));
+    loaded.store.save(&loaded.config, true).unwrap();
+    assert_eq!(ConfigStore::load(scratch.config()).config, loaded.config);
+    let mut twice = loaded.config.clone();
+    twice.alerts.push(twice.alerts[0].clone());
+    assert_eq!(twice.validate(), Err(Notice::InvalidAlertRule));
+}

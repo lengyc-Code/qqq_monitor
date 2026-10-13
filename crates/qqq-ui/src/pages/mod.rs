@@ -1,5 +1,7 @@
+pub(super) mod alerts;
 mod cpu;
 mod disk;
+mod frames;
 mod gpu;
 mod memory;
 mod network;

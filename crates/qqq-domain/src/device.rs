@@ -8,6 +8,8 @@ pub enum DeviceKind {
     Volume,
     Network,
     Gpu,
+    /// Frames of the application in the foreground, named after its executable.
+    Frames,
 }
 
 #[derive(Clone, Debug)]
@@ -28,6 +30,10 @@ pub struct DeviceDescriptor {
 }
 
 impl DeviceDescriptor {
+    /// Identity that outlasts this session: the persistent ID when there is one, else the ID.
+    pub fn identity(&self) -> &str {
+        self.persistent_id.as_deref().unwrap_or(&self.id)
+    }
     pub fn new(id: impl Into<String>, name: impl Into<String>, kind: DeviceKind) -> Self {
         Self {
             id: id.into(),

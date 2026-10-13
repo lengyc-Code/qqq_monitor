@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod alert;
 mod config;
 mod history;
 mod normalize;
@@ -9,6 +10,10 @@ mod remote;
 mod runtime;
 mod view;
 
+pub use alert::{
+    AlertCondition, AlertEvent, AlertNotify, AlertRule, AlertState, AlertView, MAX_ALERT_HOLD_SECS,
+    MAX_ALERT_RULES, alert_device,
+};
 pub use config::*;
 pub use history::HistoryPoint;
 pub use notice::*;

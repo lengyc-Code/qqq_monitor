@@ -236,6 +236,30 @@ pub const ICON_REMOTE: Icon = [
     "###ooo###",
     "...ooo...",
 ];
+/// A game pad: the frames of the foreground game.
+pub const ICON_FRAMES: Icon = [
+    ".........",
+    ".#######.",
+    "#.o...o.#",
+    "#ooo.o.o#",
+    "#.o...o.#",
+    "#.......#",
+    "#..###..#",
+    "#.#...#.#",
+    ".#.....#.",
+];
+/// The mascot's bell: alerts.
+pub const ICON_BELL: Icon = [
+    "....#....",
+    "...###...",
+    "..#ooo#..",
+    "..#ooo#..",
+    ".#ooooo#.",
+    ".#ooooo#.",
+    "#ooooooo#",
+    "#########",
+    "...#o#...",
+];
 pub const ICON_DOCK_TOP: Icon = [
     "#########",
     "#ooooooo#",

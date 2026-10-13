@@ -23,6 +23,9 @@ pub enum Unit {
     Seconds,
     /// A plain number, such as the load average.
     Count,
+    /// Frames an application presents per second.
+    FramesPerSecond,
+    Milliseconds,
 }
 
 #[derive(Clone, Debug)]
@@ -101,6 +104,15 @@ pub enum Reason {
     NoAgent,
     /// The remote host has no Linux `/proc` to read.
     NotLinux,
+    /// Reading the system's event tracing needs administrator rights or membership in the
+    /// Performance Log Users group.
+    TracingDenied,
+    /// The foreground application has presented no Direct3D frames yet.
+    NoFrames,
+    /// Notifications of the application are switched off in the system settings.
+    NotificationsOff,
+    /// The user declined the request, such as the prompt for administrator rights.
+    Declined,
 }
 
 #[derive(Clone, Debug)]

@@ -5,10 +5,13 @@ mod bootstrap;
 
 use eframe::wgpu::rwh::{HasWindowHandle, RawWindowHandle};
 use qqq_domain::{DeviceKind, ProcessHost, SampleState};
-use qqq_engine::{ConfigStore, DockEdge, Language, MonitorCommand, MonitorRuntime};
+use qqq_engine::{
+    AlertEvent, ConfigStore, DockEdge, Language, MonitorCommand, MonitorRuntime, Services,
+};
 use qqq_ui::{CaptureOptions, Desktop, DesktopApp, Page, i18n};
 use std::{
     path::PathBuf,
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -29,7 +32,7 @@ fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|s| s == "--help") {
         println!(
-            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           截图页面：overview/cpu/memory/gpu/disk/network/processes/remote/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja\n  --autostart           以开机自动启动的方式启动：开启“开机启动时直接收进托盘”时只显示托盘图标"
+            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           打开或截图的页面：overview/cpu/memory/gpu/frames/disk/network/processes/remote/alerts/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja\n  --autostart           以开机自动启动的方式启动：开启“开机启动时直接收进托盘”时只显示托盘图标"
         );
         return Ok(());
     }
@@ -58,39 +61,50 @@ fn run() -> Result<(), String> {
             .map(String::as_str),
     );
     i18n::set(config.language.unwrap_or(system_language));
-    let mut runtime = MonitorRuntime::start_with_remote(
-        qqq_platform_windows::collectors(),
-        qqq_platform_windows::processes(),
-        qqq_remote::ssh(qqq_platform_windows::secrets()),
-        loaded,
-    )
-    .map_err(|notice| i18n::notice(&notice))?;
+    let services = Services {
+        processes: qqq_platform_windows::processes(),
+        remote: qqq_remote::ssh(qqq_platform_windows::secrets()),
+        frames: Some(qqq_platform_windows::frames()),
+        // Phrased in the interface language at the time the alert fires.
+        notify: Arc::new(|event: &AlertEvent| {
+            let (title, body) = i18n::alert(event);
+            if let Err(reason) = qqq_platform_windows::notify(&title, &body) {
+                tracing::warn!(?reason, rule = event.rule.id, "无法显示告警通知");
+            }
+        }),
+    };
+    let mut runtime =
+        MonitorRuntime::start_with_services(qqq_platform_windows::collectors(), services, loaded)
+            .map_err(|notice| i18n::notice(&notice))?;
     if args.iter().any(|s| s == "--smoke-test") {
         return smoke_test(&mut runtime);
     }
+    let page = match args
+        .iter()
+        .position(|s| s == "--page")
+        .map(|i| args.get(i + 1).map(String::as_str))
+    {
+        None => None,
+        Some(name) => Some(match name {
+            Some("overview") => Page::Overview,
+            Some("cpu") => Page::Cpu,
+            Some("memory") => Page::Memory,
+            Some("gpu") => Page::Gpu,
+            Some("frames") => Page::Frames,
+            Some("disk") => Page::Disk,
+            Some("network") => Page::Network,
+            Some("processes") => Page::Processes,
+            Some("remote") => Page::Remote,
+            Some("alerts") => Page::Alerts,
+            Some("settings") => Page::Settings,
+            _ => return Err("未知页面".into()),
+        }),
+    };
     let capture = if let Some(index) = args.iter().position(|s| s == "--capture") {
         let path = args.get(index + 1).ok_or("--capture 需要 PNG 文件路径")?;
-        let page = match args
-            .iter()
-            .position(|s| s == "--page")
-            .and_then(|i| args.get(i + 1))
-            .map(String::as_str)
-            .unwrap_or("overview")
-        {
-            "overview" => Page::Overview,
-            "cpu" => Page::Cpu,
-            "memory" => Page::Memory,
-            "gpu" => Page::Gpu,
-            "disk" => Page::Disk,
-            "network" => Page::Network,
-            "processes" => Page::Processes,
-            "remote" => Page::Remote,
-            "settings" => Page::Settings,
-            _ => return Err("未知截图页面".into()),
-        };
         Some(CaptureOptions {
             path: PathBuf::from(path),
-            page,
+            page: page.unwrap_or(Page::Overview),
         })
     } else {
         None
@@ -124,6 +138,9 @@ fn run() -> Result<(), String> {
         cloak: qqq_platform_windows::cloak_window,
         autostart: qqq_platform_windows::autostart,
         set_autostart: qqq_platform_windows::set_autostart,
+        notify: qqq_platform_windows::notify,
+        prepare_notifications: qqq_platform_windows::prepare_notifications,
+        restart_elevated: qqq_platform_windows::restart_elevated,
     };
     let result = eframe::run_native(
         "QQQ Monitor",
@@ -143,6 +160,7 @@ fn run() -> Result<(), String> {
                 cc,
                 client,
                 config,
+                page,
                 capture,
                 desktop,
                 system_language,

@@ -21,14 +21,14 @@ flowchart TD
 
 | 模块 | 当前职责 | 对外接口 |
 | --- | --- | --- |
-| `qqq-domain` | 设备（含所属远程主机）、指标、单位、读数状态与不可用原因、采集工厂、进程实例与进程操作、远程主机端点与会话、密码存储 | `Collector`、`CollectorFactory`、`ProcessPlatform`、`ProcessSource`、`RemotePlatform`、`RemoteSession`、`SecretStore`、`Reason` 和模型 |
-| `qqq-platform-windows` | sysinfo、IP Helper、PDH、DXGI、卷 GUID、显示器工作区、用户显示语言、通知区域图标与任务栏按钮、Windows 进程枚举与操作、经 `wsl.exe` 读取和操作 WSL 进程、Windows 凭据管理器中的密码与口令、当前用户 `Run` 注册表项中的开机自动启动、原生句柄 RAII | `collectors()`、`processes()`、`secrets()`、显示器与鼠标状态查询、显示语言列表、窗口图标、托盘图标与任务栏按钮、开机自动启动的读取与开关、安全的启动错误提示 |
+| `qqq-domain` | 设备（含所属远程主机与前台应用的帧率）、指标、单位（含帧每秒与毫秒）、读数状态与不可用原因、采集工厂、进程实例与进程操作、远程主机端点与会话、密码存储 | `Collector`、`CollectorFactory`、`ProcessPlatform`、`ProcessSource`、`RemotePlatform`、`RemoteSession`、`SecretStore`、`Reason` 和模型 |
+| `qqq-platform-windows` | sysinfo、IP Helper、PDH、DXGI、卷 GUID、显示器工作区、用户显示语言、通知区域图标与任务栏按钮、Windows 进程枚举与操作、经 `wsl.exe` 读取和操作 WSL 进程、Windows 凭据管理器中的密码与口令、当前用户 `Run` 注册表项中的开机自动启动、经 ETW 统计前台应用的帧率与帧时间、以开始菜单快捷方式登记应用标识的 Toast 通知、以管理员身份重新启动、原生句柄 RAII | `collectors()`、`frames()`、`processes()`、`secrets()`、`notify()`、`prepare_notifications()`、`restart_elevated()`、显示器与鼠标状态查询、显示语言列表、窗口图标、托盘图标与任务栏按钮、开机自动启动的读取与开关、安全的启动错误提示 |
 | `qqq-remote` | SSH 连接与登录、主机密钥核对、远程 Linux 的 shell 程序与输出解析、按远程时钟换算速率、读取 `~/.ssh/config` | `ssh()`、`secret_name()`；示例 `wsl_sshd` 与 `probe` |
-| `qqq-engine` | 采样调度、差分、历史、查询投影、进程轮询与进程 CPU 使用率、进程操作、远程主机线程与重连、配置（含界面语言与远程主机）、命令确认与提示 | `MonitorRuntime`、`MonitorClient`、`MonitorView`、`ProcessView`、`RemoteView`、`ConfigStore`、`RemoteHost`、`Language`、`Notice`、`SaveStatus` |
-| `qqq-ui` | 九个独立页面（含进程管理与远程主机）、边缘吸附与迷你状态栏、托盘驻留、图表、设备选择、主题、三种语言的界面文本、CJK 字体、看板娘精灵 | `DesktopApp`、`Page`、截图选项、`Desktop` 显示器查询、托盘与开机自动启动接口、`viewport()` 初始窗口、`i18n` 文本表 |
-| 根包 | 日志、组装、系统语言解析、DX12 窗口、程序图标资源、CLI 冒烟和关闭 | Windows EXE |
+| `qqq-engine` | 采样调度、差分、历史、查询投影、进程轮询与进程 CPU 使用率、进程操作、远程主机线程与重连、按配置开关运行的帧率采集、告警规则判定与通知线程、配置（含界面语言、远程主机、帧率开关与告警规则）、命令确认与提示 | `MonitorRuntime`、`Services`、`MonitorClient`、`MonitorView`、`ProcessView`、`RemoteView`、`AlertView`、`AlertRule`、`AlertEvent`、`ConfigStore`、`RemoteHost`、`Language`、`Notice`、`SaveStatus` |
+| `qqq-ui` | 十一个独立页面（含帧率、进程管理、远程主机与告警）、边缘吸附与迷你状态栏、托盘驻留、图表、设备选择、主题、三种语言的界面文本、CJK 字体、看板娘精灵 | `DesktopApp`、`Page`、截图选项、`Desktop` 显示器查询、托盘、开机自动启动、通知与重新启动接口、`viewport()` 初始窗口、`i18n` 文本表与告警通知措辞 `i18n::alert` |
+| 根包 | 日志、组装、系统语言解析、告警通知的措辞与推送、DX12 窗口、程序图标资源、CLI 冒烟和关闭 | Windows EXE |
 
-领域、引擎、远程采集、GUI 和启动包禁止 `unsafe`。Windows 必要的 FFI 集中在 `native.rs`、`tray.rs`、`process.rs`、`secret.rs` 与 `autostart.rs`，说明每个调用的句柄、缓冲区和生命周期条件；调用方只看到安全接口。
+领域、引擎、远程采集、GUI 和启动包禁止 `unsafe`。Windows 必要的 FFI 集中在 `native.rs`、`tray.rs`、`process.rs`、`secret.rs`、`autostart.rs`、`frames.rs` 与 `notify.rs`，说明每个调用的句柄、缓冲区和生命周期条件；调用方只看到安全接口。
 
 ## 当前目录
 
@@ -60,11 +60,13 @@ qqq_monitor/
 │   │   ├── disk_io.rs               # 物理磁盘 PDH 读写
 │   │   ├── gpu.rs                   # 显卡利用率与显存聚合
 │   │   ├── inventory.rs             # 本地卷发现与容量
-│   │   ├── native.rs                # IP Helper、PDH、DXGI、卷、显示器与显示语言 API 和 RAII
+│   │   ├── native.rs                # IP Helper、PDH、DXGI、卷、显示器、显示语言与以管理员身份重新启动
 │   │   ├── process.rs               # Windows 进程枚举、命令行与所有者、结束与优先级
 │   │   ├── wsl.rs                   # 运行中的 WSL 发行版及其进程的读取与操作
 │   │   ├── secret.rs                # Windows 凭据管理器中的密码与口令
 │   │   ├── autostart.rs             # 当前用户启动项中的开机自动启动
+│   │   ├── frames.rs                # ETW 会话、前台应用与帧率统计
+│   │   ├── notify.rs                # 开始菜单快捷方式与 Toast 通知
 │   │   └── tray.rs                  # 通知区域图标、托盘菜单与任务栏按钮
 │   ├── qqq-remote/
 │   │   ├── src/
@@ -83,6 +85,7 @@ qqq_monitor/
 │   │   │   ├── history.rs           # 有界历史和显示投影
 │   │   │   ├── process.rs           # 进程轮询、CPU 使用率与进程操作线程
 │   │   │   ├── remote.rs            # 远程主机线程、连接状态与重连
+│   │   │   ├── alert.rs             # 告警规则、判定与通知线程
 │   │   │   ├── view.rs              # 不可变 GUI 无关视图
 │   │   │   ├── config.rs            # 界面语言、校验、恢复和后台保存
 │   │   │   └── notice.rs            # 命令与配置提示、设置状态
@@ -111,10 +114,12 @@ qqq_monitor/
 │               ├── cpu.rs
 │               ├── memory.rs
 │               ├── gpu.rs
+│               ├── frames.rs
 │               ├── disk.rs
 │               ├── network.rs
 │               ├── processes.rs
 │               ├── remote.rs
+│               ├── alerts.rs
 │               └── settings.rs
 └── docs/
     ├── TECHNICAL_PLAN.md
@@ -128,7 +133,7 @@ qqq_monitor/
 
 ## 设备和指标契约
 
-`DeviceDescriptor` 包含会话 ID、可选的跨启动身份 persistent_id、类型、名称、在线状态和详情。名称取系统提供的名称，如 CPU 型号、网卡别名、显卡描述和卷挂载点；内存、本机、物理磁盘与逻辑核心由系统留空，GUI 按类型和 ID 中的序号以当前语言命名。详情是稳定键与值的列表，键包括 `logical_cores`、`os`、`description`、`interface_guid`、`interface_type`、`link_speed`、`vendor`、`memory_type`、`adapter_luid`、`counter_instance`、`volume_label`、`file_system`、`volume_guid`、`kernel`、`architecture`、`default_route`、`device`；枚举值同样使用稳定标记，`interface_type` 为 `physical` 或 `virtual`，`memory_type` 为 `dedicated` 或 `shared`，`default_route` 为 `yes`。GUI 负责措辞键名与标记。主键以身份而非名称构建：`cpu`、`core:索引`、`memory`、`system`、`disk:设备号`、`volume:卷GUID`、`net:LUID`、`gpu:adapter LUID`，远程主机的设备另加 `ssh:主机ID/` 前缀。物理磁盘设备号与 LUID 用于本次会话；网卡选择保存接口 GUID，启动后重新解析为本次 LUID。
+`DeviceDescriptor` 包含会话 ID、可选的跨启动身份 persistent_id、类型、名称、在线状态和详情。名称取系统提供的名称，如 CPU 型号、网卡别名、显卡描述和卷挂载点；内存、本机、物理磁盘与逻辑核心由系统留空，GUI 按类型和 ID 中的序号以当前语言命名。详情是稳定键与值的列表，键包括 `logical_cores`、`os`、`description`、`interface_guid`、`interface_type`、`link_speed`、`vendor`、`memory_type`、`adapter_luid`、`counter_instance`、`volume_label`、`file_system`、`volume_guid`、`kernel`、`architecture`、`default_route`、`device`、`process_id`、`present_api`；枚举值同样使用稳定标记，`interface_type` 为 `physical` 或 `virtual`，`memory_type` 为 `dedicated` 或 `shared`，`default_route` 为 `yes`，`present_api` 为 `dxgi` 或 `d3d9`。GUI 负责措辞键名与标记。主键以身份而非名称构建：`cpu`、`core:索引`、`memory`、`system`、`disk:设备号`、`volume:卷GUID`、`net:LUID`、`gpu:adapter LUID`、`frames`，远程主机的设备另加 `ssh:主机ID/` 前缀。物理磁盘设备号与 LUID 用于本次会话；跨启动保存时使用 `DeviceDescriptor::identity()`，即有 persistent_id 时取它、否则取设备 ID：网卡的 persistent_id 为接口 GUID，显卡为 PCI 标识 `pci:厂商:设备:子系统:修订`，同型号的第二块起追加 `#序号`。网卡选择保存接口 GUID，启动后重新解析为本次 LUID。
 
 `MetricKey` 由设备 ID 和指标名组成，例如 `(cpu, usage)`、`(memory, available)`、`(disk:0, read)`、`(net:LUID, receive)`、`(gpu:LUID, memory_usage)`。GPU 设备提供 `usage`、每类引擎的 `engine:类型`（如 `engine:3d`、`engine:videodecode`）、按显卡类型选取的 `memory_used`、`memory_total`、`memory_usage`，以及 `dedicated_used`、`dedicated_total`、`shared_used`、`shared_total`。引擎类型出现后持续上报，空闲时为 0。`MetricDescriptor` 声明单位；`MetricSample` 额外包含真实单调时间和 `SampleValue`：
 
@@ -140,7 +145,9 @@ qqq_monitor/
 
 `MetricReading` 保存当前值、会话字节、状态、失败原因、最后成功时刻、最后尝试时刻和周期。无效采样保留上次成功值，但卡片和图表标注其状态和数据年龄。状态包括 `WarmingUp`、`Ready`、`Stale`、`Unsupported`、`Failed`、`Offline`；过期阈值为 `max(3 × 周期, 3 秒)`，30 秒容量指标不会在 3 秒后过期。
 
-`Unit` 包括百分比、字节、字节每秒、秒和计数，计数用于平均负载与进程数这类纯数值。
+`Unit` 包括百分比、字节、字节每秒、秒、计数、帧每秒和毫秒，计数用于平均负载与进程数这类纯数值。
+
+前台应用的帧率设备 `frames` 类型为 `DeviceKind::Frames`，名称为统计对象的程序名，详情为 `process_id` 与统计的交换链所用的 `present_api`；指标为 `fps`（帧每秒）、`frame_time` 与 `frame_time_max`（毫秒）。前台应用尚未呈现画面时三项为 `Unsupported(NoFrames)`；停止呈现时 `fps` 为 0、帧时间为 `Unsupported(NoFrames)`；切换统计对象的那一轮三项为 `WarmingUp`，历史随之留出缺口。
 
 远程主机的设备以 `ssh:主机ID/` 为前缀，后接会话报告的本地 ID，例如 `ssh:web/cpu`、`ssh:web/core:3`、`ssh:web/net:eth0`、`ssh:web/disk:sda`、`ssh:web/volume:/home`；`DeviceDescriptor.host` 记录所属主机，本机设备为 `None`，本机页面只列出本机设备。远程设备沿用本机的类型与指标名：`system` 名称为主机名，详情为 `os`、`kernel`、`architecture`，指标为 `uptime`、`load1`、`load5`、`load15`、`processes`；`cpu` 名称为处理器型号，指标为 `usage` 与 `iowait`；`memory` 另有 `swap_total`、`swap_used` 与有交换空间时的 `swap_usage`；网卡另有开机以来的累计字节 `received`、`sent`，详情 `default_route` 标记默认路由所在接口；卷的详情为 `device` 与 `file_system`。
 
@@ -162,7 +169,7 @@ pub trait CollectorFactory: Send + Sync {
 }
 ```
 
-`CollectorDescriptor` 包含稳定的采集源 ID 和 `SamplingPeriod`：跟随用户配置或固定周期。工厂跨线程，Collector 本身不要求 `Send`。实际采集对象在所属线程创建、使用和销毁，避免跨线程移动 PDH 句柄等线程相关资源；初始化由工厂完成，释放由 RAII 完成。
+`CollectorDescriptor` 包含稳定的采集源 ID 和 `SamplingPeriod`：跟随用户配置或固定周期。启动入口通过 `MonitorRuntime::start_with_services(factories, services, loaded)` 注入采集器以外的平台服务：`Services` 包含进程平台、远程平台、帧率采集工厂 `frames` 与告警通知回调 `notify`，`Default` 为全部关闭；`start_with_remote` 等较短的入口以默认值补齐其余服务。工厂跨线程，Collector 本身不要求 `Send`。实际采集对象在所属线程创建、使用和销毁，避免跨线程移动 PDH 句柄等线程相关资源；初始化由工厂完成，释放由 RAII 完成。
 
 `SampleBatch` 提供设备、采样、开始和结束时间，以及 `complete_inventory` 标志。只有权威完整目录才能把缺席设备标记离线；预热期间返回空的部分批次不会误删设备。单指标失败进入该指标的 SampleValue，采集源整体失败返回 Result 错误并触发退避。
 
@@ -180,6 +187,9 @@ pub trait CollectorFactory: Send + Sync {
 | 进程操作线程 | 结束进程与调整优先级 | 收到操作命令时执行，完成后立即重新轮询 |
 | 卷线程 | 发现本地卷并刷新容量 | 30 秒，支持手动提前刷新 |
 | 远程主机线程 | 每台主机一个：连接、登录、启动远程 shell，读取 `/proc` 与 `df` | 采样间隔且至少 1 秒；可自行恢复的失败按 2、4、8、16、30、60 秒退避重连 |
+| 帧率线程 | 开启帧率监控时创建 ETW 会话，读取前台窗口所属进程的帧；关闭时释放采集器并停止会话 | 跟随采样间隔；关闭期间每秒检查开关 |
+| 帧率事件线程 | `ProcessTrace` 接收 DXGI 与 Direct3D 9 的 Present 事件，存入共享队列 | 会话缓冲区写满或每秒交付一次 |
+| 告警通知线程 | 显示触发的告警通知 | 收到告警时；空闲时每 100 ms 检查退出 |
 | 配置写线程 | UTF-8 TOML 临时写入与替换 | 有待保存配置时写入；空闲轮询 20 ms |
 
 CPU/内存与网络使用独立线程，使网络 API 变慢也不会拖延 CPU 更新。sysinfo 未启用内部 multithread feature。设备目录直接随网络和磁盘采样更新，首版不再额外维护一个 10 秒的身份发现线程。
@@ -192,10 +202,13 @@ flowchart LR
     GPU[GPU 与显存] --> CH
     VOL[卷容量] --> CH
     SSH[远程主机] --> CH
+    FRM[帧率] --> CH
     CH --> ENGINE[引擎 校验与差分]
     ENGINE --> HISTORY[有界原始历史]
     HISTORY --> PROJECTION[当前页面的显示投影]
     ENGINE --> SLOT[最新 Arc 视图槽]
+    ENGINE --> ALERT[告警判定]
+    ALERT --> NOTIFY[通知线程]
     PROJECTION --> SLOT
     SLOT --> UI[GUI]
     UI --> COMMAND[有界命令与确认]
@@ -217,6 +230,8 @@ eframe 的 `logic` 消费视图、命令结果和退出事件；`ui` 只绘制�
 | 在途命令 | 32 个 | 立即返回繁忙；消费结果后释放名额 |
 | 命令结果 | 32 个 | 在途名额包含未消费结果，保证正常运行时每个接受请求有结果 |
 | 配置待保存 | 1 个 | 保留最新配置；被合并请求收到 Superseded |
+| 待显示的告警通知 | 8 条 | 丢弃当前通知并记录警告；告警状态与最近告警照常更新 |
+| 两次读取间的帧事件 | 65536 个 | 停止追加，下一次读取后恢复 |
 
 引擎按限额轮询各源，避免单一采集源饿死命令和其他源。丢批之后插入历史缺口，清除该来源速率基线，不能用平滑曲线隐藏丢失。
 
@@ -246,9 +261,9 @@ CPU 核心网格使用最新读数，点击核心后才请求其历史。离线�
 
 以 `--autostart` 参数启动且 `autostart_to_tray` 开启（默认）时，窗口从托盘开始。eframe 在绘制第一帧后总会显示新窗口，因此 GUI 在窗口出现前经 `Desktop` 以 DWM 隐去窗口的绘制（`DWMWA_CLOAK`），第一帧发出隐藏命令，下一帧窗口已经隐藏后再恢复绘制；此后窗口与最小化到托盘的窗口相同，只显示托盘图标，后台照常采样，单击图标显示完整窗口，吸附配置下按吸附前的几何信息恢复。托盘建立成功是从托盘开始的前提，平台层未能建立托盘时窗口照常显示。`autostart_to_tray` 关闭时，程序按配置恢复上次关闭时的完整窗口或迷你状态栏；截图模式始终显示窗口。
 
-`minibar.rs` 只读取最新视图中的 CPU、内存和 GPU 页面所选显卡的读数，所选显卡默认取在线且显存总量最大的 GPU；过期值变暗保留，不可用时显示 `—`。顶部横条绘制数字与分段条，左右竖条按物理像素栅格逐格计算 270° 环形仪表盘，分段点亮。
+`minibar.rs` 只读取最新视图中的 CPU、内存和 GPU 页面所选显卡的读数，所选显卡默认取在线且显存总量最大的 GPU；开启帧率监控时另加前台应用的 FPS，按 120 FPS 点满，低于 50 转橙、低于 30 转红。过期值变暗保留，不可用时显示 `—`。顶部横条绘制数字与分段条，左右竖条按物理像素栅格逐格计算 270° 环形仪表盘，分段点亮。迷你状态栏的尺寸随 FPS 一项增减：顶部横条 520 × 34 或 640 × 34，左右竖条 52 × 262 或 52 × 316；吸附期间开关变化时按新尺寸重新贴边。
 
-GUI 复用指标卡片、历史图表、状态和设备选择组件；八个页面在独立文件维护，CPU 核心与 GPU 引擎共用热力格组件。主题、格式、界面文本和 CJK 字体集中管理，容量、速率和时间显示不改变指标口径。
+GUI 复用指标卡片、历史图表、状态和设备选择组件；十一个页面在独立文件维护，CPU 核心与 GPU 引擎共用热力格组件。侧栏导航按钮按窗口高度在 30 至 40 逻辑像素之间取值，先为看板娘角色卡（按两行台词计算高度）留出空间，窗口过矮时角色卡隐藏、按钮取最小高度。主题、格式、界面文本和 CJK 字体集中管理，容量、速率和时间显示不改变指标口径。
 
 ## 进程管理
 
@@ -291,6 +306,28 @@ pub trait RemotePlatform: Send + Sync {
 
 远程页面在主机列表中切换主机，显示连接状态与重新连接、编辑、删除按钮，主机密钥待确认时显示指纹与信任按钮；页面内容包括 CPU、内存、所选磁盘与网卡的指标卡，CPU 与内存趋势图旁的设备档案，磁盘与网卡选择器及其读写、收发曲线，文件系统卡片和逻辑核心热力格。网卡默认选择默认路由所在接口。添加或编辑对话框可从 SSH 配置导入主机；保存时先发送 `RemoteSecret`，再与网卡选择一样立即保存配置；删除主机同时删除其密码。对话框中的密码只在打开期间保存在内存中，`Secret` 的调试输出隐藏内容。
 
+## 帧率监控
+
+`AppConfig.frame_monitoring` 是帧率监控开关，默认关闭。帧率采集是一个普通的 `CollectorFactory`，以 `Services.frames` 注入；引擎为它启动的采集线程只在开关开启时创建采集器，开关关闭时释放采集器并发送一个不含设备的完整目录批次，使 `frames` 设备转为离线、清除该采集源的诊断错误，历史过期后设备随之清理。`SaveConfig` 更新开关并唤醒等待中的线程，重新开启时立即创建采集器并重置退避。
+
+平台层 `frames.rs` 的采集器创建名为 `QQQ Monitor Frames` 的实时 ETW 会话：时间戳为性能计数器（`ClientContext` 1，消费端使用原始时间戳），4 KiB 缓冲区由全部处理器共用，缓冲区写满或每秒交付一次。会话按事件 ID 过滤，只启用 Microsoft-Windows-DXGI 的 Present_Start（42）与 PresentMultiplaneOverlay_Start（55）以及 Microsoft-Windows-D3D9 的 Present_Start（1）。同名会话已存在时先停止再创建，用于接管异常退出遗留的会话；权限不足时报告 `Reason::TracingDenied`。独立的事件线程运行 `ProcessTrace`，回调按 32 或 64 位事件头读出载荷开头的交换链指针，把进程 ID、交换链、运行时与时间戳存入有界队列；回调不会展开到系统代码，锁中毒时照常使用。采集器释放时停止会话、关闭跟踪句柄并等待事件线程结束；会话被外部停止时下一次读取返回错误，按退避重建。
+
+每次读取取出队列中的全部事件。统计对象为前台窗口所属的进程，前台为本程序时保持上一个统计对象；切换统计对象的那一轮报告预热。统计对象的事件按交换链分组，取本轮呈现最多的交换链（并列时保持当前交换链），按时间排序后与上一轮最后一帧相接求帧间隔：帧率为 1000 ÷ 平均帧间隔，同时报告平均与最长帧间隔。本轮没有新帧时，最后一帧距今超过 max(1 秒, 采样周期) + 1 秒的会话交付时间即判定停止呈现，否则不报告样本、保留上一读数。统计对象的程序名以 `PROCESS_QUERY_LIMITED_INFORMATION` 读取映像路径的文件名，每个 PID 读取一次。
+
+帧率页面提供开关、统计对象与原因说明、帧率与帧时间的指标卡和历史曲线；设置页面也提供同一开关，两处均立即应用并保存。采集源错误为 `TracingDenied` 时，页面提供「以管理员身份重新启动」：平台层以 `runas` 动词经 `ShellExecuteExW` 启动当前 EXE 并传入 `--page frames`，用户拒绝时报告 `Reason::Declined`；启动成功后当前窗口经正常关闭流程保存配置并退出。
+
+## 监控告警
+
+`AppConfig.alerts` 保存最多 64 条 `AlertRule`，以 `[[alerts]]` 表数组保存在配置末尾，读取时每项单独校验与恢复。规则包含稳定 ID、启用标记、设备身份（`DeviceDescriptor::identity()`）、指标名、条件（`above` 或 `below`）、按指标单位的阈值与持续时间（0 至 3600 秒）。
+
+引擎在每次发布视图前调用 `Alerts::evaluate`：按设备身份或设备 ID 找到设备（优先在线设备），只采用有效状态为 Ready 的读数，并以读数的最后成功时刻为采样时刻，同一采样只计一次。读数越过阈值后开始计时，持续时间满足时进入触发状态；触发后读数回到另一侧并保持同样时间才恢复。读数缺失、过期、失败或离线时计时清零，已触发的规则保持触发状态直到有效读数使其恢复。同一规则两次通知至少间隔 60 秒，期间再次触发只更新状态。规则定义变化或停用时重新开始。视图中的 `AlertView` 给出每条启用规则的状态（等待数据、正常、计时中、触发中及起始时刻）与最近 20 条触发记录。
+
+触发的 `AlertEvent` 包含规则、设备描述、远程主机显示名、单位、当前值与时刻，经容量 8 的通道交给告警通知线程，线程在 `catch_unwind` 中调用 `Services.notify`。启动入口的回调以当前界面语言通过 `i18n::alert` 组成标题与正文，再调用平台层 `notify`。
+
+平台层 `notify.rs` 用 WinRT 的 `ToastNotificationManager::CreateToastNotifierWithId` 显示 ToastGeneric 通知，文本经 XML 转义。Windows 为开始菜单中带应用标识的快捷方式所对应的桌面程序显示通知横幅，因此 `prepare` 每次运行一次地在当前用户开始菜单程序目录写入 `QQQ Monitor.lnk`：目标为当前 EXE，工作目录为 EXE 所在目录，`System.AppUserModel.ID` 为 `QQQMonitor`。告警页面显示时与首次通知前都会调用 `prepare`。系统设置关闭本程序通知时报告 `Reason::NotificationsOff`。通知的 `Activated` 事件经托盘窗口的跨线程消息请求打开主窗口，GUI 按托盘图标被单击时的流程恢复窗口；最近 8 条通知对象保持存活以接收点击。
+
+告警页面列出规则（设备与指标、条件、当前值、状态），提供添加、编辑、启用、停用、删除与测试通知；编辑对话框按所选设备列出可告警的指标（`components::ALERT_METRICS`），阈值按 `alert_unit` 换算显示单位（GiB、MiB/s、%、FPS、ms）。前台应用在帧率监控关闭时同样可选。规则变更与远程主机一样立即保存。状态栏显示触发中的规则数，点击跳转到告警页面。
+
 ## 界面语言
 
 界面提供简体中文、英语和日语。`AppConfig.language` 保存语言选择，`None` 表示跟随系统。启动入口通过平台层读取 Windows 首选显示语言列表，`Language::preferred` 取第一个受支持的语言，中文各地区变体归为简体中文，都不受支持时使用英语；配置以 BCP 47 标签保存，`zh-CN`、`en`、`ja`。命令行 `--lang` 与设置页面的选择效果相同。
@@ -307,7 +344,7 @@ pub trait RemotePlatform: Send + Sync {
 
 每个采集源的创建与采集被 catch_unwind 隔离，失败按 1、2、4、8、16、30 秒退避并重建对象，其他源继续工作。尚未返回的同步 API 不触发并行替代线程；数据由最后成功时刻变为过期。错误恢复不等于可以恢复 FFI 未定义行为，原生缓冲区和句柄仍需独立审查。
 
-关闭通过独立原子取消信号唤醒等待者，不依赖可能已满的命令通道。引擎处理已接受命令后设置每台远程主机的取消标志并通知配置线程完成最后保存。会话结束时向主机发送断开消息，最多等待 300 ms。统一等待最多 2 秒，已经结束的线程 join；同步 API 仍阻塞的线程记录警告并脱离等待，最终由进程退出回收。不能承诺强制中断 Win32，也不能声称超时的保存已经完成。
+关闭通过独立原子取消信号唤醒等待者，不依赖可能已满的命令通道。帧率采集线程退出时释放采集器，停止 ETW 会话并等待事件线程；告警通知线程在 100 ms 内结束。引擎处理已接受命令后设置每台远程主机的取消标志并通知配置线程完成最后保存。会话结束时向主机发送断开消息，最多等待 300 ms。统一等待最多 2 秒，已经结束的线程 join；同步 API 仍阻塞的线程记录警告并脱离等待，最终由进程退出回收。不能承诺强制中断 Win32，也不能声称超时的保存已经完成。
 
 日志按日滚动并最多保留 7 个文件；日志目录不可写时回退 stderr。20 MiB 总量硬限制、采集耗时 p95 和详细调度延迟诊断尚未实现，不作为已交付能力。
 
@@ -315,7 +352,7 @@ pub trait RemotePlatform: Send + Sync {
 
 1. **新增指标**：领域层增加必要单位或设备类型；平台实现 CollectorFactory，平台注册并交给引擎；页面通过 MetricKey 读取和查询。引擎无需识别具体采集器名称。温度和厂商 SDK 应各自独立采集，缺少能力只影响对应指标。
 2. **新增页面**：在 pages 增加文件与 Page 路由，组合公共组件；在 app 的 query 中声明需要的指标。页面无需依赖 Windows API。
-3. **告警与导出**：告警放在归一化之后，规则包含持续时间、恢复阈值和去抖；导出通过引擎查询有缺口的数据区间，再交后台 I/O。需要长期存储时才增加持久化接口。
+3. **告警指标与导出**：新的可告警指标在 `components::ALERT_METRICS` 与 `alert_unit` 中登记指标名与单位，并在各语言文本表的 `metric` 中填写名称，引擎按 `MetricKey` 统一判定；导出通过引擎查询有缺口的数据区间，再交后台 I/O，需要长期存储时增加持久化接口。
 4. **进程操作与进程宿主**：新操作在 `ProcessAction` 增加变体，由平台的 `act` 在确认实例后执行，GUI 在菜单与工具栏提供入口；新的宿主类型在 `ProcessHost` 增加变体，并由平台的 `hosts` 与 `source` 提供。
 5. **远程指标**：在 `qqq-remote` 的 shell 程序中输出新的数据段，在 `linux.rs` 解析并以本机同样的设备 ID 与指标名报告；引擎自动加上主机前缀，远程页面通过 `remote_device` 构造的 `MetricKey` 读取。
 6. **新增语言**：在 `Language` 中加入语言与 BCP 47 标签并扩展 `Language::preferred` 的匹配，在 `i18n/` 添加完整的 `Strings` 文本表，在 `i18n::t()` 与 `native_name()` 中登记。领域、平台和引擎层无需改动。
@@ -323,8 +360,8 @@ pub trait RemotePlatform: Send + Sync {
 
 ## 验证边界
 
-已有测试覆盖实际时间差、计数回退、Gauge 速率、合法零值、失败恢复、各周期过期、历史时间/点数/预算、投影缺口、慢采集隔离、在途命令上限、关闭保存（含吸附与托盘配置）、损坏配置保护、GPU 计数器实例解析与引擎聚合、吸附边缘判定与迷你状态栏定位、进程 CPU 使用率与实例匹配、进程轮询与操作结果、Windows 进程枚举与按实例结束和调整优先级、WSL 进程输出解析、优先级与 nice 值映射、远程主机的连接状态与重连策略（需要用户处理的失败不自动重试、删除主机后不留设备与读数）、远程主机配置的逐项恢复、主机密钥核对、Linux `/proc` 与 `df` 输出解析与按远程时钟换算速率、`~/.ssh/config` 导入、远程 shell 回答的分段、连接错误分类、Windows 凭据管理器读写、开机自动启动项的读写与关闭标记、系统语言匹配、界面语言配置保存，各语言文本表的启用与设备详情键覆盖，以及各语言看板娘台词在对话气泡内的宽度。真实 Windows 采集与 Windows、各运行中 WSL 发行版的进程列表由 CLI 的 `--smoke-test` 验证，在运行中的发行版里结束与调整优先级由忽略标记的测试 `cargo test -p qqq-platform-windows -- --ignored` 验证；九个页面与三种迷你状态栏由 `--capture` 配合 `--lang` 在三种语言下截图检查。
+已有测试覆盖告警规则的持续时间、恢复、同一采样只计一次与通知间隔，帧率开关的采集器创建与释放和告警通知只推送一次的运行时流程，帧率统计的前台进程、交换链选择、保持统计对象与停止呈现判定，告警规则配置的逐项恢复与重复 ID，通知文本的 XML 转义，各语言的告警指标名称，实际时间差、计数回退、Gauge 速率、合法零值、失败恢复、各周期过期、历史时间/点数/预算、投影缺口、慢采集隔离、在途命令上限、关闭保存（含吸附与托盘配置）、损坏配置保护、GPU 计数器实例解析与引擎聚合、吸附边缘判定与迷你状态栏定位、进程 CPU 使用率与实例匹配、进程轮询与操作结果、Windows 进程枚举与按实例结束和调整优先级、WSL 进程输出解析、优先级与 nice 值映射、远程主机的连接状态与重连策略（需要用户处理的失败不自动重试、删除主机后不留设备与读数）、远程主机配置的逐项恢复、主机密钥核对、Linux `/proc` 与 `df` 输出解析与按远程时钟换算速率、`~/.ssh/config` 导入、远程 shell 回答的分段、连接错误分类、Windows 凭据管理器读写、开机自动启动项的读写与关闭标记、系统语言匹配、界面语言配置保存，各语言文本表的启用与设备详情键覆盖，以及各语言看板娘台词在对话气泡内的宽度。真实 Windows 采集与 Windows、各运行中 WSL 发行版的进程列表由 CLI 的 `--smoke-test` 验证，在运行中的发行版里结束与调整优先级由忽略标记的测试 `cargo test -p qqq-platform-windows -- --ignored` 验证；十一个页面与三种迷你状态栏（含开启帧率监控时的 FPS 一项）由 `--capture` 配合 `--lang` 在三种语言下截图检查，导航在 960 × 640 最小窗口下完整显示。未提升权限时，帧率测试确认会话报告 `TracingDenied`，帧率页面显示说明与重新启动按钮；以管理员身份运行同一测试会启动真实会话。`cargo test -p qqq-platform-windows -- --ignored` 中的通知测试推送一条真实通知并在通知历史中找到它。
 
 远程主机已用 `qqq-remote` 的 `wsl_sshd` 示例在本机 Ubuntu 24.04（WSL 2）上端到端验证：首次连接给出指纹、信任后连接，密码、Ed25519 私钥、RSA 私钥与加密私钥登录成功；错误密码、缺少或错误口令、缺失的私钥文件、拒绝连接的端口、无法解析的主机名、不可达地址与未运行的 SSH 代理分别给出对应原因。GUI 在 150% 缩放下用真实输入完成了添加主机、信任主机密钥、编辑登录方式（密码随之从凭据管理器删除）与删除主机。
 
-吸附的拖动、贴边、换边、恢复和最大化往返已在单屏 150% 缩放下用真实鼠标输入检查。托盘已在同一环境检查：最小化后隐藏窗口并显示图标，吸附后移除任务栏按钮并显示图标，单击溢出区中的图标恢复完整窗口，右键菜单的“退出”保存配置并移除图标。开机自动启动已在同一环境检查：启动项与当前 EXE 的命令行一致时设置页显示为开启；Release 版以 `--autostart` 启动时，窗口在 eframe 显示它之前已隐去绘制并随即隐藏，高频轮询中没有出现可见且未隐去的状态；向托盘窗口投递选择图标的消息后，完整窗口与吸附两种配置都恢复完整窗口并正常绘制；关闭 `autostart_to_tray` 后窗口照常显示。进程页面已在同一环境用真实输入检查：切换 Windows 与 WSL 发行版、搜索、选中、确认后结束 Windows 进程、右键菜单调整优先级、强制结束 WSL 进程，以及结束受保护进程时状态栏显示无权限。还需验证真实网络中的各类 Linux 服务器（其他发行版、busybox、ARM、旧内核与 IPv6 地址）、SSH 代理登录、慢速与不稳定网络、多台远程主机长期运行、以管理员身份运行时的进程操作、WSL 1 发行版、资源管理器重启后的托盘恢复、管理员权限运行时的托盘、重新登录后的开机自动启动、通道真实溢出、设备消失后的清理、连续保存合并和写入失败、睡眠恢复、热插拔、键盘交互、多屏缩放与多屏吸附、集成显卡与多显卡读数及长期资源预算。构建成功和截图可读不能代替这些验收。
+告警已在单屏 150% 缩放下用真实输入检查：添加规则时设备与指标随选择更新，阈值按 GiB 换算后保存，显卡规则以 PCI 标识保存，编辑对话框回填规则，勾选停用与删除立即保存；越过阈值的规则推送通知横幅（标题为「QQQ Monitor」），窗口收进托盘后单击通知恢复窗口。吸附的拖动、贴边、换边、恢复和最大化往返已在单屏 150% 缩放下用真实鼠标输入检查。托盘已在同一环境检查：最小化后隐藏窗口并显示图标，吸附后移除任务栏按钮并显示图标，单击溢出区中的图标恢复完整窗口，右键菜单的“退出”保存配置并移除图标。开机自动启动已在同一环境检查：启动项与当前 EXE 的命令行一致时设置页显示为开启；Release 版以 `--autostart` 启动时，窗口在 eframe 显示它之前已隐去绘制并随即隐藏，高频轮询中没有出现可见且未隐去的状态；向托盘窗口投递选择图标的消息后，完整窗口与吸附两种配置都恢复完整窗口并正常绘制；关闭 `autostart_to_tray` 后窗口照常显示。进程页面已在同一环境用真实输入检查：切换 Windows 与 WSL 发行版、搜索、选中、确认后结束 Windows 进程、右键菜单调整优先级、强制结束 WSL 进程，以及结束受保护进程时状态栏显示无权限。还需验证以管理员身份或 Performance Log Users 组运行时真实游戏的帧率（与 PresentMon 对照）、独占全屏、Vulkan 与 OpenGL 程序、同一进程多个交换链、「以管理员身份重新启动」的完整流程、专注助手与免打扰下的通知、长时间运行的告警与帧率开销、真实网络中的各类 Linux 服务器（其他发行版、busybox、ARM、旧内核与 IPv6 地址）、SSH 代理登录、慢速与不稳定网络、多台远程主机长期运行、以管理员身份运行时的进程操作、WSL 1 发行版、资源管理器重启后的托盘恢复、管理员权限运行时的托盘、重新登录后的开机自动启动、通道真实溢出、设备消失后的清理、连续保存合并和写入失败、睡眠恢复、热插拔、键盘交互、多屏缩放与多屏吸附、集成显卡与多显卡读数及长期资源预算。构建成功和截图可读不能代替这些验收。

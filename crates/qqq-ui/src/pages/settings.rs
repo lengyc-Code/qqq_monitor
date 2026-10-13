@@ -36,6 +36,7 @@ impl DesktopApp {
                         t.animations,
                         t.edge_docking,
                         t.minimize_to_tray,
+                        t.frame_monitoring,
                         t.autostart,
                     ],
                     14.0,
@@ -111,6 +112,15 @@ impl DesktopApp {
                     row_label(ui, t.minimize_to_tray);
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                     ui.checkbox(&mut self.config.minimize_to_tray, t.minimize_to_tray_option);
+                });
+                ui.horizontal(|ui| {
+                    row_label(ui, t.frame_monitoring);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    // Applied and saved at once, like the switch on the frames page.
+                    let mut on = self.active_config.frame_monitoring;
+                    if ui.checkbox(&mut on, t.frame_monitoring_option).changed() {
+                        self.set_frame_monitoring(on);
+                    }
                 });
                 ui.horizontal(|ui| {
                     row_label(ui, t.autostart);

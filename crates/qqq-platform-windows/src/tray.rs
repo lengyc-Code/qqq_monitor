@@ -9,6 +9,7 @@ use crate::native::APP_ICON;
 use std::{
     cell::{Cell, OnceCell, RefCell},
     mem::size_of,
+    sync::atomic::{AtomicIsize, Ordering},
 };
 use windows::{
     Win32::{
@@ -45,6 +46,8 @@ const NOTIFY: u32 = WM_APP + 1;
 /// Message that re-applies the icon and the taskbar button after a `TaskbarCreated`
 /// broadcast has reached every window of the thread.
 const REAPPLY: u32 = WM_APP + 2;
+/// Message from another thread asking for the application window.
+const OPEN: u32 = WM_APP + 3;
 const ICON_ID: u32 = 1;
 /// Enter or Space on the focused icon.
 const KEY_SELECT: u32 = NIN_SELECT | NINF_KEY;
@@ -77,6 +80,9 @@ struct Tray {
 thread_local! {
     static TRAY: OnceCell<Tray> = const { OnceCell::new() };
 }
+
+/// Hidden tray window, for threads other than the GUI thread to post [`OPEN`] to.
+static WINDOW: AtomicIsize = AtomicIsize::new(0);
 
 /// Runs `f` on the tray of the calling thread, if it has one. Shared access only, so the
 /// window procedure may re-enter while another call waits on the shell.
@@ -148,7 +154,18 @@ pub fn attach(main: isize, wake: impl Fn() + 'static) -> bool {
             wake: Box::new(wake),
         });
     });
+    WINDOW.store(window.0 as isize, Ordering::Release);
     true
+}
+
+/// Asks for the application window from any thread, as a click on the icon does.
+pub fn request_open() {
+    let window = WINDOW.load(Ordering::Acquire);
+    if window != 0 {
+        // SAFETY: posting to the tray window has no memory preconditions; a window that is
+        // gone only fails the call.
+        let _ = unsafe { PostMessageW(Some(HWND(window as *mut _)), OPEN, WPARAM(0), LPARAM(0)) };
+    }
 }
 
 /// The embedded application icon at the size the notification area uses at system DPI.
@@ -384,6 +401,10 @@ unsafe extern "system" fn procedure(
         }
         REAPPLY => {
             with(Tray::reapply);
+            LRESULT(0)
+        }
+        OPEN => {
+            with(Tray::open);
             LRESULT(0)
         }
         _ => {

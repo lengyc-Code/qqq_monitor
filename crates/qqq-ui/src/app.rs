@@ -5,8 +5,8 @@ use crate::{components, dock, i18n, mascot, minibar, pixel, theme, tray};
 use eframe::egui::{self, RichText, pos2, vec2};
 use qqq_domain::{DeviceKind, MetricKey};
 use qqq_engine::{
-    AppConfig, CommandOutcome, DockEdge, Language, MonitorClient, MonitorCommand, MonitorView,
-    Notice,
+    AlertState, AppConfig, CommandOutcome, DockEdge, Language, MonitorClient, MonitorCommand,
+    MonitorView, Notice,
 };
 use std::{
     path::PathBuf,
@@ -20,10 +20,12 @@ pub enum Page {
     Cpu,
     Memory,
     Gpu,
+    Frames,
     Disk,
     Network,
     Processes,
     Remote,
+    Alerts,
     Settings,
 }
 impl Page {
@@ -34,10 +36,12 @@ impl Page {
             Self::Cpu => &t.cpu_page,
             Self::Memory => &t.memory_page,
             Self::Gpu => &t.gpu_page,
+            Self::Frames => &t.frames_page,
             Self::Disk => &t.disk_page,
             Self::Network => &t.network_page,
             Self::Processes => &t.processes_page,
             Self::Remote => &t.remote_page,
+            Self::Alerts => &t.alerts_page,
             Self::Settings => &t.settings_page,
         }
     }
@@ -48,10 +52,12 @@ impl Page {
             Self::Cpu => "PROCESSOR",
             Self::Memory => "MEMORY",
             Self::Gpu => "GPU",
+            Self::Frames => "FRAMES",
             Self::Disk => "STORAGE",
             Self::Network => "NETWORK",
             Self::Processes => "PROCESSES",
             Self::Remote => "REMOTE",
+            Self::Alerts => "ALERTS",
             Self::Settings => "CONFIG",
         }
     }
@@ -87,6 +93,7 @@ pub struct DesktopApp {
     tray: tray::Tray,
     process: pages::processes::ProcessPage,
     remote: pages::remote::RemotePage,
+    alerts: pages::alerts::AlertPage,
     /// Language the "follow system" setting resolves to.
     system_language: Language,
     /// Whether the program starts at sign-in, read when the settings page opens.
@@ -94,10 +101,13 @@ pub struct DesktopApp {
 }
 
 impl DesktopApp {
+    /// Starts on `page`, or the overview; a capture starts on its own page.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         client: MonitorClient,
         config: AppConfig,
+        page: Option<Page>,
         capture: Option<CaptureOptions>,
         desktop: dock::Desktop,
         system_language: Language,
@@ -111,7 +121,11 @@ impl DesktopApp {
         let view = client
             .try_latest_view()
             .unwrap_or_else(|| Arc::new(MonitorView::empty(config.clone())));
-        let page = capture.as_ref().map(|v| v.page).unwrap_or(Page::Overview);
+        let page = capture
+            .as_ref()
+            .map(|v| v.page)
+            .or(page)
+            .unwrap_or(Page::Overview);
         Self {
             dock: dock::Dock::new(&config),
             desktop,
@@ -122,6 +136,7 @@ impl DesktopApp {
             },
             process: Default::default(),
             remote: Default::default(),
+            alerts: Default::default(),
             system_language,
             autostart: None,
             range: config.history_secs,
@@ -238,8 +253,11 @@ impl DesktopApp {
                 MetricKey::new(&self.network, "receive"),
                 MetricKey::new(&self.network, "send"),
             ],
+            Page::Frames => ["fps", "frame_time", "frame_time_max"]
+                .map(|metric| MetricKey::new("frames", metric))
+                .into(),
             Page::Remote => self.remote_query(),
-            Page::Processes | Page::Settings => Vec::new(),
+            Page::Processes | Page::Alerts | Page::Settings => Vec::new(),
         };
         if keys != self.last_query || self.range != self.last_range {
             match self.client.try_command(MonitorCommand::SetQuery {
@@ -293,23 +311,31 @@ impl DesktopApp {
                             .color(theme::NIGHT_MUTED),
                     );
                 });
-                for (page, icon) in [
+                let pages = [
                     (Page::Overview, &pixel::ICON_STAR),
                     (Page::Cpu, &pixel::ICON_CPU),
                     (Page::Memory, &pixel::ICON_MEMORY),
                     (Page::Gpu, &pixel::ICON_GPU),
+                    (Page::Frames, &pixel::ICON_FRAMES),
                     (Page::Disk, &pixel::ICON_DISK),
                     (Page::Network, &pixel::ICON_NETWORK),
                     (Page::Processes, &pixel::ICON_PROCESS),
                     (Page::Remote, &pixel::ICON_REMOTE),
+                    (Page::Alerts, &pixel::ICON_BELL),
                     (Page::Settings, &pixel::ICON_GEAR),
-                ] {
+                ];
+                // Buttons shrink from 40 towards 30 points on shorter windows, leaving room
+                // for the mascot card below them; one point absorbs pixel rounding.
+                let room = ui.available_height() - mascot::room(ui) - 1.0;
+                let pitch = (room / pages.len() as f32).clamp(36.0, 46.0);
+                let height = pitch - ui.spacing().item_spacing.y;
+                for (page, icon) in pages {
                     if theme::nav_button(
                         ui,
                         page.text().nav,
                         icon,
                         self.page == page,
-                        vec2(ui.available_width(), 40.0),
+                        vec2(ui.available_width(), height),
                     )
                     .clicked()
                     {
@@ -352,7 +378,7 @@ impl DesktopApp {
                         .size(12.0),
                 );
             });
-            if !matches!(self.page, Page::Processes | Page::Settings) {
+            if !matches!(self.page, Page::Processes | Page::Alerts | Page::Settings) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     for (secs, label) in [
@@ -447,6 +473,11 @@ impl eframe::App for DesktopApp {
         self.select_initial_devices();
         self.query();
         self.watch_processes(ctx);
+        if self.page == Page::Alerts {
+            // Windows notices a new notification identity with a delay, so it is set up
+            // before the first alert.
+            (self.desktop.prepare_notifications)();
+        }
         if self.capture.is_none() {
             self.tray.update(
                 ctx,
@@ -461,6 +492,8 @@ impl eframe::App for DesktopApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
         }
+        self.dock
+            .set_frames(ctx, &self.desktop, self.active_config.frame_monitoring);
         self.dock
             .update(ctx, &self.desktop, self.active_config.edge_docking);
         if !self.closing && ctx.input(|i| i.viewport().close_requested()) {
@@ -505,7 +538,7 @@ impl eframe::App for DesktopApp {
         let t = i18n::t();
         let view = Arc::clone(&self.view);
         if let Some(edge) = self.dock.edge() {
-            if minibar::show(ui, &view, edge, &self.gpu) {
+            if minibar::show(ui, &view, edge, &self.gpu, view.config.frame_monitoring) {
                 self.dock.restore(ui.ctx(), &self.desktop, None);
             }
             return;
@@ -542,6 +575,29 @@ impl eframe::App for DesktopApp {
                         .size(12.0)
                         .color(theme::NIGHT_MUTED),
                     );
+                    let firing = view
+                        .alerts
+                        .states
+                        .values()
+                        .filter(|state| matches!(state, AlertState::Firing { .. }))
+                        .count();
+                    if firing > 0 {
+                        ui.add_space(8.0);
+                        components::pixel_dot(ui, theme::PINK);
+                        let label = egui::Label::new(
+                            RichText::new((t.alerts_firing)(firing))
+                                .size(12.0)
+                                .color(theme::PINK),
+                        )
+                        .sense(egui::Sense::click());
+                        if ui
+                            .add(label)
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            self.page = Page::Alerts;
+                        }
+                    }
                     if let Some(message) = &self.message {
                         ui.add_space(8.0);
                         ui.label(
@@ -609,10 +665,12 @@ impl eframe::App for DesktopApp {
                             Page::Cpu => self.cpu(ui, &view),
                             Page::Memory => self.memory(ui, &view),
                             Page::Gpu => self.gpu(ui, &view),
+                            Page::Frames => self.frames(ui, &view),
                             Page::Disk => self.disk(ui, &view),
                             Page::Network => self.network(ui, &view),
                             Page::Processes => {}
                             Page::Remote => self.remote(ui, &view),
+                            Page::Alerts => self.alerts(ui, &view),
                             Page::Settings => self.settings(ui, &view),
                         }
                         ui.add_space(8.0);

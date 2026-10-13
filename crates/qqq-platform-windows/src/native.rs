@@ -2,7 +2,7 @@ use qqq_domain::{CollectorError, Reason};
 use std::{collections::BTreeMap, mem::size_of, ptr};
 use windows::{
     Win32::{
-        Foundation::{HWND, LPARAM, POINT, RECT, WPARAM},
+        Foundation::{ERROR_CANCELLED, HWND, LPARAM, POINT, RECT, WPARAM},
         Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME},
         Graphics::{
             Dxgi::{
@@ -19,13 +19,14 @@ use windows::{
         UI::{
             HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi},
             Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON},
+            Shell::{SHELLEXECUTEINFOW, ShellExecuteExW},
             WindowsAndMessaging::{
                 ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, MB_ICONERROR, MB_OK,
-                MessageBoxW, SM_CXICON, SM_CXSMICON, SendMessageW, WM_SETICON,
+                MessageBoxW, SM_CXICON, SM_CXSMICON, SW_SHOWNORMAL, SendMessageW, WM_SETICON,
             },
         },
     },
-    core::{HSTRING, PCWSTR, PWSTR},
+    core::{HSTRING, PCWSTR, PWSTR, w},
 };
 
 fn error(api: &'static str, code: u32) -> CollectorError {
@@ -113,6 +114,37 @@ pub fn local_volume_id(mount: &str) -> Option<String> {
         GetVolumeNameForVolumeMountPointW(&mount, &mut buffer).ok()?;
     }
     Some(text(&buffer))
+}
+
+/// Starts this executable again with administrator rights and `arguments`, once the user
+/// confirms the system's prompt; declining it fails with [`Reason::Declined`].
+pub fn restart_elevated(arguments: &str) -> Result<(), Reason> {
+    let path = std::env::current_exe().map_err(|error| Reason::CallFailed {
+        api: "GetModuleFileNameW",
+        code: error.raw_os_error().unwrap_or_default() as u32,
+    })?;
+    let file = HSTRING::from(path.as_os_str());
+    let arguments = HSTRING::from(arguments);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        lpVerb: w!("runas"),
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: PCWSTR(arguments.as_ptr()),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    // SAFETY: the structure has its size set and the strings it points to outlive the call,
+    // which waits while the system asks the user.
+    unsafe { ShellExecuteExW(&mut info) }.map_err(|error| {
+        if error.code() == ERROR_CANCELLED.to_hresult() {
+            Reason::Declined
+        } else {
+            Reason::CallFailed {
+                api: "ShellExecuteExW",
+                code: error.code().0 as u32,
+            }
+        }
+    })
 }
 
 pub fn show_error(title: &str, message: &str) {
@@ -302,6 +334,10 @@ pub struct GpuAdapter {
     pub name: String,
     /// PCI vendor ID.
     pub vendor: u32,
+    /// PCI device, subsystem and revision IDs.
+    pub device: u32,
+    pub subsystem: u32,
+    pub revision: u32,
     pub dedicated: u64,
     pub shared: u64,
     pub software: bool,
@@ -326,6 +362,9 @@ pub fn gpu_adapters() -> Result<Vec<GpuAdapter>, CollectorError> {
             luid: (desc.AdapterLuid.HighPart as u32 as u64) << 32 | desc.AdapterLuid.LowPart as u64,
             name: text(&desc.Description),
             vendor: desc.VendorId,
+            device: desc.DeviceId,
+            subsystem: desc.SubSysId,
+            revision: desc.Revision,
             dedicated: desc.DedicatedVideoMemory as u64,
             shared: desc.SharedSystemMemory as u64,
             software: desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0,

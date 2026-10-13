@@ -1,5 +1,6 @@
 use crate::{
     AppConfig, ConfigStore, LoadedConfig, MonitorView, Notice, ProcessTable, SaveStatus,
+    alert::{self, AlertNotify, Alerts},
     history::{History, HistoryPoint},
     normalize::Normalizer,
     process::{self, ActionJob, NoProcesses, ProcessEvent},
@@ -82,6 +83,8 @@ pub(crate) struct Control {
     pub(crate) stop: AtomicBool,
     engine_done: AtomicBool,
     pub(crate) sampling_ms: AtomicU64,
+    /// The configuration switches frame monitoring on.
+    frames: AtomicBool,
     refresh: AtomicU64,
     /// Host whose processes are polled.
     pub(crate) process_watch: Mutex<Option<ProcessHost>>,
@@ -158,6 +161,29 @@ impl MonitorClient {
     }
 }
 
+/// Platform services the engine uses besides its collectors.
+pub struct Services {
+    pub processes: Arc<dyn ProcessPlatform>,
+    pub remote: Arc<dyn RemotePlatform>,
+    /// Frames of the application in the foreground, collected while the configuration
+    /// switches frame monitoring on.
+    pub frames: Option<Arc<dyn CollectorFactory>>,
+    /// Shows the notification of a fired alert, on a thread of its own.
+    pub notify: AlertNotify,
+}
+
+impl Default for Services {
+    /// No process access, no remote hosts, no frames and no notifications.
+    fn default() -> Self {
+        Self {
+            processes: Arc::new(NoProcesses),
+            remote: Arc::new(NoRemote),
+            frames: None,
+            notify: Arc::new(|_| {}),
+        }
+    }
+}
+
 pub struct MonitorRuntime {
     client: MonitorClient,
     threads: Vec<JoinHandle<()>>,
@@ -180,12 +206,34 @@ impl MonitorRuntime {
     ) -> Result<Self, Notice> {
         Self::start_with_remote(factories, processes, Arc::new(NoRemote), loaded)
     }
+    /// Starts the engine without frames and notifications.
     pub fn start_with_remote(
         factories: Vec<Arc<dyn CollectorFactory>>,
         processes: Arc<dyn ProcessPlatform>,
         remote: Arc<dyn RemotePlatform>,
         loaded: LoadedConfig,
     ) -> Result<Self, Notice> {
+        Self::start_with_services(
+            factories,
+            Services {
+                processes,
+                remote,
+                ..Services::default()
+            },
+            loaded,
+        )
+    }
+    pub fn start_with_services(
+        factories: Vec<Arc<dyn CollectorFactory>>,
+        services: Services,
+        loaded: LoadedConfig,
+    ) -> Result<Self, Notice> {
+        let Services {
+            processes,
+            remote,
+            frames,
+            notify,
+        } = services;
         loaded.config.validate()?;
         let (requests_tx, requests_rx) = bounded(32);
         let (results_tx, results_rx) = bounded(32);
@@ -193,6 +241,7 @@ impl MonitorRuntime {
             stop: AtomicBool::new(false),
             engine_done: AtomicBool::new(true),
             sampling_ms: AtomicU64::new(loaded.config.sampling_ms),
+            frames: AtomicBool::new(loaded.config.frame_monitoring),
             refresh: AtomicU64::new(0),
             process_watch: Mutex::new(None),
             process_refresh: AtomicU64::new(0),
@@ -217,16 +266,29 @@ impl MonitorRuntime {
             remote_threads: Arc::new(Mutex::new(Vec::new())),
         };
         let mut inputs = Vec::new();
-        for factory in factories {
+        let gated = frames.map(|factory| (factory, true));
+        for (factory, gated) in factories
+            .into_iter()
+            .map(|factory| (factory, false))
+            .chain(gated)
+        {
             let (tx, rx) = bounded(8);
             inputs.push(rx);
             let signal = Arc::clone(&control);
             let handle = thread::Builder::new()
                 .name(factory.descriptor().id.into())
-                .spawn(move || collector_worker(factory, tx, signal))
+                .spawn(move || collector_worker(factory, tx, signal, gated))
                 .map_err(|e| Notice::System(e.to_string()))?;
             runtime.threads.push(handle);
         }
+        let (alert_tx, alert_rx) = bounded(8);
+        let notify_control = Arc::clone(&control);
+        runtime.threads.push(
+            thread::Builder::new()
+                .name("alert-notify".into())
+                .spawn(move || alert::notify_worker(notify, alert_rx, notify_control))
+                .map_err(|e| Notice::System(e.to_string()))?,
+        );
         let pending = Arc::new(Mutex::new(None));
         let (save_tx, save_rx) = bounded(32);
         let writer_pending = Arc::clone(&pending);
@@ -277,6 +339,7 @@ impl MonitorRuntime {
                     process_rx,
                     action_tx,
                     remotes,
+                    Alerts::new(alert_tx),
                     loaded.config,
                     loaded.warning,
                 )
@@ -320,10 +383,13 @@ impl Drop for MonitorRuntime {
     }
 }
 
+/// Collects at the source's period. A `gated` source collects only while frame monitoring
+/// is on: switching it off drops the collector and takes the source's devices offline.
 fn collector_worker(
     factory: Arc<dyn CollectorFactory>,
     tx: Sender<CollectorEvent>,
     control: Arc<Control>,
+    gated: bool,
 ) {
     let descriptor = factory.descriptor();
     let source: Arc<str> = descriptor.id.into();
@@ -334,6 +400,7 @@ fn collector_worker(
     let mut last = None;
     let mut refresh = control.refresh.load(Ordering::Acquire);
     let mut old_period = Duration::ZERO;
+    let mut open = !gated;
     while !control.stop.load(Ordering::Acquire) {
         let period = match descriptor.period {
             SamplingPeriod::Configured => {
@@ -341,6 +408,40 @@ fn collector_worker(
             }
             SamplingPeriod::Fixed(period) => period,
         };
+        if gated {
+            let enabled = control.frames.load(Ordering::Acquire);
+            if enabled != open {
+                open = enabled;
+                retry = 1;
+                next = Instant::now();
+                if !enabled {
+                    collector = None;
+                    // An empty complete inventory takes the devices offline and clears the
+                    // source's error.
+                    let now = Instant::now();
+                    let event = CollectorEvent {
+                        source: Arc::clone(&source),
+                        period,
+                        result: Ok(SampleBatch {
+                            complete_inventory: true,
+                            started_at: now,
+                            finished_at: now,
+                            ..Default::default()
+                        }),
+                        dropped,
+                    };
+                    match tx.try_send(event) {
+                        Ok(()) => {}
+                        Err(TrySendError::Full(_)) => dropped = dropped.saturating_add(1),
+                        Err(TrySendError::Disconnected(_)) => return,
+                    }
+                }
+            }
+            if !open {
+                control.wait(Duration::from_secs(1));
+                continue;
+            }
+        }
         if old_period != period {
             if let Some(at) = last {
                 next = at + period;
@@ -443,6 +544,7 @@ struct EngineState {
     /// Host whose processes the GUI watches.
     watched: Option<ProcessHost>,
     remotes: Remotes,
+    alerts: Alerts,
 }
 impl EngineState {
     fn set_remote_state(&mut self, host: &str, state: RemoteState) {
@@ -734,6 +836,7 @@ impl EngineState {
             self.view.metrics.retain(|k, _| k.device != id);
             self.metric_sources.retain(|k, _| k.device != id);
         }
+        self.alerts.evaluate(&mut self.view);
         let snapshot = Arc::new(self.view.clone());
         *client.latest.lock().unwrap() = snapshot;
         client.control.notify_ui();
@@ -751,6 +854,7 @@ fn engine_worker(
     process_events: Receiver<ProcessEvent>,
     actions: Sender<ActionJob>,
     remotes: Remotes,
+    alerts: Alerts,
     config: AppConfig,
     warning: Option<Notice>,
 ) {
@@ -770,6 +874,7 @@ fn engine_worker(
         start: Instant::now(),
         watched: None,
         remotes,
+        alerts,
     };
     state.view.remote.presets = Arc::new(state.remotes.platform.presets());
     state.apply_remote_hosts();
@@ -859,6 +964,10 @@ fn engine_worker(
                             .control
                             .sampling_ms
                             .store(config.sampling_ms, Ordering::Release);
+                        client
+                            .control
+                            .frames
+                            .store(config.frame_monitoring, Ordering::Release);
                         client.control.sleep.notify_all();
                         state.view.config = config.clone();
                         state.apply_remote_hosts();

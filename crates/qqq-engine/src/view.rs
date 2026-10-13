@@ -1,4 +1,4 @@
-use crate::{AppConfig, ProcessView, RemoteView, SaveStatus, history::HistoryPoint};
+use crate::{AlertView, AppConfig, ProcessView, RemoteView, SaveStatus, history::HistoryPoint};
 use qqq_domain::*;
 use std::{collections::BTreeMap, time::Instant};
 
@@ -23,6 +23,7 @@ pub struct MonitorView {
     pub diagnostics: Diagnostics,
     pub processes: ProcessView,
     pub remote: RemoteView,
+    pub alerts: AlertView,
 }
 
 impl MonitorView {
@@ -39,6 +40,7 @@ impl MonitorView {
             diagnostics: Diagnostics::default(),
             processes: ProcessView::default(),
             remote: RemoteView::default(),
+            alerts: AlertView::default(),
         }
     }
     pub fn reading(&self, device: &str, metric: &str) -> Option<&MetricReading> {

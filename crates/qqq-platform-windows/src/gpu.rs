@@ -83,6 +83,21 @@ fn engine_load(values: &Values) -> BTreeMap<u64, BTreeMap<String, f64>> {
     adapters
 }
 
+/// Identity of an adapter across restarts, which its LUID is not: the PCI IDs, numbered
+/// after the identical adapters `before` it.
+fn pci_identity(adapter: &GpuAdapter, before: &[&GpuAdapter]) -> String {
+    let ids = |a: &GpuAdapter| (a.vendor, a.device, a.subsystem, a.revision);
+    let twins = before.iter().filter(|a| ids(a) == ids(adapter)).count();
+    let mut identity = format!(
+        "pci:{:04x}:{:04x}:{:08x}:{:02x}",
+        adapter.vendor, adapter.device, adapter.subsystem, adapter.revision
+    );
+    if twins > 0 {
+        identity.push_str(&format!("#{twins}"));
+    }
+    identity
+}
+
 fn vendor(id: u32) -> String {
     match id {
         0x10DE => "NVIDIA".into(),
@@ -118,11 +133,13 @@ impl Collector for Gpu {
             self.adapters = native::gpu_adapters()?;
             self.listed = Instant::now();
         }
-        for adapter in self.adapters.iter().filter(|a| !a.software) {
+        let hardware: Vec<_> = self.adapters.iter().filter(|a| !a.software).collect();
+        for (index, adapter) in hardware.iter().enumerate() {
             let id = format!("gpu:{}", adapter.luid);
             let uses_dedicated = adapter.dedicated >= DEDICATED_MINIMUM;
             batch.devices.push(
                 DeviceDescriptor::new(&id, &adapter.name, DeviceKind::Gpu)
+                    .persistent_id(pci_identity(adapter, &hardware[..index]))
                     .detail("vendor", vendor(adapter.vendor))
                     .detail(
                         "memory_type",

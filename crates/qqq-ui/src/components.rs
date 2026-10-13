@@ -37,8 +37,70 @@ pub fn format_value(value: Option<f64>, unit: Unit) -> String {
             }
             Unit::Count if value.fract() == 0.0 => format!("{value:.0}"),
             Unit::Count => format!("{value:.2}"),
+            Unit::FramesPerSecond => format!("{value:.0} FPS"),
+            Unit::Milliseconds => format!("{value:.1} ms"),
         })
         .unwrap_or_else(|| "—".into())
+}
+
+/// A duration such as a hold time, in seconds or minutes.
+pub fn span(secs: u64) -> String {
+    let t = i18n::t();
+    match (secs / 60, secs % 60) {
+        (0, seconds) => (t.seconds)(seconds as f64),
+        (minutes, 0) => (t.minutes)(minutes),
+        (minutes, seconds) => format!("{} {}", (t.minutes)(minutes), (t.seconds)(seconds as f64)),
+    }
+}
+
+/// Metrics that alert rules can watch, in the order the rule editor offers them.
+pub const ALERT_METRICS: [&str; 18] = [
+    "usage",
+    "memory_usage",
+    "memory_used",
+    "used",
+    "available",
+    "swap_usage",
+    "iowait",
+    "read",
+    "write",
+    "receive",
+    "send",
+    "fps",
+    "frame_time",
+    "frame_time_max",
+    "load1",
+    "load5",
+    "load15",
+    "processes",
+];
+
+/// Unit of a metric that alert rules can watch.
+pub fn alert_unit(metric: &str) -> Unit {
+    match metric {
+        "used" | "available" | "memory_used" => Unit::Bytes,
+        "read" | "write" | "receive" | "send" => Unit::BytesPerSecond,
+        "fps" => Unit::FramesPerSecond,
+        "frame_time" | "frame_time_max" => Unit::Milliseconds,
+        "load1" | "load5" | "load15" | "processes" => Unit::Count,
+        _ => Unit::Percent,
+    }
+}
+
+/// Name of a device that an alert rule watches, after the remote host it belongs to. A
+/// processor goes by its kind rather than its long model name, and the frames device is
+/// the foreground application, whichever it is at the moment.
+pub fn alert_device_name(device: &DeviceDescriptor, host: Option<&str>) -> String {
+    let t = i18n::t();
+    let name = match device.kind {
+        DeviceKind::Cpu => t.processor.into(),
+        DeviceKind::Frames => t.foreground_app.into(),
+        _ => device_name(device),
+    };
+    match host {
+        Some(host) => format!("{host} · {name}"),
+        None => name,
+    }
 }
 pub fn state_label(view: &MonitorView, reading: Option<&MetricReading>) -> (&'static str, Color32) {
     let t = i18n::t();
@@ -122,6 +184,7 @@ pub fn device_name(device: &DeviceDescriptor) -> String {
         DeviceKind::Memory => t.physical_memory.into(),
         DeviceKind::Disk => format!("{} {index}", t.physical_disk),
         DeviceKind::Gpu => t.graphics_card.into(),
+        DeviceKind::Frames => t.foreground_app.into(),
         DeviceKind::Volume | DeviceKind::Network => device.id.clone(),
     }
 }

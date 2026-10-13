@@ -28,6 +28,11 @@ pub const STRINGS: Strings = Strings {
         title: "显卡",
         hint: "显卡利用率、各引擎占用与显存",
     },
+    frames_page: PageText {
+        nav: "帧率",
+        title: "帧率与帧时间",
+        hint: "游戏时观察前台应用的流畅度",
+    },
     disk_page: PageText {
         nav: "磁盘",
         title: "磁盘与存储",
@@ -48,6 +53,11 @@ pub const STRINGS: Strings = Strings {
         title: "远程主机",
         hint: "通过 SSH 监控 Linux 主机的系统信息与主要指标",
     },
+    alerts_page: PageText {
+        nav: "告警",
+        title: "监控告警",
+        hint: "指标越过阈值时推送 Windows 通知",
+    },
     settings_page: PageText {
         nav: "设置",
         title: "设置",
@@ -61,6 +71,7 @@ pub const STRINGS: Strings = Strings {
     degraded: "部分采集不可用",
     timing: |sampling, session| format!("采样 {sampling:.1}s  ·  会话 {session:.0}s"),
     minibar: "迷你状态栏",
+    alerts_firing: |n| format!("{n} 条告警触发中"),
     dock_top: "吸附到屏幕顶部",
     dock_left: "吸附到屏幕左侧",
     dock_right: "吸附到屏幕右侧",
@@ -77,6 +88,7 @@ pub const STRINGS: Strings = Strings {
     state_offline: "已断开",
     state_waiting: "采集中",
     seconds_ago: |v| format!("{v:.0} 秒前"),
+    minutes_ago: |v| format!("{v} 分钟前"),
     last_valid: "上次有效数据",
     now: "现在",
     chart_waiting: "等待有效采样；数据不可用时曲线保留缺口",
@@ -94,6 +106,7 @@ pub const STRINGS: Strings = Strings {
     this_pc: "本机",
     physical_disk: "物理磁盘",
     graphics_card: "显卡",
+    foreground_app: "前台应用",
     adapter: "网卡",
     logical_core: |n| format!("逻辑核心 {n}"),
     detail,
@@ -114,6 +127,7 @@ pub const STRINGS: Strings = Strings {
     receive: "接收",
     send: "发送",
     logical_cores: "逻辑核心",
+    metric,
 
     mint_name: "看板娘 · MINT 酱",
     mint_hover: "看板娘 MINT 酱会根据 CPU 与内存负载切换表情",
@@ -199,6 +213,8 @@ pub const STRINGS: Strings = Strings {
     autostart: "开机自动启动",
     autostart_option: "登录 Windows 时自动启动 QQQ Monitor",
     autostart_to_tray_option: "开机启动时直接收进托盘",
+    frame_monitoring: "帧率监控",
+    frame_monitoring_option: "统计前台应用的帧率与帧时间，迷你状态栏同时显示 FPS",
     apply_save: "应用并保存",
     runtime_status: "运行状态",
     batches: |received, dropped| format!("接收采样批次 {received}  ·  丢失批次 {dropped}"),
@@ -289,6 +305,70 @@ pub const STRINGS: Strings = Strings {
     remote_volumes_hint: "本地文件系统的容量，使用率与 df 的口径一致",
     remote_cores_hint: "每个逻辑核心的当前负载",
     yes: "是",
+
+    fps: "帧率",
+    frame_time: "帧时间",
+    frame_time_max: "最长帧时间",
+    fps_detail: |mean| format!("平均帧时间 {mean}"),
+    frame_time_detail: |longest| format!("最长 {longest}"),
+    frames_target: "统计对象",
+    frames_off: "帧率监控已关闭。开启后在后台统计前台应用每秒呈现的画面数与相邻两帧的间隔，迷你状态栏同时显示 FPS。",
+    frames_denied: "读取系统的图形事件需要管理员权限。可以管理员身份重新启动，或把当前账户加入 Performance Log Users 组后重新登录 Windows。",
+    frames_restart: "以管理员身份重新启动",
+    frames_waiting: "切换到游戏或其他应用后，开始统计它的画面",
+    fps_chart: "帧率趋势",
+    frame_time_chart: "帧时间趋势",
+    frames_note: "帧率为前台应用每秒呈现的画面数，帧时间为相邻两次呈现的间隔；数据来自 Windows 对 DXGI 与 Direct3D 9 的事件跟踪，不介入游戏进程。切换到本程序时继续统计上一个应用；不经 DXGI 呈现的 Vulkan 与 OpenGL 程序可能没有数据。",
+
+    alert_add: "添加告警",
+    alert_test: "发送测试通知",
+    alert_test_body: "收到这条通知，说明告警可以正常推送。",
+    alert_empty: "还没有告警规则。选择设备与指标并设置阈值后，读数越过阈值时会推送 Windows 通知。",
+    alert_rules: "告警规则",
+    alert_recent: "最近告警",
+    alert_recent_empty: "本次运行还没有触发告警",
+    alert_normal: "正常",
+    alert_no_data: "等待数据",
+    alert_disabled: "已停用",
+    alert_pending: |left| format!("已越过阈值，{left}后告警"),
+    alert_firing: |held| format!("告警中 · 已持续 {held}"),
+    alert_now: |value| format!("当前 {value}"),
+    alert_above: "高于",
+    alert_below: "低于",
+    alert_condition: |above, threshold, hold| {
+        let side = if above { "高于" } else { "低于" };
+        match hold {
+            Some(hold) => format!("{side} {threshold} · 持续 {hold}"),
+            None => format!("{side} {threshold}"),
+        }
+    },
+    alert_hold_none: "立即",
+    alert_add_title: "添加告警规则",
+    alert_edit_title: "编辑告警规则",
+    alert_device: "设备",
+    alert_metric: "指标",
+    alert_when: "条件",
+    alert_threshold: "阈值",
+    alert_hold: "持续时间",
+    alert_enabled: "启用此规则",
+    alert_pick_device: "选择设备",
+    alert_device_missing: "设备暂未连接",
+    alert_missing: "请选择设备与指标",
+    alert_bad_threshold: "阈值应为数字",
+    alert_save: "保存",
+    alert_edit: "编辑",
+    alert_remove: "删除",
+    alert_title: |device, metric, above| {
+        format!("{device} {metric}{}", if above { "过高" } else { "过低" })
+    },
+    alert_body: |value, threshold, above, hold| {
+        let side = if above { "高于" } else { "低于" };
+        match hold {
+            Some(hold) => format!("当前 {value}，{side}阈值 {threshold}，已持续 {hold}"),
+            None => format!("当前 {value}，{side}阈值 {threshold}"),
+        }
+    },
+    alert_note: "规则读取各采集源的最新有效读数：读数越过阈值并保持设定的持续时间后推送 Windows 通知，回到另一侧并保持同样时间后恢复正常；同一规则两次通知至少间隔 1 分钟。窗口收进托盘或吸附为迷你状态栏时同样推送，点击通知可打开主窗口。",
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -310,6 +390,32 @@ fn detail(key: &str) -> Option<&'static str> {
         "architecture" => "架构",
         "default_route" => "默认路由",
         "device" => "设备",
+        "process_id" => "进程 ID",
+        "present_api" => "呈现接口",
+        _ => return None,
+    })
+}
+
+fn metric(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "usage" => "使用率",
+        "iowait" => "I/O 等待",
+        "used" => "已用",
+        "available" => "可用",
+        "swap_usage" => "交换空间使用率",
+        "memory_usage" => "显存使用率",
+        "memory_used" => "显存已用",
+        "read" => "读取速率",
+        "write" => "写入速率",
+        "receive" => "接收速率",
+        "send" => "发送速率",
+        "load1" => "1 分钟平均负载",
+        "load5" => "5 分钟平均负载",
+        "load15" => "15 分钟平均负载",
+        "processes" => "进程数",
+        "fps" => "帧率",
+        "frame_time" => "平均帧时间",
+        "frame_time_max" => "最长帧时间",
         _ => return None,
     })
 }
@@ -360,6 +466,10 @@ fn reason(reason: &Reason) -> String {
         Reason::KeyPassphrase => "私钥已加密，口令缺失或不正确".into(),
         Reason::NoAgent => "没有运行中的 SSH 代理，或代理中没有密钥".into(),
         Reason::NotLinux => "主机没有提供 POSIX shell 或 Linux 的 /proc".into(),
+        Reason::TracingDenied => "读取事件跟踪需要管理员权限或 Performance Log Users 组".into(),
+        Reason::NoFrames => "前台应用没有通过 Direct3D 呈现新画面".into(),
+        Reason::NotificationsOff => "系统设置中已关闭本程序的通知".into(),
+        Reason::Declined => "操作已取消".into(),
     }
 }
 
@@ -386,6 +496,13 @@ fn notice(notice: &Notice) -> String {
         Notice::SecretUnsaved(reason) => format!("无法保存密码：{}", self::reason(reason)),
         Notice::AutostartUnchanged(reason) => {
             format!("无法更改开机自动启动：{}", self::reason(reason))
+        }
+        Notice::InvalidAlertRule => "告警规则无效".into(),
+        Notice::NotificationFailed(reason) => {
+            format!("无法推送通知：{}", self::reason(reason))
+        }
+        Notice::ElevationFailed(reason) => {
+            format!("无法以管理员身份重新启动：{}", self::reason(reason))
         }
     }
 }

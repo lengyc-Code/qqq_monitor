@@ -6,8 +6,9 @@ mod en;
 mod ja;
 mod zh;
 
+use crate::components::{alert_device_name, format_value, span};
 use qqq_domain::{Priority, Reason};
-use qqq_engine::{Language, Notice, SaveStatus};
+use qqq_engine::{AlertCondition, AlertEvent, Language, Notice, SaveStatus};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Navigation label, heading and subtitle of a page.
@@ -28,10 +29,12 @@ pub struct Strings {
     pub cpu_page: PageText,
     pub memory_page: PageText,
     pub gpu_page: PageText,
+    pub frames_page: PageText,
     pub disk_page: PageText,
     pub network_page: PageText,
     pub processes_page: PageText,
     pub remote_page: PageText,
+    pub alerts_page: PageText,
     pub settings_page: PageText,
 
     // Header and status bar.
@@ -43,6 +46,8 @@ pub struct Strings {
     /// Sampling interval and session length, both in seconds.
     pub timing: fn(f64, f64) -> String,
     pub minibar: &'static str,
+    /// Number of firing alert rules.
+    pub alerts_firing: fn(usize) -> String,
     pub dock_top: &'static str,
     pub dock_left: &'static str,
     pub dock_right: &'static str,
@@ -61,6 +66,7 @@ pub struct Strings {
     pub state_offline: &'static str,
     pub state_waiting: &'static str,
     pub seconds_ago: fn(f64) -> String,
+    pub minutes_ago: fn(u64) -> String,
     pub last_valid: &'static str,
     pub now: &'static str,
     pub chart_waiting: &'static str,
@@ -81,6 +87,8 @@ pub struct Strings {
     pub this_pc: &'static str,
     pub physical_disk: &'static str,
     pub graphics_card: &'static str,
+    /// The application in the foreground, whose frames are counted.
+    pub foreground_app: &'static str,
     pub adapter: &'static str,
     pub logical_core: fn(usize) -> String,
     /// Label of a device detail key such as `volume_label`.
@@ -104,6 +112,8 @@ pub struct Strings {
     pub receive: &'static str,
     pub send: &'static str,
     pub logical_cores: &'static str,
+    /// Name of a metric that alert rules can watch, such as `usage`.
+    pub metric: fn(&str) -> Option<&'static str>,
 
     // Mascot.
     pub mint_name: &'static str,
@@ -206,6 +216,8 @@ pub struct Strings {
     pub autostart: &'static str,
     pub autostart_option: &'static str,
     pub autostart_to_tray_option: &'static str,
+    pub frame_monitoring: &'static str,
+    pub frame_monitoring_option: &'static str,
     pub apply_save: &'static str,
     pub runtime_status: &'static str,
     /// Received and dropped sample batches.
@@ -297,6 +309,66 @@ pub struct Strings {
     pub remote_volumes_hint: &'static str,
     pub remote_cores_hint: &'static str,
     pub yes: &'static str,
+
+    // Frames.
+    pub fps: &'static str,
+    pub frame_time: &'static str,
+    pub frame_time_max: &'static str,
+    /// Mean frame time under the frame rate.
+    pub fps_detail: fn(&str) -> String,
+    /// Longest frame time under the mean.
+    pub frame_time_detail: fn(&str) -> String,
+    pub frames_target: &'static str,
+    pub frames_off: &'static str,
+    pub frames_denied: &'static str,
+    pub frames_restart: &'static str,
+    pub frames_waiting: &'static str,
+    pub fps_chart: &'static str,
+    pub frame_time_chart: &'static str,
+    pub frames_note: &'static str,
+
+    // Alerts.
+    pub alert_add: &'static str,
+    pub alert_test: &'static str,
+    pub alert_test_body: &'static str,
+    pub alert_empty: &'static str,
+    pub alert_rules: &'static str,
+    pub alert_recent: &'static str,
+    pub alert_recent_empty: &'static str,
+    pub alert_normal: &'static str,
+    pub alert_no_data: &'static str,
+    pub alert_disabled: &'static str,
+    /// Beyond the threshold, with the time left until the rule fires.
+    pub alert_pending: fn(&str) -> String,
+    /// Firing, for how long.
+    pub alert_firing: fn(&str) -> String,
+    /// Current value of the watched metric.
+    pub alert_now: fn(&str) -> String,
+    pub alert_above: &'static str,
+    pub alert_below: &'static str,
+    /// Condition: above or below, the threshold, and the hold time when there is one.
+    pub alert_condition: fn(bool, &str, Option<&str>) -> String,
+    pub alert_hold_none: &'static str,
+    pub alert_add_title: &'static str,
+    pub alert_edit_title: &'static str,
+    pub alert_device: &'static str,
+    pub alert_metric: &'static str,
+    pub alert_when: &'static str,
+    pub alert_threshold: &'static str,
+    pub alert_hold: &'static str,
+    pub alert_enabled: &'static str,
+    pub alert_pick_device: &'static str,
+    pub alert_device_missing: &'static str,
+    pub alert_missing: &'static str,
+    pub alert_bad_threshold: &'static str,
+    pub alert_save: &'static str,
+    pub alert_edit: &'static str,
+    pub alert_remove: &'static str,
+    /// Notification title: device, metric, and whether it is above the threshold.
+    pub alert_title: fn(&str, &str, bool) -> String,
+    /// Notification text: value, threshold, whether above, and the hold time if any.
+    pub alert_body: fn(&str, &str, bool, Option<&str>) -> String,
+    pub alert_note: &'static str,
 }
 
 /// Index of the active language in [`Language::ALL`].
@@ -350,6 +422,43 @@ pub fn save_status(status: &SaveStatus) -> String {
     (t().save_status)(status)
 }
 
+/// Name of a metric that alert rules can watch, or the metric's own name.
+pub fn metric(name: &str) -> &str {
+    (t().metric)(name).unwrap_or(name)
+}
+
+/// Hold time of an alert rule, or `None` when it fires at once.
+fn hold(secs: u64) -> Option<String> {
+    (secs > 0).then(|| span(secs))
+}
+
+/// Condition of an alert rule in words, with the threshold in the metric's unit.
+pub fn alert_condition(rule: &qqq_engine::AlertRule, unit: qqq_domain::Unit) -> String {
+    (t().alert_condition)(
+        rule.condition == AlertCondition::Above,
+        &format_value(Some(rule.threshold), unit),
+        hold(rule.hold_secs).as_deref(),
+    )
+}
+
+/// Title and text of the notification of a fired alert.
+pub fn alert(event: &AlertEvent) -> (String, String) {
+    let t = t();
+    let above = event.rule.condition == AlertCondition::Above;
+    let title = (t.alert_title)(
+        &alert_device_name(&event.device, event.host.as_deref()),
+        metric(&event.rule.metric),
+        above,
+    );
+    let body = (t.alert_body)(
+        &format_value(Some(event.value), event.unit),
+        &format_value(Some(event.rule.threshold), event.unit),
+        above,
+        hold(event.rule.hold_secs).as_deref(),
+    );
+    (title, body)
+}
+
 /// Value of a device detail with its enumerated tokens phrased, such as `physical` for
 /// `interface_type`.
 pub fn detail_value<'a>(key: &str, value: &'a str) -> &'a str {
@@ -360,6 +469,8 @@ pub fn detail_value<'a>(key: &str, value: &'a str) -> &'a str {
         ("memory_type", "dedicated") => t.dedicated_memory,
         ("memory_type", "shared") => t.shared_memory,
         ("default_route", "yes") => t.yes,
+        ("present_api", "dxgi") => "DXGI",
+        ("present_api", "d3d9") => "Direct3D 9",
         _ => value,
     }
 }
@@ -399,8 +510,19 @@ mod tests {
                 "architecture",
                 "default_route",
                 "device",
+                "process_id",
+                "present_api",
             ] {
                 assert!((strings.detail)(key).is_some(), "{key}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_language_names_alert_metrics() {
+        for strings in [&zh::STRINGS, &en::STRINGS, &ja::STRINGS] {
+            for metric in crate::components::ALERT_METRICS {
+                assert!((strings.metric)(metric).is_some(), "{metric}");
             }
         }
     }

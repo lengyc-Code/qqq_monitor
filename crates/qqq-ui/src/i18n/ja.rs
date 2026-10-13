@@ -28,6 +28,11 @@ pub const STRINGS: Strings = Strings {
         title: "グラフィックス",
         hint: "GPU 使用率、各エンジンの負荷と GPU メモリ",
     },
+    frames_page: PageText {
+        nav: "フレーム",
+        title: "フレームレートとフレームタイム",
+        hint: "ゲーム中の前面アプリの滑らかさを確認",
+    },
     disk_page: PageText {
         nav: "ディスク",
         title: "ディスクとストレージ",
@@ -48,6 +53,11 @@ pub const STRINGS: Strings = Strings {
         title: "リモートホスト",
         hint: "SSH で Linux ホストのシステム情報と主要な指標を監視",
     },
+    alerts_page: PageText {
+        nav: "アラート",
+        title: "監視アラート",
+        hint: "指標がしきい値を超えたら Windows 通知でお知らせ",
+    },
     settings_page: PageText {
         nav: "設定",
         title: "設定",
@@ -61,6 +71,7 @@ pub const STRINGS: Strings = Strings {
     degraded: "一部のデータを取得できません",
     timing: |sampling, session| format!("サンプリング {sampling:.1}s  ·  セッション {session:.0}s"),
     minibar: "ミニバー",
+    alerts_firing: |n| format!("{n} 件のアラートが発生中"),
     dock_top: "画面の上端にドッキング",
     dock_left: "画面の左端にドッキング",
     dock_right: "画面の右端にドッキング",
@@ -77,6 +88,7 @@ pub const STRINGS: Strings = Strings {
     state_offline: "切断",
     state_waiting: "取得中",
     seconds_ago: |v| format!("{v:.0} 秒前"),
+    minutes_ago: |v| format!("{v} 分前"),
     last_valid: "最後の有効データ",
     now: "現在",
     chart_waiting: "有効なサンプルを待っています。データがない区間はグラフが途切れます",
@@ -94,6 +106,7 @@ pub const STRINGS: Strings = Strings {
     this_pc: "この PC",
     physical_disk: "物理ディスク",
     graphics_card: "グラフィックスカード",
+    foreground_app: "前面のアプリ",
     adapter: "アダプター",
     logical_core: |n| format!("論理コア {n}"),
     detail,
@@ -114,6 +127,7 @@ pub const STRINGS: Strings = Strings {
     receive: "受信",
     send: "送信",
     logical_cores: "論理コア",
+    metric,
 
     mint_name: "看板娘 · MINT ちゃん",
     mint_hover: "看板娘の MINT ちゃんは CPU とメモリの負荷で表情が変わります",
@@ -199,6 +213,8 @@ pub const STRINGS: Strings = Strings {
     autostart: "自動起動",
     autostart_option: "Windows へのサインイン時に QQQ Monitor を起動する",
     autostart_to_tray_option: "自動起動時はタスクトレイに格納する",
+    frame_monitoring: "フレーム監視",
+    frame_monitoring_option: "前面のアプリのフレームレートとフレームタイムを計測し、ミニバーにも FPS を表示する",
     apply_save: "適用して保存",
     runtime_status: "動作状況",
     batches: |received, dropped| format!("受信バッチ {received}  ·  破棄バッチ {dropped}"),
@@ -291,6 +307,83 @@ pub const STRINGS: Strings = Strings {
     remote_volumes_hint: "ローカルファイルシステムの容量。使用率は df と同じ基準",
     remote_cores_hint: "各論理コアの現在の負荷",
     yes: "はい",
+
+    fps: "フレームレート",
+    frame_time: "フレームタイム",
+    frame_time_max: "最長フレーム",
+    fps_detail: |mean| format!("平均フレームタイム {mean}"),
+    frame_time_detail: |longest| format!("最長 {longest}"),
+    frames_target: "計測対象",
+    frames_off: "フレーム監視はオフです。オンにすると、前面のアプリが 1 秒間に表示するフレーム数と隣り合うフレームの間隔をバックグラウンドで計測し、ミニバーにも FPS を表示します。",
+    frames_denied: "システムのグラフィックス イベントを読み取るには管理者権限が必要です。管理者として再起動するか、現在のアカウントを Performance Log Users グループに追加して Windows にサインインし直してください。",
+    frames_restart: "管理者として再起動",
+    frames_waiting: "ゲームなどのアプリに切り替えると計測を始めます",
+    fps_chart: "フレームレートの推移",
+    frame_time_chart: "フレームタイムの推移",
+    frames_note: "フレームレートは前面のアプリが 1 秒間に表示したフレーム数、フレームタイムは隣り合う表示の間隔です。Windows の DXGI と Direct3D 9 のイベント トレースから取得し、ゲームのプロセスには介入しません。このアプリに切り替えている間は直前のアプリを計測し続けます。DXGI を経由しない Vulkan や OpenGL のアプリはデータがない場合があります。",
+
+    alert_add: "アラートを追加",
+    alert_test: "テスト通知を送信",
+    alert_test_body: "この通知が届いていれば、アラートは正常に通知されます。",
+    alert_empty: "アラート ルールはまだありません。デバイスと指標を選んでしきい値を設定すると、値がしきい値を超えたときに Windows 通知が届きます。",
+    alert_rules: "アラート ルール",
+    alert_recent: "最近のアラート",
+    alert_recent_empty: "今回の起動ではまだアラートは発生していません",
+    alert_normal: "正常",
+    alert_no_data: "データ待ち",
+    alert_disabled: "無効",
+    alert_pending: |left| format!("しきい値を超えています。{left}後に通知"),
+    alert_firing: |held| format!("アラート発生中 · {held}継続"),
+    alert_now: |value| format!("現在 {value}"),
+    alert_above: "上回る",
+    alert_below: "下回る",
+    alert_condition: |above, threshold, hold| {
+        let side = if above { "上回る" } else { "下回る" };
+        match hold {
+            Some(hold) => format!("{threshold} を{side} · {hold}継続"),
+            None => format!("{threshold} を{side}"),
+        }
+    },
+    alert_hold_none: "即時",
+    alert_add_title: "アラート ルールの追加",
+    alert_edit_title: "アラート ルールの編集",
+    alert_device: "デバイス",
+    alert_metric: "指標",
+    alert_when: "条件",
+    alert_threshold: "しきい値",
+    alert_hold: "継続時間",
+    alert_enabled: "このルールを有効にする",
+    alert_pick_device: "デバイスを選択",
+    alert_device_missing: "未接続",
+    alert_missing: "デバイスと指標を選んでください",
+    alert_bad_threshold: "しきい値には数値を入力してください",
+    alert_save: "保存",
+    alert_edit: "編集",
+    alert_remove: "削除",
+    alert_title: |device, metric, above| {
+        format!(
+            "{device} の{metric}が{}",
+            if above {
+                "高くなっています"
+            } else {
+                "低くなっています"
+            }
+        )
+    },
+    alert_body: |value, threshold, above, hold| {
+        let side = if above {
+            "上回って"
+        } else {
+            "下回って"
+        };
+        match hold {
+            Some(hold) => {
+                format!("現在 {value}。しきい値 {threshold} を {hold}継続して{side}います")
+            }
+            None => format!("現在 {value}。しきい値 {threshold} を{side}います"),
+        }
+    },
+    alert_note: "ルールは各データソースの最新の有効な値を読み取ります。値がしきい値を超えた状態が継続時間だけ続くと Windows 通知を送り、反対側に戻った状態が同じ時間続くと正常に戻ります。同じルールの通知は 1 分に 1 回までです。ウィンドウをトレイに格納したりミニバーにドッキングしたりしていても通知し、通知をクリックするとメイン ウィンドウが開きます。",
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -312,6 +405,32 @@ fn detail(key: &str) -> Option<&'static str> {
         "architecture" => "アーキテクチャ",
         "default_route" => "デフォルトルート",
         "device" => "デバイス",
+        "process_id" => "プロセス ID",
+        "present_api" => "表示 API",
+        _ => return None,
+    })
+}
+
+fn metric(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "usage" => "使用率",
+        "iowait" => "I/O 待ち",
+        "used" => "使用量",
+        "available" => "空き容量",
+        "swap_usage" => "スワップ使用率",
+        "memory_usage" => "GPU メモリ使用率",
+        "memory_used" => "GPU メモリ使用量",
+        "read" => "読み取り速度",
+        "write" => "書き込み速度",
+        "receive" => "受信速度",
+        "send" => "送信速度",
+        "load1" => "1 分間の平均負荷",
+        "load5" => "5 分間の平均負荷",
+        "load15" => "15 分間の平均負荷",
+        "processes" => "プロセス数",
+        "fps" => "フレームレート",
+        "frame_time" => "平均フレームタイム",
+        "frame_time_max" => "最長フレーム",
         _ => return None,
     })
 }
@@ -376,6 +495,13 @@ fn reason(reason: &Reason) -> String {
         }
         Reason::NoAgent => "SSH エージェントが動作していないか、鍵がありません".into(),
         Reason::NotLinux => "ホストに POSIX シェルまたは Linux の /proc がありません".into(),
+        Reason::TracingDenied => {
+            "イベント トレースの読み取りには管理者権限か Performance Log Users グループが必要です"
+                .into()
+        }
+        Reason::NoFrames => "前面のアプリが Direct3D で新しいフレームを表示していません".into(),
+        Reason::NotificationsOff => "システムの設定でこのアプリの通知がオフになっています".into(),
+        Reason::Declined => "操作は取り消されました".into(),
     }
 }
 
@@ -406,6 +532,13 @@ fn notice(notice: &Notice) -> String {
         }
         Notice::AutostartUnchanged(reason) => {
             format!("自動起動を変更できません：{}", self::reason(reason))
+        }
+        Notice::InvalidAlertRule => "アラート ルールが無効です".into(),
+        Notice::NotificationFailed(reason) => {
+            format!("通知を表示できません：{}", self::reason(reason))
+        }
+        Notice::ElevationFailed(reason) => {
+            format!("管理者として再起動できません：{}", self::reason(reason))
         }
     }
 }

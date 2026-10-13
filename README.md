@@ -13,7 +13,7 @@
   <b>English</b> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a>
 </p>
 
-QQQ Monitor is a multi-purpose task manager for Windows, written in Rust. Version 0.2.0 focuses on real-time performance monitoring: it collects CPU, memory, GPU, disk and network data from native Windows APIs, shows history charts and device details in a native GUI, and can dock to a screen edge as an always-on-top mini bar. Docked or minimized, it stays in the notification area. It also lists and manages the processes of Windows and of running WSL distributions, and monitors one or more Linux hosts over SSH. Alerts are planned for a later version.
+QQQ Monitor is a multi-purpose task manager for Windows, written in Rust. Version 0.2.0 focuses on real-time performance monitoring: it collects CPU, memory, GPU, disk and network data from native Windows APIs, shows history charts and device details in a native GUI, and can dock to a screen edge as an always-on-top mini bar. Docked or minimized, it stays in the notification area. It also lists and manages the processes of Windows and of running WSL distributions, monitors one or more Linux hosts over SSH, counts the frame rate and frame time of games and other foreground apps, and sends Windows notifications when a metric crosses its threshold.
 
 ## Main window
 
@@ -31,11 +31,13 @@ Navigation and the mascot sit on the left and the current page on the right. The
 | CPU | Total usage and its history, the busiest core and a heat grid of logical cores; click a core to see its history |
 | Memory | Physical memory usage, used and available capacity, and usage over time |
 | GPU | GPU usage from the busiest engine (matching Task Manager), the load of each engine type (3D, copy, video encode and decode, compute and more), dedicated and shared GPU memory; switch between graphics cards and click an engine to see its history |
+| Frames | The frame monitoring switch; the app being counted (executable, PID and present API), its frame rate, mean and longest frame time, and frame rate and frame time charts |
 | Disk | Physical disk read and write rates with history; label, file system, free and total space of every local volume |
 | Network | Receive and send rates of the selected adapter, a history chart and the traffic of this session |
 | Processes | Processes of Windows and of each running WSL distribution: name, PID, user, CPU, memory, threads, priority and command line; search, sorting by column, ending processes and changing their priority |
 | Remote | Linux hosts over SSH: a device profile (host name, distribution, kernel and architecture, processor, memory and swap, uptime, load average), CPU and memory trends, read and write of a chosen disk, traffic of a chosen adapter, file system capacity and a heat grid of the logical cores |
-| Settings | Language, sampling interval, default history range, animations, edge docking, minimize to tray, autostart and starting hidden in the notification area; runtime status, collector diagnostics, history memory and a manual device refresh |
+| Alerts | The alert rules with device and metric, condition, current value and state; adding, editing, enabling, disabling and removing rules; a test notification; the alerts fired in this session |
+| Settings | Language, sampling interval, default history range, animations, edge docking, minimize to tray, frame monitoring, autostart and starting hidden in the notification area; runtime status, collector diagnostics, history memory and a manual device refresh |
 
 Metric definitions:
 
@@ -63,6 +65,7 @@ Drag the window to the top, left or right screen edge and release it: the window
 </p>
 
 - GPU and GPU memory follow the card selected on the GPU page, which defaults to the card with the most memory.
+- With frame monitoring on, the mini bar adds FPS, the frame rate of the foreground app, which turns orange below 50 and red below 30; the top bar widens to 640 points and the side bar grows to 316 points.
 - Drag the mini bar along its edge or onto another edge. Dropping it away from every edge restores the full window at the drop point; double-clicking the bar or pressing its expand button restores the window's previous position and size.
 - The three buttons in the status bar of the main window dock it to the top, left or right edge directly.
 - Windows snap and maximize gestures keep their system behavior.
@@ -93,6 +96,23 @@ Drag the window to the top, left or right screen edge and release it: the window
 - Rates follow the host's own clock. The adapter of the default route is selected by default; disks are whole physical disks; file systems are the local ones, with usage as `df` reports it.
 - A dropped, refused or timed-out connection reconnects by itself, waiting from 2 up to 60 seconds. A rejected user name, password or key and an untrusted host key wait for you to change the settings or click Reconnect, so repeated failed sign-ins never trip the server's ban rules.
 - Remote history spans 15 minutes like that of this computer and keeps recording on every page; removing a host also removes its data and its saved password.
+
+### Frame monitoring
+
+- Switch on Frame monitoring on the Frames page or the Settings page; it is off by default. The app then counts the frames of the foreground app in the background: the frame rate is the number of frames presented per second, and the frame time is the gap between two presents. The page shows the mean and the longest frame time of each sampling period along with frame rate and frame time charts, and the mini bar shows FPS as well, so it can sit docked at a screen edge while you play.
+- The app being counted is the process of the foreground window. While QQQ Monitor itself is in front, the previous app stays counted, so you can switch over and look at any time. When a process presents on several swap chains, the busiest one counts.
+- The frames come from the Present events of DXGI and Direct3D 9 in Windows event tracing (ETW), the source PresentMon and the Xbox Game Bar read as well; the monitor only reads system events and leaves the game's process alone. Direct3D 9 to 12 apps report frames; Vulkan and OpenGL apps report them when the graphics driver presents through DXGI.
+- Reading event tracing needs administrator rights, or membership in the Performance Log Users group followed by signing in to Windows again. Without them, the Frames page explains this and offers Restart as administrator, which reopens the Frames page with administrator rights once you confirm the system prompt. Switching frame monitoring off stops the event tracing.
+- When the foreground app stops presenting for about 2 seconds, the frame rate reads 0.
+
+### Alerts
+
+- On the Alerts page, Add alert asks for a device and a metric, a condition (above or below), a threshold and a hold time (at once, 5 s, 10 s, 30 s, 1 min or 5 min). Devices include the processor, physical memory, graphics cards, the foreground app, physical disks, local volumes, network adapters and the devices of remote hosts; metrics include usage, available and used capacity, GPU memory, read, write, receive and send rates, frame rate and frame time, and the I/O wait, swap usage, load averages and process count of remote hosts. The threshold is in the metric's unit: percent, GiB, MiB/s, FPS or milliseconds.
+- Once a reading stays past its threshold for the hold time, a Windows notification arrives with the device and metric as its title and the current value and threshold as its text; once the reading stays back on the other side for the same time, the rule is normal again. A rule notifies at most once a minute. Rules use live, valid readings only: a stale, failed or offline reading starts the hold time over.
+- The engine judges alerts in the background, so notifications also arrive while the window sits in the tray or docks as the mini bar; clicking one opens the main window. While rules fire, the status bar shows how many, and clicking that opens the Alerts page.
+- The rule list shows the current value and state of each rule (normal, the countdown past the threshold, firing and for how long, waiting for data, off); the checkbox switches a rule on or off, and Edit and Remove change or delete it. Recent alerts lists the alerts fired in this session, and Send test notification checks the Windows notification settings.
+- Windows shows notification banners for desktop apps with a Start menu shortcut, so opening the Alerts page or sending a notification creates or updates a QQQ Monitor shortcut to this executable in the current user's Start menu. Notifications of each app can be managed under Notifications in Windows Settings.
+- Rules identify devices across restarts: network adapters by interface GUID, graphics cards by PCI IDs, volumes by volume GUID and remote devices with their host ID.
 
 ### MINT, the mascot
 
@@ -131,13 +151,14 @@ Pages, cards, charts, status and error messages, device names and details, MINT'
 
 ### Configuration
 
-The Settings page applies changes with Apply & save: the sampling interval (0.5, 1 or 2 seconds), the default history range, animations, edge docking and minimize to tray take effect at once, and a background thread writes them to a TOML file. The language takes effect and is saved as soon as you click it. Autostart takes effect as soon as you tick or clear it: the program adds itself, started with `--autostart`, to the current user's Windows startup programs or removes itself from them, and the Startup apps page of Task Manager lists the entry as well; the checkbox shows the actual state of that entry, including when it is disabled in Task Manager. The option beneath it, Start hidden in the notification area, is on by default; it takes effect and is saved as soon as you click it, and can be changed while autostart is on. The adapter selection, window position and size, docked edge and mini bar position are saved on close. Remote hosts are saved as soon as you add, edit or remove one or trust its host key; passwords and passphrases are kept in Windows Credential Manager, not in the configuration file.
+The Settings page applies changes with Apply & save: the sampling interval (0.5, 1 or 2 seconds), the default history range, animations, edge docking and minimize to tray take effect at once, and a background thread writes them to a TOML file. The language takes effect and is saved as soon as you click it. Autostart takes effect as soon as you tick or clear it: the program adds itself, started with `--autostart`, to the current user's Windows startup programs or removes itself from them, and the Startup apps page of Task Manager lists the entry as well; the checkbox shows the actual state of that entry, including when it is disabled in Task Manager. The option beneath it, Start hidden in the notification area, is on by default; it takes effect and is saved as soon as you click it, and can be changed while autostart is on. The adapter selection, window position and size, docked edge and mini bar position are saved on close. Remote hosts are saved as soon as you add, edit or remove one or trust its host key; passwords and passphrases are kept in Windows Credential Manager, not in the configuration file. Frame monitoring takes effect and is saved as soon as you click it, and alert rules are saved as soon as you add, edit, switch or remove one.
 
 | File | Location |
 | --- | --- |
 | Configuration | `%APPDATA%\qqq_monitor\config\config.toml` |
 | Remote host passwords | Windows Credential Manager, generic credentials `qqq_monitor/ssh/<host ID>` |
 | Logs | `%LOCALAPPDATA%\qqq_monitor\data\logs`, rotated daily, 7 files kept |
+| Notification shortcut | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\QQQ Monitor.lnk` |
 
 ## Getting started
 
@@ -153,7 +174,7 @@ The Settings page applies changes with Apply & save: the sampling interval (0.5,
 cargo run --release
 ```
 
-The executable is `target\release\qqq_monitor.exe` and runs as is. A standard user account collects every metric.
+The executable is `target\release\qqq_monitor.exe` and runs as is. Frame monitoring needs administrator rights or membership in the Performance Log Users group; a standard user account collects every other metric.
 
 ### Command-line options
 
@@ -161,7 +182,7 @@ The executable is `target\release\qqq_monitor.exe` and runs as is. A standard us
 | --- | --- |
 | `--smoke-test` | Runs for about 8 seconds, checks that CPU, memory, physical disk I/O, network, volume capacity and the Windows process list all have valid readings, and prints every metric including the GPU and the process count of each running WSL distribution; exits with code 0 when every check passes |
 | `--capture PATH` | Starts the real GUI, saves the window as a PNG after about 8 seconds and exits, leaving the user configuration as it is; the parent folder of `PATH` must exist |
-| `--page PAGE` | Page for `--capture`: `overview`, `cpu`, `memory`, `gpu`, `disk`, `network`, `processes`, `remote`, `settings` |
+| `--page PAGE` | Opens a page, and with `--capture` picks the page to capture: `overview`, `cpu`, `memory`, `gpu`, `frames`, `disk`, `network`, `processes`, `remote`, `alerts`, `settings` |
 | `--dock EDGE` | Starts as the mini bar: `top`, `left`, `right`; with `--capture` it captures the mini bar |
 | `--lang LANG` | Starts in an interface language, like choosing it on the Settings page: `zh-CN`, `en`, `ja`; with `--capture` it captures pages in that language |
 | `--autostart` | The argument of the autostart entry; with Start hidden in the notification area on, only the icon appears |
@@ -194,11 +215,11 @@ flowchart TD
 | --- | --- |
 | `src/` | Logging setup, wiring, system language detection, the DX12 window and window icon, the command-line smoke test and capture, orderly shutdown |
 | `build.rs`, `assets/` | Multi-size application icon and resource script, embedded into the EXE at build time |
-| `crates/qqq-domain/` | Devices, metrics, units, reading states and unavailability reasons, process instances and actions, remote host endpoints and sessions, plus the `Collector`, `CollectorFactory`, `ProcessPlatform`, `RemotePlatform` and `SecretStore` interfaces |
-| `crates/qqq-platform-windows/` | CPU and memory through sysinfo; network through IP Helper; disk I/O, GPU engines and GPU memory through PDH; graphics cards through DXGI; local volume capacity; monitor work areas and mouse state; the user's display languages; window icons from the EXE resources; the notification-area icon, its menu and the taskbar button; Windows processes listed in one system call, ended and reprioritized; processes of running WSL distributions read and handled through `wsl.exe`; remote host passwords and passphrases in Windows Credential Manager; autostart through the current user's `Run` registry key. Native calls live in `native.rs`, `tray.rs`, `process.rs`, `secret.rs` and `autostart.rs`, with RAII handle management |
-| `crates/qqq-engine/` | Sampling schedule, counter deltas and warm-up, bounded history and display projection, on-demand process polling with process CPU usage, process actions on their own thread, a connection thread with a reconnect policy for each remote host, immutable views, configuration (including the interface language and remote hosts) with background saving, and language-neutral command and configuration notices |
+| `crates/qqq-domain/` | Devices (including the frames of the foreground app), metrics, units (including frames per second and milliseconds), reading states and unavailability reasons, process instances and actions, remote host endpoints and sessions, plus the `Collector`, `CollectorFactory`, `ProcessPlatform`, `RemotePlatform` and `SecretStore` interfaces |
+| `crates/qqq-platform-windows/` | CPU and memory through sysinfo; network through IP Helper; disk I/O, GPU engines and GPU memory through PDH; graphics cards through DXGI; local volume capacity; monitor work areas and mouse state; the user's display languages; window icons from the EXE resources; the notification-area icon, its menu and the taskbar button; Windows processes listed in one system call, ended and reprioritized; processes of running WSL distributions read and handled through `wsl.exe`; remote host passwords and passphrases in Windows Credential Manager; autostart through the current user's `Run` registry key; the frame rate and frame time of the foreground app from the DXGI and Direct3D 9 Present events of ETW; Windows notifications under an application identity registered with a Start menu shortcut; restarting with administrator rights. Native calls live in `native.rs`, `tray.rs`, `process.rs`, `secret.rs`, `autostart.rs`, `frames.rs` and `notify.rs`, with RAII handle management |
+| `crates/qqq-engine/` | Sampling schedule, counter deltas and warm-up, bounded history and display projection, on-demand process polling with process CPU usage, process actions on their own thread, a connection thread with a reconnect policy for each remote host, frame collection switched by the configuration, alert rule evaluation with notifications on their own thread, immutable views, configuration (including the interface language, remote hosts, frame monitoring and alert rules) with background saving, and language-neutral command and configuration notices |
 | `crates/qqq-remote/` | SSH client (russh): sign-in with a password, a private key or the SSH agent, host key checks against the trusted key or `known_hosts`, a POSIX shell on the host that reads `/proc` and `df`, rates by the host's clock, and the hosts of `~/.ssh/config` for importing |
-| `crates/qqq-ui/` | Nine pages including process management and remote hosts, edge docking and the mini bar, the tray presence, charts and shared components, the theme, pixel drawing (bitmap font, icons, sprites), the mascot (pixel sprites generated from illustrations at build time), interface text in three languages and the embedded CJK font |
+| `crates/qqq-ui/` | Eleven pages including frames, process management, remote hosts and alerts, edge docking and the mini bar, the tray presence, charts and shared components, the theme, pixel drawing (bitmap font, icons, sprites), the mascot (pixel sprites generated from illustrations at build time), interface text in three languages and the embedded CJK font |
 
 ### Data flow
 
@@ -209,6 +230,7 @@ flowchart LR
     DISK[Disk I/O] --> CH
     GPU[GPU and GPU memory] --> CH
     VOL[Volume capacity] --> CH
+    FRM[Frames] --> CH
     CH --> ENGINE[Engine<br>validation and deltas]
     ENGINE --> HISTORY[Bounded history<br>and display projection]
     HISTORY --> SLOT[Latest Arc view slot]
@@ -217,17 +239,19 @@ flowchart LR
     CMD --> ENGINE
 ```
 
-- **Collector threads**: every collector creates, uses and releases its resources on its own thread and runs at the sampling interval or a fixed period (30 seconds for volume capacity). A failing collector is recreated with a backoff of 1 to 30 seconds while the others keep working.
+- **Collector threads**: every collector creates, uses and releases its resources on its own thread and runs at the sampling interval or a fixed period (30 seconds for volume capacity). A failing collector is recreated with a backoff of 1 to 30 seconds while the others keep working. The frame collector runs only while frame monitoring is on; switching it off stops the event tracing and takes the foreground app offline.
 - **Backpressure**: every collector buffers at most 8 batches; when the buffer is full, the current batch is dropped and the history records a gap. At most 32 commands are in flight.
 - **Non-blocking rendering**: the engine builds views outside the lock, swaps a single `Arc` slot and requests a repaint; every frame, the GUI takes the latest view without blocking and submits history queries as needed.
 - **Remote hosts**: each host has a thread with its own SSH connection and single-threaded tokio runtime; its readings carry the device prefix `ssh:<host ID>/` and pass through the same checks, history and projection as those of this computer.
-- **Safety boundary**: the domain, engine, GUI, remote collection and launcher forbid `unsafe`; Windows FFI lives in `native.rs`, `tray.rs`, `process.rs`, `secret.rs` and `autostart.rs` of the platform crate.
+- **Alerts**: before publishing each view, the engine checks the latest readings against the rules and hands fired alerts to a notification thread; the launcher phrases them in the current interface language and the platform crate shows them.
+- **Safety boundary**: the domain, engine, GUI, remote collection and launcher forbid `unsafe`; Windows FFI lives in `native.rs`, `tray.rs`, `process.rs`, `secret.rs`, `autostart.rs`, `frames.rs` and `notify.rs` of the platform crate.
 
 ### Extending
 
 - **New metric**: implement `CollectorFactory` in the platform crate and register it in `collectors()`; the engine runs it through the common pipeline, and pages read it by `MetricKey`.
 - **New page**: add a page file and a `Page` route under `crates/qqq-ui/src/pages/`, combine the existing components and declare the metrics the page queries.
 - **New language**: add the language and its BCP 47 tag to `Language`, then add its text table under `crates/qqq-ui/src/i18n/`; every language fills every entry of `Strings`, so a missing translation fails to compile.
+- **New alert metric**: add the metric name and its unit to `ALERT_METRICS` and `alert_unit` in `crates/qqq-ui/src/components.rs`, and its name to `metric` in the text table of every language.
 
 The [architecture document](docs/ARCHITECTURE.md) covers the interface contracts, threading model, history budget and fault isolation in full.
 
@@ -240,7 +264,7 @@ cargo test --workspace --release
 cargo run --release -- --smoke-test
 ```
 
-With a WSL distribution running, `cargo test -p qqq-platform-windows -- --ignored` starts and ends a test process inside it to check ending and reprioritizing WSL processes.
+With a WSL distribution running, `cargo test -p qqq-platform-windows -- --ignored` starts and ends a test process inside it to check ending and reprioritizing WSL processes; the same command shows a test notification to check that it reaches the notification center. Run as administrator, `cargo test -p qqq-platform-windows frames` starts a real event tracing session and reads the frames once.
 
 Two examples of `qqq-remote` let you try remote monitoring on this computer: `wsl_sshd` is a development SSH server that listens on 127.0.0.1 and runs every command of a client in a WSL distribution, and `probe` connects to a host the way the monitor does and prints three rounds of readings. Create a host key with `ssh-keygen -t ed25519 -f "$env:TEMP\qqq-host"` (empty passphrase), then run:
 
@@ -251,7 +275,7 @@ cargo run -p qqq-remote --example probe -- 127.0.0.1 test --port 2222 --password
 
 While the server runs, the Remote page can add host `127.0.0.1` with port `2222` and password `test` as well.
 
-The automated tests cover rate calculation, warm-up and failure recovery, staleness, the history budget and projection gaps, slow collector isolation, the command limit, configuration saving and corruption protection, GPU counter parsing, docking edge detection and mini bar placement, process CPU usage and instance matching, process polling and action results, Windows process enumeration and per-instance actions, WSL process output parsing, remote host connection states and the reconnect policy, host key checks, parsing of Linux `/proc` and `df` output with rates by the host's clock, `~/.ssh/config` import, Windows Credential Manager access, system language matching, the text table of every language and the width of MINT's lines. Runtime tests drive the complete engine with controllable fake collectors.
+The automated tests cover rate calculation, warm-up and failure recovery, staleness, the history budget and projection gaps, slow collector isolation, the command limit, configuration saving and corruption protection, GPU counter parsing, docking edge detection and mini bar placement, process CPU usage and instance matching, process polling and action results, Windows process enumeration and per-instance actions, WSL process output parsing, remote host connection states and the reconnect policy, host key checks, parsing of Linux `/proc` and `df` output with rates by the host's clock, `~/.ssh/config` import, Windows Credential Manager access, the hold time, recovery and notification interval of alert rules, the runtime flow of the frame monitoring switch and alert notifications, frame counting (the foreground app, swap chain choice, pauses), per-entry recovery of alert rules, escaping of notification text, system language matching, the text table and alert metric names of every language and the width of MINT's lines. Runtime tests drive the complete engine with controllable fake collectors.
 
 ## Releasing
 

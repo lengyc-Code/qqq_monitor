@@ -28,6 +28,11 @@ pub const STRINGS: Strings = Strings {
         title: "Graphics Card",
         hint: "Utilization, engine load and GPU memory",
     },
+    frames_page: PageText {
+        nav: "Frames",
+        title: "Frame Rate & Frame Time",
+        hint: "How smoothly the foreground app runs while you play",
+    },
     disk_page: PageText {
         nav: "Disk",
         title: "Disks & Storage",
@@ -48,6 +53,11 @@ pub const STRINGS: Strings = Strings {
         title: "Remote Hosts",
         hint: "System information and key metrics of Linux hosts over SSH",
     },
+    alerts_page: PageText {
+        nav: "Alerts",
+        title: "Alerts",
+        hint: "Windows notifications when a metric crosses its threshold",
+    },
     settings_page: PageText {
         nav: "Settings",
         title: "Settings",
@@ -61,6 +71,13 @@ pub const STRINGS: Strings = Strings {
     degraded: "Some sources unavailable",
     timing: |sampling, session| format!("Sampling {sampling:.1}s  ·  Session {session:.0}s"),
     minibar: "Mini bar",
+    alerts_firing: |n| {
+        if n == 1 {
+            "1 alert firing".into()
+        } else {
+            format!("{n} alerts firing")
+        }
+    },
     dock_top: "Dock to the top edge",
     dock_left: "Dock to the left edge",
     dock_right: "Dock to the right edge",
@@ -80,6 +97,7 @@ pub const STRINGS: Strings = Strings {
     state_offline: "Disconnected",
     state_waiting: "Collecting",
     seconds_ago: |v| format!("{v:.0} s ago"),
+    minutes_ago: |v| format!("{v} min ago"),
     last_valid: "last valid data",
     now: "now",
     chart_waiting: "Waiting for valid samples; the curve leaves gaps where data is missing",
@@ -97,6 +115,7 @@ pub const STRINGS: Strings = Strings {
     this_pc: "This PC",
     physical_disk: "Physical disk",
     graphics_card: "Graphics card",
+    foreground_app: "Foreground app",
     adapter: "Adapter",
     logical_core: |n| format!("Logical core {n}"),
     detail,
@@ -117,6 +136,7 @@ pub const STRINGS: Strings = Strings {
     receive: "Receive",
     send: "Send",
     logical_cores: "Logical cores",
+    metric,
 
     mint_name: "Mascot · MINT",
     mint_hover: "MINT changes her expression with CPU and memory load",
@@ -202,6 +222,8 @@ pub const STRINGS: Strings = Strings {
     autostart: "Autostart",
     autostart_option: "Start QQQ Monitor when you sign in to Windows",
     autostart_to_tray_option: "Start hidden in the notification area",
+    frame_monitoring: "Frame monitoring",
+    frame_monitoring_option: "Count the frame rate and frame time of the foreground app and show FPS on the mini bar",
     apply_save: "Apply & save",
     runtime_status: "Status",
     batches: |received, dropped| format!("Batches received {received}  ·  dropped {dropped}"),
@@ -301,6 +323,73 @@ pub const STRINGS: Strings = Strings {
     remote_volumes_hint: "Capacity of local file systems; usage matches df",
     remote_cores_hint: "Current load of each logical core",
     yes: "Yes",
+
+    fps: "Frame rate",
+    frame_time: "Frame time",
+    frame_time_max: "Longest frame",
+    fps_detail: |mean| format!("Mean frame time {mean}"),
+    frame_time_detail: |longest| format!("Longest {longest}"),
+    frames_target: "Counting",
+    frames_off: "Frame monitoring is off. Switch it on to count, in the background, the frames the foreground app presents per second and the time between two of them; the mini bar then shows FPS as well.",
+    frames_denied: "Reading the system's graphics events needs administrator rights. Restart as administrator, or add your account to the Performance Log Users group and sign in to Windows again.",
+    frames_restart: "Restart as administrator",
+    frames_waiting: "Switch to a game or another app to start counting its frames",
+    fps_chart: "Frame rate",
+    frame_time_chart: "Frame time",
+    frames_note: "The frame rate is the number of frames the foreground app presents per second, and the frame time is the gap between two presents. Both come from the Windows event tracing of DXGI and Direct3D 9, without touching the game's process. While this app is in front, the previous app stays counted; Vulkan and OpenGL apps that do not present through DXGI may show no data.",
+
+    alert_add: "Add alert",
+    alert_test: "Send test notification",
+    alert_test_body: "If you can read this, alerts reach you.",
+    alert_empty: "No alert rules yet. Pick a device and a metric and set a threshold, and a Windows notification arrives whenever the reading crosses it.",
+    alert_rules: "Alert rules",
+    alert_recent: "Recent alerts",
+    alert_recent_empty: "No alert has fired in this session",
+    alert_normal: "Normal",
+    alert_no_data: "Waiting for data",
+    alert_disabled: "Off",
+    alert_pending: |left| format!("Past the threshold, alerting in {left}"),
+    alert_firing: |held| format!("Firing for {held}"),
+    alert_now: |value| format!("Now {value}"),
+    alert_above: "Above",
+    alert_below: "Below",
+    alert_condition: |above, threshold, hold| {
+        let side = if above { "Above" } else { "Below" };
+        match hold {
+            Some(hold) => format!("{side} {threshold} for {hold}"),
+            None => format!("{side} {threshold}"),
+        }
+    },
+    alert_hold_none: "At once",
+    alert_add_title: "Add alert rule",
+    alert_edit_title: "Edit alert rule",
+    alert_device: "Device",
+    alert_metric: "Metric",
+    alert_when: "When",
+    alert_threshold: "Threshold",
+    alert_hold: "Hold for",
+    alert_enabled: "Enable this rule",
+    alert_pick_device: "Choose a device",
+    alert_device_missing: "not connected",
+    alert_missing: "Choose a device and a metric",
+    alert_bad_threshold: "The threshold must be a number",
+    alert_save: "Save",
+    alert_edit: "Edit",
+    alert_remove: "Remove",
+    alert_title: |device, metric, above| {
+        format!(
+            "{device}: {metric} too {}",
+            if above { "high" } else { "low" }
+        )
+    },
+    alert_body: |value, threshold, above, hold| {
+        let side = if above { "above" } else { "below" };
+        match hold {
+            Some(hold) => format!("Now {value}, {side} the {threshold} threshold for {hold}"),
+            None => format!("Now {value}, {side} the {threshold} threshold"),
+        }
+    },
+    alert_note: "Rules read the latest valid reading of each source. Once a reading stays past its threshold for the hold time, a Windows notification arrives; once it stays back on the other side for the same time, the rule is normal again. A rule notifies at most once a minute. Notifications also arrive while the window sits in the tray or docks as the mini bar, and clicking one opens the main window.",
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -322,6 +411,32 @@ fn detail(key: &str) -> Option<&'static str> {
         "architecture" => "Architecture",
         "default_route" => "Default route",
         "device" => "Device",
+        "process_id" => "Process ID",
+        "present_api" => "Present API",
+        _ => return None,
+    })
+}
+
+fn metric(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "usage" => "Usage",
+        "iowait" => "I/O wait",
+        "used" => "Used",
+        "available" => "Available",
+        "swap_usage" => "Swap usage",
+        "memory_usage" => "GPU memory usage",
+        "memory_used" => "GPU memory used",
+        "read" => "Read rate",
+        "write" => "Write rate",
+        "receive" => "Receive rate",
+        "send" => "Send rate",
+        "load1" => "1-minute load",
+        "load5" => "5-minute load",
+        "load15" => "15-minute load",
+        "processes" => "Processes",
+        "fps" => "Frame rate",
+        "frame_time" => "Mean frame time",
+        "frame_time_max" => "Longest frame",
         _ => return None,
     })
 }
@@ -376,6 +491,15 @@ fn reason(reason: &Reason) -> String {
         }
         Reason::NoAgent => "no SSH agent is running, or it holds no keys".into(),
         Reason::NotLinux => "the host offers no POSIX shell or Linux /proc".into(),
+        Reason::TracingDenied => {
+            "reading event tracing needs administrator rights or the Performance Log Users group"
+                .into()
+        }
+        Reason::NoFrames => "the foreground app presents no new Direct3D frames".into(),
+        Reason::NotificationsOff => {
+            "notifications of this app are off in the system settings".into()
+        }
+        Reason::Declined => "the request was declined".into(),
     }
 }
 
@@ -409,6 +533,19 @@ fn notice(notice: &Notice) -> String {
         }
         Notice::AutostartUnchanged(reason) => {
             format!("Autostart could not be changed: {}", self::reason(reason))
+        }
+        Notice::InvalidAlertRule => "Invalid alert rule".into(),
+        Notice::NotificationFailed(reason) => {
+            format!(
+                "The notification could not be shown: {}",
+                self::reason(reason)
+            )
+        }
+        Notice::ElevationFailed(reason) => {
+            format!(
+                "Could not restart as administrator: {}",
+                self::reason(reason)
+            )
         }
     }
 }

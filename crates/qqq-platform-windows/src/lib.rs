@@ -1,10 +1,12 @@
 mod autostart;
 mod cpu_memory;
 mod disk_io;
+mod frames;
 mod gpu;
 mod inventory;
 mod native;
 mod network;
+mod notify;
 mod process;
 mod secret;
 mod tray;
@@ -16,12 +18,16 @@ use std::{sync::Arc, time::Duration};
 /// Whether the executable starts at sign-in, switching that on or off, and the argument the
 /// executable receives when started that way.
 pub use autostart::{ARGUMENT as AUTOSTART_ARGUMENT, enabled as autostart, set as set_autostart};
+/// Starting this executable again with administrator rights.
+pub use native::restart_elevated;
 /// Window icons from the icon resource embedded in the executable.
 pub use native::set_window_icon;
 /// The user's display languages, most preferred first.
 pub use native::ui_languages;
 /// Screen geometry and pointer state for docking the window, in physical pixels.
 pub use native::{covers_point, monitor_at, mouse_button_held};
+/// Toast notifications with the application's name and icon.
+pub use notify::{notify, prepare as prepare_notifications};
 /// Notification-area icon and taskbar button of the application window.
 pub use tray::{
     attach as attach_tray, cloak as cloak_window, hide as hide_tray, opened as tray_opened,
@@ -79,6 +85,18 @@ pub fn collectors() -> Vec<Arc<dyn CollectorFactory>> {
             constructor: || Ok(Box::new(inventory::Inventory)),
         }),
     ]
+}
+
+/// Frames of the application in the foreground, from the system's event tracing. Tracing
+/// needs administrator rights or membership in the Performance Log Users group.
+pub fn frames() -> Arc<dyn CollectorFactory> {
+    Arc::new(BuiltinFactory {
+        descriptor: CollectorDescriptor {
+            id: "frames",
+            period: SamplingPeriod::Configured,
+        },
+        constructor: || Ok(Box::new(frames::Frames::new()?)),
+    })
 }
 
 struct Processes;

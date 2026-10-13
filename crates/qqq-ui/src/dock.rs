@@ -19,6 +19,9 @@ pub const MIN_SIZE: Vec2 = vec2(960.0, 640.0);
 pub const TOP_BAR: Vec2 = vec2(520.0, 34.0);
 /// Inner size of the vertical bar on a side edge, in points.
 pub const SIDE_BAR: Vec2 = vec2(52.0, 262.0);
+/// Room the frame rate gauge adds along the bar, in points.
+const FRAMES_TOP: f32 = 120.0;
+const FRAMES_SIDE: f32 = 54.0;
 /// How long the window rests before a move counts as finished, in seconds.
 const SETTLE: f64 = 0.2;
 /// Distance at which the full window reaches an edge; a window flush with it
@@ -27,10 +30,12 @@ const WINDOW_REACH: f32 = 2.0;
 /// Distance within which a dragged bar stays on an edge.
 const BAR_REACH: f32 = 24.0;
 
-pub fn bar_size(edge: DockEdge) -> Vec2 {
+/// Inner size of the bar on `edge`, longer by a gauge while frame monitoring is on.
+pub fn bar_size(edge: DockEdge, frames: bool) -> Vec2 {
+    let extra = if frames { 1.0 } else { 0.0 };
     match edge {
-        DockEdge::Top => TOP_BAR,
-        DockEdge::Left | DockEdge::Right => SIDE_BAR,
+        DockEdge::Top => TOP_BAR + vec2(FRAMES_TOP * extra, 0.0),
+        DockEdge::Left | DockEdge::Right => SIDE_BAR + vec2(0.0, FRAMES_SIDE * extra),
     }
 }
 
@@ -64,6 +69,12 @@ pub struct Desktop {
     pub autostart: fn() -> bool,
     /// Switches starting at sign-in on or off.
     pub set_autostart: fn(bool) -> Result<(), Reason>,
+    /// Shows a system notification with a title and a text.
+    pub notify: fn(&str, &str) -> Result<(), Reason>,
+    /// Gets the system ready to show the application's notifications.
+    pub prepare_notifications: fn(),
+    /// Starts the application again with administrator rights and these arguments.
+    pub restart_elevated: fn(&str) -> Result<(), Reason>,
 }
 
 /// Work area of the monitor around a window, in points, and which of its
@@ -160,6 +171,8 @@ pub struct Dock {
     moved_from: Option<Rect>,
     /// The next rest follows our own geometry commands, not a user move.
     commanded: bool,
+    /// The bar shows the frame rate gauge.
+    frames: bool,
 }
 
 /// Window geometry from the current frame's viewport info.
@@ -199,6 +212,18 @@ impl Dock {
             changed_at: 0.0,
             moved_from: None,
             commanded: false,
+            frames: config.frame_monitoring,
+        }
+    }
+
+    /// Shows or hides the frame rate gauge, resizing a docked bar to fit.
+    pub fn set_frames(&mut self, ctx: &egui::Context, desktop: &Desktop, frames: bool) {
+        if frames == self.frames {
+            return;
+        }
+        self.frames = frames;
+        if let (Some(edge), Some(window)) = (self.edge, window(ctx)) {
+            self.dock(ctx, desktop, edge, window.outer);
         }
     }
 
@@ -337,7 +362,7 @@ impl Dock {
         let Some(screen) = desktop.screen(ctx.pixels_per_point(), around) else {
             return;
         };
-        let size = bar_size(edge);
+        let size = bar_size(edge, self.frames);
         let mut commands = Vec::new();
         if self.edge.is_none() {
             self.normal.maximized = window(ctx).is_some_and(|w| w.maximized);
@@ -390,7 +415,7 @@ pub fn viewport(config: &AppConfig) -> egui::ViewportBuilder {
         ),
         Some(edge) => (
             builder
-                .with_inner_size(bar_size(edge))
+                .with_inner_size(bar_size(edge, config.frame_monitoring))
                 .with_decorations(false)
                 .with_resizable(false)
                 .with_always_on_top(),

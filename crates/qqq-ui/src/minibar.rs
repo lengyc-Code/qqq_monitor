@@ -1,21 +1,56 @@
 //! Compact status bar shown while the window is docked to a screen edge:
-//! CPU, memory, GPU and graphics memory. The top bar shows pixel numbers over
-//! segmented level strips; the narrow side bar shows them as pixel dials.
+//! CPU, memory, GPU and graphics memory, and the frame rate of the foreground
+//! application while frame monitoring is on. The top bar shows pixel numbers
+//! over segmented level strips; the narrow side bar shows them as pixel dials.
 //! Dragging the bar moves the window; double-clicking it or pressing the
 //! expand button restores the full window.
 
 use crate::{i18n, pixel, theme};
-use eframe::egui::{self, FontId, Pos2, Rect, Sense, Shape, Vec2, pos2, vec2};
+use eframe::egui::{self, Color32, FontId, Pos2, Rect, Sense, Shape, Vec2, pos2, vec2};
 use qqq_domain::SampleState;
 use qqq_engine::{DockEdge, MonitorView};
+
+/// Frame rate that lights a whole strip or ring.
+const FULL_FPS: f64 = 120.0;
 
 struct Gauge {
     icon: &'static pixel::Icon,
     label: &'static str,
     tone: theme::Tone,
-    percent: Option<f64>,
+    value: Option<f64>,
+    /// The value is a percentage rather than frames per second.
+    percent: bool,
     /// Current rather than stale or unavailable.
     live: bool,
+}
+
+impl Gauge {
+    /// Lit share of the strip or ring, 0 to 100.
+    fn level(&self) -> Option<f64> {
+        if self.percent {
+            self.value
+        } else {
+            self.value.map(|fps| (fps / FULL_FPS * 100.0).min(100.0))
+        }
+    }
+
+    /// Color of the lit segments: warm for a high load or a low frame rate.
+    fn color(&self) -> Color32 {
+        match self.value {
+            Some(value) if self.live && self.percent => theme::level_color(value, self.tone.main),
+            Some(fps) if self.live => theme::fps_color(fps, self.tone.main),
+            _ => theme::NIGHT_MUTED,
+        }
+    }
+
+    /// The value as the top bar prints it.
+    fn text(&self) -> String {
+        match self.value {
+            Some(value) if self.percent => format!("{value:.0}%"),
+            Some(fps) => format!("{fps:.0}"),
+            None => "—".into(),
+        }
+    }
 }
 
 /// Latest value of a metric and whether it is current; stale values stay visible but dimmed.
@@ -30,16 +65,17 @@ fn reading(view: &MonitorView, device: &str, metric: &str) -> (Option<f64>, bool
     }
 }
 
-fn gauges(view: &MonitorView, gpu: &str) -> [Gauge; 4] {
+fn gauges(view: &MonitorView, gpu: &str, frames: bool) -> Vec<Gauge> {
     let t = i18n::t();
-    let gauge = |icon, label, tone, (percent, live)| Gauge {
+    let gauge = |icon, label, tone, (value, live)| Gauge {
         icon,
         label,
         tone,
-        percent,
+        value,
+        percent: true,
         live,
     };
-    [
+    let mut gauges = vec![
         gauge(
             &pixel::ICON_CPU,
             "CPU",
@@ -64,19 +100,37 @@ fn gauges(view: &MonitorView, gpu: &str) -> [Gauge; 4] {
             theme::VRAM,
             reading(view, gpu, "memory_usage"),
         ),
-    ]
+    ];
+    if frames {
+        gauges.push(Gauge {
+            percent: false,
+            ..gauge(
+                &pixel::ICON_FRAMES,
+                "FPS",
+                theme::CPU,
+                reading(view, "frames", "fps"),
+            )
+        });
+    }
+    gauges
 }
 
-/// Draws the bar into the whole window, with the readings of graphics card `gpu`.
-/// Returns true when the full window should come back.
-pub fn show(ui: &mut egui::Ui, view: &MonitorView, edge: DockEdge, gpu: &str) -> bool {
+/// Draws the bar into the whole window, with the readings of graphics card `gpu` and,
+/// with `frames`, the frame rate. Returns true when the full window should come back.
+pub fn show(
+    ui: &mut egui::Ui,
+    view: &MonitorView,
+    edge: DockEdge,
+    gpu: &str,
+    frames: bool,
+) -> bool {
     let mut restore = false;
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(theme::NIGHT))
         .show(ui, |ui| {
             let ctx = ui.ctx().clone();
             let rect = ui.max_rect();
-            let gauges = gauges(view, gpu);
+            let gauges = gauges(view, gpu, frames);
             let response = ui
                 .interact(rect, ui.id().with("dock-bar"), Sense::click_and_drag())
                 .on_hover_cursor(egui::CursorIcon::Grab);
@@ -86,7 +140,7 @@ pub fn show(ui: &mut egui::Ui, view: &MonitorView, edge: DockEdge, gpu: &str) ->
             restore |= response.double_clicked();
             let summary = gauges
                 .iter()
-                .map(|g| format!("{} {}", g.label, percent(g.percent)))
+                .map(|g| format!("{} {}", g.label, g.text()))
                 .collect::<Vec<_>>()
                 .join(i18n::t().list_separator);
             response
@@ -111,11 +165,7 @@ pub fn show(ui: &mut egui::Ui, view: &MonitorView, edge: DockEdge, gpu: &str) ->
     restore
 }
 
-fn percent(value: Option<f64>) -> String {
-    value.map_or_else(|| "—".into(), |v| format!("{v:.0}%"))
-}
-
-/// One row: grip, four gauges with icon, label, value and level strip, then the
+/// One row: grip, the gauges with icon, label, value and level strip, then the
 /// expand button. Returns the button's rect.
 fn horizontal(ui: &egui::Ui, shapes: &mut Vec<Shape>, inner: Rect, gauges: &[Gauge]) -> Rect {
     let ctx = ui.ctx();
@@ -139,7 +189,7 @@ fn horizontal(ui: &egui::Ui, shapes: &mut Vec<Shape>, inner: Rect, gauges: &[Gau
         }
         let row = cell.top() + 12.0;
         let x = icon_label(ui, shapes, pos2(cell.left() + 8.0, row), gauge);
-        let text = percent(gauge.percent);
+        let text = gauge.text();
         let size = pixel::text_size(&text, value_unit);
         let value = pos2(
             (cell.right() - 8.0 - size.x).max(x + 6.0),
@@ -155,7 +205,7 @@ fn horizontal(ui: &egui::Ui, shapes: &mut Vec<Shape>, inner: Rect, gauges: &[Gau
     button
 }
 
-/// Grip, four dials stacked, then the expand button. Returns the button's rect.
+/// Grip, the dials stacked, then the expand button. Returns the button's rect.
 fn vertical(ui: &egui::Ui, shapes: &mut Vec<Shape>, inner: Rect, gauges: &[Gauge]) -> Rect {
     let ctx = ui.ctx();
     let grip = Rect::from_min_size(inner.min, vec2(inner.width(), 14.0));
@@ -194,12 +244,9 @@ fn dial(ui: &egui::Ui, shapes: &mut Vec<Shape>, center: Pos2, radius: f32, gauge
     let outer = radius / cell;
     let inner = outer - (4.0 / cell).max(3.0);
     let lit = gauge
-        .percent
+        .level()
         .map_or(0.0, |p| (p / 100.0 * SEGMENTS as f64).ceil() as f32);
-    let color = match gauge.percent {
-        Some(p) if gauge.live => theme::level_color(p, gauge.tone.main),
-        _ => theme::NIGHT_MUTED,
-    };
+    let color = gauge.color();
     pixel::sprite(shapes, origin, cell, [cells, cells], |x, y| {
         let (dx, dy) = (x as f32 + 0.5 - middle, y as f32 + 0.5 - middle);
         let distance = dx.hypot(dy);
@@ -223,7 +270,7 @@ fn dial(ui: &egui::Ui, shapes: &mut Vec<Shape>, center: Pos2, radius: f32, gauge
         })
     });
     let text = gauge
-        .percent
+        .value
         .map_or_else(|| "—".into(), |v| format!("{v:.0}"));
     let hole = 2.0 * inner * cell - 6.0;
     let unit = pixel::unit(ctx, pixel::fitting_unit(ctx, &text, hole, &[2.0, 1.5, 1.0]));
@@ -302,14 +349,11 @@ fn level_strip(ctx: &egui::Context, shapes: &mut Vec<Shape>, rect: Rect, gauge: 
     let pitch = unit * 3.0;
     let segments = ((rect.width() + unit) / pitch).floor().max(1.0) as usize;
     let lit = gauge
-        .percent
+        .level()
         .map(|p| (p / 100.0 * segments as f64).ceil() as usize)
         .unwrap_or(0)
         .min(segments);
-    let color = match gauge.percent {
-        Some(p) if gauge.live => theme::level_color(p, gauge.tone.main),
-        _ => theme::NIGHT_MUTED,
-    };
+    let color = gauge.color();
     for index in 0..segments {
         let segment = Rect::from_min_size(
             pos2(rect.left() + index as f32 * pitch, rect.top()),
