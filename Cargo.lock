@@ -3208,14 +3208,14 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "qqq-domain"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "qqq-engine"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "crossbeam-channel",
  "directories",
@@ -3228,7 +3228,7 @@ dependencies = [
 
 [[package]]
 name = "qqq-platform-windows"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "qqq-domain",
  "sysinfo",
@@ -3238,7 +3238,7 @@ dependencies = [
 
 [[package]]
 name = "qqq-remote"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "directories",
  "qqq-domain",
@@ -3249,7 +3249,7 @@ dependencies = [
 
 [[package]]
 name = "qqq-ui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "eframe",
  "egui_plot",
@@ -3260,7 +3260,7 @@ dependencies = [
 
 [[package]]
 name = "qqq_monitor"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "eframe",
  "embed-resource",
