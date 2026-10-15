@@ -3,7 +3,7 @@
 //! `wsl.exe` delays neither the list nor the engine.
 
 use crate::{CommandOutcome, CommandResult, Notice, runtime::Control};
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
+use crossbeam_channel::{Receiver, Sender};
 use qqq_domain::*;
 use std::{
     collections::HashMap,
@@ -128,18 +128,21 @@ pub(crate) fn poll_worker(
     let mut next = Instant::now();
     let mut refresh = control.process_refresh.load(Ordering::Acquire);
     while !control.stop.load(Ordering::Acquire) {
+        let seen = control.changes();
         let watched = control.process_watch.lock().unwrap().clone();
         let Some(host) = watched else {
             source = None;
             hosts_at = None;
-            control.wait(Duration::from_millis(100));
+            control.wait(seen, Duration::MAX);
             continue;
         };
         let now = Instant::now();
         if hosts_at.is_none_or(|at| now >= at + HOSTS_PERIOD) {
             hosts_at = Some(now);
             let hosts = guarded(|| Ok(platform.hosts())).unwrap_or_default();
-            let _ = events.try_send(ProcessEvent::Hosts(hosts));
+            if events.try_send(ProcessEvent::Hosts(hosts)).is_ok() {
+                control.wake_engine();
+            }
         }
         let latest = control.process_refresh.load(Ordering::Acquire);
         if latest != refresh {
@@ -154,7 +157,7 @@ pub(crate) fn poll_worker(
             next = now;
         }
         if now < next {
-            control.wait(next - now);
+            control.wait(seen, next - now);
             continue;
         }
         let (_, poller, tracker) = source
@@ -171,7 +174,7 @@ pub(crate) fn poll_worker(
             .try_send(ProcessEvent::Table(host.clone(), result))
             .is_ok()
         {
-            control.sleep.notify_all();
+            control.wake_engine();
         }
         let shortest = match host {
             ProcessHost::Windows => WINDOWS_PERIOD,
@@ -183,28 +186,22 @@ pub(crate) fn poll_worker(
 }
 
 /// Carries out process actions and answers each with a command result; a finished action
-/// polls the watched host again at once.
+/// polls the watched host again at once. Ends once the engine, which hands out the
+/// actions, has stopped.
 pub(crate) fn action_worker(
     platform: Arc<dyn ProcessPlatform>,
     jobs: Receiver<ActionJob>,
     results: Sender<CommandResult>,
     control: Arc<Control>,
 ) {
-    loop {
-        match jobs.recv_timeout(Duration::from_millis(100)) {
-            Ok(job) => {
-                let result = guarded(|| platform.act(&job.process, job.action))
-                    .map(|()| CommandOutcome::Applied)
-                    .map_err(Notice::Process);
-                let _ = results.try_send(CommandResult { id: job.id, result });
-                control.process_refresh.fetch_add(1, Ordering::Release);
-                control.sleep.notify_all();
-                control.notify_ui();
-            }
-            Err(RecvTimeoutError::Timeout) if control.stop.load(Ordering::Acquire) => return,
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return,
-        }
+    for job in jobs {
+        let result = guarded(|| platform.act(&job.process, job.action))
+            .map(|()| CommandOutcome::Applied)
+            .map_err(Notice::Process);
+        let _ = results.try_send(CommandResult { id: job.id, result });
+        control.process_refresh.fetch_add(1, Ordering::Release);
+        control.changed();
+        control.notify_ui();
     }
 }
 

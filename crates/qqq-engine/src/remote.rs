@@ -142,6 +142,7 @@ impl Remotes {
     /// longer apply, which are removed hosts and hosts that now point to another address.
     pub(crate) fn apply(&mut self, hosts: &[RemoteHost]) -> Vec<String> {
         let mut forget = Vec::new();
+        let mut cancelled = false;
         self.workers.retain(|id, worker| {
             let host = hosts.iter().find(|h| h.id == *id);
             let endpoint = host.map(RemoteHost::endpoint);
@@ -149,6 +150,7 @@ impl Remotes {
                 return true;
             }
             worker.cancel.store(true, Ordering::Release);
+            cancelled = true;
             if endpoint.is_none_or(|e| {
                 (&e.address, e.port) != (&worker.endpoint.address, worker.endpoint.port)
             }) {
@@ -156,6 +158,9 @@ impl Remotes {
             }
             false
         });
+        if cancelled {
+            self.control.changed();
+        }
         if !self.control.stop.load(Ordering::Acquire) {
             for host in hosts {
                 if !self.workers.contains_key(&host.id) {
@@ -203,8 +208,15 @@ impl Remotes {
     pub(crate) fn reconnect(&self, id: &str) {
         if let Some(worker) = self.workers.get(id) {
             worker.reconnect.fetch_add(1, Ordering::Release);
-            self.control.sleep.notify_all();
+            self.control.changed();
         }
+    }
+
+    /// Whether a worker has updates waiting.
+    pub(crate) fn waiting(&self) -> bool {
+        self.workers
+            .values()
+            .any(|worker| !worker.updates.is_empty())
     }
 
     /// Waiting updates, at most a few of each host so that none starves the others.
@@ -227,6 +239,7 @@ impl Remotes {
             worker.cancel.store(true, Ordering::Release);
         }
         self.workers.clear();
+        self.control.changed();
     }
 }
 
@@ -246,7 +259,14 @@ fn worker(
 ) {
     let stopped = || cancel.load(Ordering::Acquire) || control.stop.load(Ordering::Acquire);
     // A full channel only delays the state; the next batch or failure reports it again.
-    let send = |update| !matches!(updates.try_send(update), Err(TrySendError::Disconnected(_)));
+    let send = |update| match updates.try_send(update) {
+        Ok(()) => {
+            control.wake_engine();
+            true
+        }
+        Err(TrySendError::Full(_)) => true,
+        Err(TrySendError::Disconnected(_)) => false,
+    };
     let mut failures = 0;
     let mut dropped = 0_u64;
     while !stopped() {
@@ -259,6 +279,7 @@ fn worker(
             Ok(mut session) => {
                 let mut next = Instant::now();
                 loop {
+                    let seen = control.changes();
                     if stopped() {
                         return;
                     }
@@ -267,7 +288,7 @@ fn worker(
                     }
                     let now = Instant::now();
                     if now < next {
-                        control.wait(next - now);
+                        control.wait(seen, next - now);
                         continue;
                     }
                     let period = Duration::from_millis(control.sampling_ms.load(Ordering::Acquire))
@@ -280,7 +301,7 @@ fn worker(
                                 period,
                                 dropped,
                             }) {
-                                Ok(()) => {}
+                                Ok(()) => control.wake_engine(),
                                 Err(TrySendError::Full(_)) => dropped = dropped.saturating_add(1),
                                 Err(TrySendError::Disconnected(_)) => return,
                             }
@@ -309,11 +330,15 @@ fn worker(
         if !send(RemoteUpdate::Failed(reason)) {
             return;
         }
-        while !stopped()
-            && reconnect.load(Ordering::Acquire) == requested
-            && deadline.is_none_or(|deadline| Instant::now() < deadline)
-        {
-            control.wait(Duration::from_millis(100));
+        loop {
+            let seen = control.changes();
+            let left = deadline.map_or(Duration::MAX, |deadline| {
+                deadline.saturating_duration_since(Instant::now())
+            });
+            if stopped() || reconnect.load(Ordering::Acquire) != requested || left.is_zero() {
+                break;
+            }
+            control.wait(seen, left);
         }
         if reconnect.load(Ordering::Acquire) != requested {
             failures = 0;

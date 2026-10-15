@@ -5,7 +5,7 @@
 //! notification, shown on a thread of its own.
 
 use crate::{MonitorView, Notice, RemoteHost, runtime::Control};
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError};
+use crossbeam_channel::{Receiver, Sender, TrySendError};
 use qqq_domain::*;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -304,15 +304,13 @@ pub(crate) fn notify_worker(
     events: Receiver<AlertEvent>,
     control: Arc<Control>,
 ) {
-    while !control.stop.load(Ordering::Acquire) {
-        match events.recv_timeout(Duration::from_millis(100)) {
-            Ok(event) => {
-                if catch_unwind(AssertUnwindSafe(|| notify(&event))).is_err() {
-                    tracing::error!(rule = event.rule.id, "显示告警通知时发生异常");
-                }
-            }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
+    // The engine holds the sender, so the loop ends once the engine has stopped.
+    for event in events {
+        if control.stop.load(Ordering::Acquire) {
+            break;
+        }
+        if catch_unwind(AssertUnwindSafe(|| notify(&event))).is_err() {
+            tracing::error!(rule = event.rule.id, "显示告警通知时发生异常");
         }
     }
 }

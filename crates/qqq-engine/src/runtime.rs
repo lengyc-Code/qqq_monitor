@@ -23,6 +23,9 @@ type UiWake = Arc<dyn Fn() + Send + Sync>;
 
 /// Prefix of the source of a remote host's readings, followed by the host ID.
 const REMOTE_SOURCE: &str = "ssh:";
+/// Longest time between two views, so that data ages and alert states move on while no
+/// reading arrives.
+const IDLE_PUBLISH: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 pub enum MonitorCommand {
@@ -72,6 +75,12 @@ struct SaveJob {
     config: AppConfig,
     explicit: bool,
 }
+/// Configuration waiting for the writer thread; a newer one replaces it. The writer wakes
+/// for each, and finishes once the engine drops this slot.
+struct PendingSave {
+    job: Arc<Mutex<Option<SaveJob>>>,
+    ready: Sender<()>,
+}
 struct CollectorEvent {
     source: Arc<str>,
     period: Duration,
@@ -81,7 +90,6 @@ struct CollectorEvent {
 
 pub(crate) struct Control {
     pub(crate) stop: AtomicBool,
-    engine_done: AtomicBool,
     pub(crate) sampling_ms: AtomicU64,
     /// The configuration switches frame monitoring on.
     frames: AtomicBool,
@@ -90,8 +98,13 @@ pub(crate) struct Control {
     pub(crate) process_watch: Mutex<Option<ProcessHost>>,
     /// Bumped to poll the watched host at once.
     pub(crate) process_refresh: AtomicU64,
-    sleep_lock: Mutex<()>,
-    pub(crate) sleep: Condvar,
+    /// Number of changes the workers have been told about; waiting workers wake when it
+    /// grows.
+    changes: Mutex<u64>,
+    signal: Condvar,
+    /// Rung when the engine has something to take; holds one ring at most.
+    bell: Sender<()>,
+    rings: Receiver<()>,
     wake: Mutex<Option<UiWake>>,
 }
 impl Control {
@@ -101,18 +114,35 @@ impl Control {
             wake();
         }
     }
-    pub(crate) fn wait(&self, duration: Duration) {
-        let lock = self.sleep_lock.lock().unwrap();
-        if !self.stop.load(Ordering::Acquire) {
-            let _ = self
-                .sleep
-                .wait_timeout(lock, duration.min(Duration::from_millis(100)))
-                .unwrap();
-        }
+    /// Number of changes so far. A worker reads it before the settings it acts on and
+    /// passes it to [`Self::wait`], so that a change in between cuts the wait short.
+    pub(crate) fn changes(&self) -> u64 {
+        *self.changes.lock().unwrap()
+    }
+    /// Tells the waiting workers that something they follow changed, such as the sampling
+    /// interval, the watched processes or a reconnect.
+    pub(crate) fn changed(&self) {
+        *self.changes.lock().unwrap() += 1;
+        self.signal.notify_all();
+    }
+    /// Waits up to `duration`, or until a change after `seen` or the stop.
+    pub(crate) fn wait(&self, seen: u64, duration: Duration) {
+        let changes = self.changes.lock().unwrap();
+        let _ = self
+            .signal
+            .wait_timeout_while(changes, duration, |changes| {
+                *changes == seen && !self.stop.load(Ordering::Acquire)
+            })
+            .unwrap();
+    }
+    /// Wakes the engine thread to take a batch, an update, a command or a save result.
+    pub(crate) fn wake_engine(&self) {
+        let _ = self.bell.try_send(());
     }
     fn stop(&self) {
         self.stop.store(true, Ordering::Release);
-        self.sleep.notify_all();
+        self.changed();
+        self.wake_engine();
     }
 }
 
@@ -149,6 +179,7 @@ impl MonitorClient {
                 TrySendError::Disconnected(_) => Notice::Stopped,
             });
         }
+        self.control.wake_engine();
         Ok(id)
     }
     pub fn take_results(&self) -> Vec<CommandResult> {
@@ -237,16 +268,18 @@ impl MonitorRuntime {
         loaded.config.validate()?;
         let (requests_tx, requests_rx) = bounded(32);
         let (results_tx, results_rx) = bounded(32);
+        let (bell, rings) = bounded(1);
         let control = Arc::new(Control {
             stop: AtomicBool::new(false),
-            engine_done: AtomicBool::new(true),
             sampling_ms: AtomicU64::new(loaded.config.sampling_ms),
             frames: AtomicBool::new(loaded.config.frame_monitoring),
             refresh: AtomicU64::new(0),
             process_watch: Mutex::new(None),
             process_refresh: AtomicU64::new(0),
-            sleep_lock: Mutex::new(()),
-            sleep: Condvar::new(),
+            changes: Mutex::new(0),
+            signal: Condvar::new(),
+            bell,
+            rings,
             wake: Mutex::new(None),
         });
         let latest = Arc::new(Mutex::new(Arc::new(MonitorView::empty(
@@ -289,14 +322,18 @@ impl MonitorRuntime {
                 .spawn(move || alert::notify_worker(notify, alert_rx, notify_control))
                 .map_err(|e| Notice::System(e.to_string()))?,
         );
-        let pending = Arc::new(Mutex::new(None));
+        let job = Arc::new(Mutex::new(None));
+        let (ready_tx, ready_rx) = bounded(1);
+        let pending = PendingSave {
+            job: Arc::clone(&job),
+            ready: ready_tx,
+        };
         let (save_tx, save_rx) = bounded(32);
-        let writer_pending = Arc::clone(&pending);
         let writer_control = Arc::clone(&control);
         runtime.threads.push(
             thread::Builder::new()
                 .name("config-writer".into())
-                .spawn(move || config_worker(loaded.store, writer_pending, save_tx, writer_control))
+                .spawn(move || config_worker(loaded.store, job, ready_rx, save_tx, writer_control))
                 .map_err(|e| Notice::System(e.to_string()))?,
         );
         let (process_tx, process_rx) = bounded(8);
@@ -325,7 +362,6 @@ impl MonitorRuntime {
             Arc::clone(&runtime.remote_threads),
         );
         let engine_client = runtime.client.clone();
-        control.engine_done.store(false, Ordering::Release);
         match thread::Builder::new()
             .name("monitor-engine".into())
             .spawn(move || {
@@ -345,10 +381,7 @@ impl MonitorRuntime {
                 )
             }) {
             Ok(handle) => runtime.threads.push(handle),
-            Err(error) => {
-                control.engine_done.store(true, Ordering::Release);
-                return Err(Notice::System(error.to_string()));
-            }
+            Err(error) => return Err(Notice::System(error.to_string())),
         }
         Ok(runtime)
     }
@@ -402,6 +435,7 @@ fn collector_worker(
     let mut old_period = Duration::ZERO;
     let mut open = !gated;
     while !control.stop.load(Ordering::Acquire) {
+        let seen = control.changes();
         let period = match descriptor.period {
             SamplingPeriod::Configured => {
                 Duration::from_millis(control.sampling_ms.load(Ordering::Acquire))
@@ -431,14 +465,14 @@ fn collector_worker(
                         dropped,
                     };
                     match tx.try_send(event) {
-                        Ok(()) => {}
+                        Ok(()) => control.wake_engine(),
                         Err(TrySendError::Full(_)) => dropped = dropped.saturating_add(1),
                         Err(TrySendError::Disconnected(_)) => return,
                     }
                 }
             }
             if !open {
-                control.wait(Duration::from_secs(1));
+                control.wait(seen, Duration::MAX);
                 continue;
             }
         }
@@ -456,7 +490,7 @@ fn collector_worker(
             }
         }
         if Instant::now() < next {
-            control.wait(next.saturating_duration_since(Instant::now()));
+            control.wait(seen, next.saturating_duration_since(Instant::now()));
             continue;
         }
         let now = Instant::now();
@@ -487,7 +521,7 @@ fn collector_worker(
             result: outcome,
             dropped,
         }) {
-            Ok(()) => {}
+            Ok(()) => control.wake_engine(),
             Err(TrySendError::Full(_)) => dropped = dropped.saturating_add(1),
             Err(TrySendError::Disconnected(_)) => return,
         }
@@ -506,26 +540,27 @@ fn collector_worker(
     }
 }
 
+/// Writes each configuration the engine leaves in `job`. The engine rings `ready` for each
+/// and drops its end on exit, after the last one, which is still written.
 fn config_worker(
     mut store: ConfigStore,
-    pending: Arc<Mutex<Option<SaveJob>>>,
+    job: Arc<Mutex<Option<SaveJob>>>,
+    ready: Receiver<()>,
     tx: Sender<CommandResult>,
     control: Arc<Control>,
 ) {
     loop {
-        let job = pending.lock().unwrap().take();
+        let open = ready.recv().is_ok();
+        let job = job.lock().unwrap().take();
         if let Some(job) = job {
             let result = store
                 .save(&job.config, job.explicit)
                 .map(|()| CommandOutcome::Saved);
             let _ = tx.try_send(CommandResult { id: job.id, result });
-            control.notify_ui();
-        } else if control.stop.load(Ordering::Acquire)
-            && control.engine_done.load(Ordering::Acquire)
-        {
+            control.wake_engine();
+        }
+        if !open {
             break;
-        } else {
-            thread::sleep(Duration::from_millis(20));
         }
     }
 }
@@ -849,7 +884,7 @@ fn engine_worker(
     inputs: Vec<Receiver<CollectorEvent>>,
     requests: Receiver<Request>,
     results: Sender<CommandResult>,
-    pending: Arc<Mutex<Option<SaveJob>>>,
+    pending: PendingSave,
     saves: Receiver<CommandResult>,
     process_events: Receiver<ProcessEvent>,
     actions: Sender<ActionJob>,
@@ -927,7 +962,7 @@ fn engine_worker(
                         .control
                         .process_refresh
                         .fetch_add(1, Ordering::Release);
-                    client.control.sleep.notify_all();
+                    client.control.changed();
                     Ok(CommandOutcome::Applied)
                 }
                 MonitorCommand::Process { process, action } => match actions.try_send(ActionJob {
@@ -954,7 +989,7 @@ fn engine_worker(
                 }
                 MonitorCommand::RefreshInventory => {
                     client.control.refresh.fetch_add(1, Ordering::Release);
-                    client.control.sleep.notify_all();
+                    client.control.changed();
                     Ok(CommandOutcome::Applied)
                 }
                 MonitorCommand::SaveConfig { config, explicit } => match config.validate() {
@@ -968,12 +1003,12 @@ fn engine_worker(
                             .control
                             .frames
                             .store(config.frame_monitoring, Ordering::Release);
-                        client.control.sleep.notify_all();
+                        client.control.changed();
                         state.view.config = config.clone();
                         state.apply_remote_hosts();
                         state.latest_save = Some(request.id);
                         state.view.save_status = SaveStatus::Saving;
-                        let mut slot = pending.lock().unwrap();
+                        let mut slot = pending.job.lock().unwrap();
                         let mut job = SaveJob {
                             id: request.id,
                             config,
@@ -987,6 +1022,7 @@ fn engine_worker(
                             });
                         }
                         *slot = Some(job);
+                        let _ = pending.ready.try_send(());
                         dirty = true;
                         continue;
                     }
@@ -998,12 +1034,21 @@ fn engine_worker(
             });
             dirty = true;
         }
-        if dirty || last_publish.elapsed() >= Duration::from_secs(1) {
+        if dirty || last_publish.elapsed() >= IDLE_PUBLISH {
             state.publish(&client);
             last_publish = Instant::now();
         }
-        client.control.wait(Duration::from_millis(25));
+        // What one round left behind is taken at once; anything arriving later rings.
+        let waiting = !requests.is_empty()
+            || !process_events.is_empty()
+            || inputs.iter().any(|input| !input.is_empty())
+            || state.remotes.waiting();
+        if !waiting {
+            let _ = client
+                .control
+                .rings
+                .recv_timeout(IDLE_PUBLISH.saturating_sub(last_publish.elapsed()));
+        }
     }
     state.remotes.stop();
-    client.control.engine_done.store(true, Ordering::Release);
 }
