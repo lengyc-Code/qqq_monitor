@@ -201,6 +201,70 @@ fn config_recovers_fields_and_preserves_corrupt_file_until_explicit_save() {
 }
 
 #[test]
+fn every_setting_round_trips() {
+    // Naming every field makes a new setting extend this test, and every value differs
+    // from its default, so a setting the loader leaves out fails the comparison. Options
+    // hold values, so that every field is written.
+    let config = AppConfig {
+        language: Some(Language::Japanese),
+        sampling_ms: 500,
+        history_secs: 900,
+        animations: false,
+        selected_network: Some("{6b2a1f04-0000-4000-8000-000000000001}".into()),
+        window_size: [1024.0, 700.0],
+        window_position: Some([40.0, 60.0]),
+        edge_docking: false,
+        minimize_to_tray: false,
+        autostart_to_tray: false,
+        dock: Some(DockEdge::Right),
+        dock_position: Some([1800.0, 0.0]),
+        frame_monitoring: true,
+        screenshot_hotkey: "Shift+F12".into(),
+        screenshot_hotkey_enabled: false,
+        screenshot_history: 100,
+        clipboard_manager: true,
+        clipboard_history: 200,
+        remote_hosts: vec![RemoteHost {
+            id: "db".into(),
+            name: "Database".into(),
+            address: "db.example".into(),
+            port: 2222,
+            user: "ops".into(),
+            auth: RemoteAuthKind::Key,
+            key_file: Some("~/.ssh/id_ed25519".into()),
+            host_key: Some("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA".into()),
+        }],
+        alerts: vec![AlertRule {
+            id: "busy".into(),
+            enabled: false,
+            device: "cpu".into(),
+            metric: "usage".into(),
+            condition: AlertCondition::Below,
+            threshold: 5.0,
+            hold_secs: 30,
+        }],
+    };
+    config.validate().unwrap();
+    let scratch = Scratch::new();
+    let mut store = ConfigStore::load(scratch.config()).store;
+    store.save(&config, false).unwrap();
+    let written: toml::Table = fs::read_to_string(scratch.config())
+        .unwrap()
+        .parse()
+        .unwrap();
+    let defaults: toml::Table = toml::to_string(&AppConfig::default())
+        .unwrap()
+        .parse()
+        .unwrap();
+    for (key, value) in &written {
+        assert_ne!(defaults.get(key), Some(value), "{key} keeps its default");
+    }
+    let loaded = ConfigStore::load(scratch.config());
+    assert_eq!(loaded.warning, None);
+    assert_eq!(loaded.config, config);
+}
+
+#[test]
 fn screenshot_and_clipboard_settings_recover_one_by_one() {
     let scratch = Scratch::new();
     fs::write(

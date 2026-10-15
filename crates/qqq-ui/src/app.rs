@@ -5,10 +5,11 @@ use crate::{clips, components, dock, i18n, mascot, minibar, pixel, shots, theme,
 use eframe::egui::{self, RichText, pos2, vec2};
 use qqq_domain::{DeviceKind, Hotkey, MetricKey};
 use qqq_engine::{
-    AlertState, AppConfig, CommandOutcome, DockEdge, Language, MonitorClient, MonitorCommand,
-    MonitorView, Notice, data_directory,
+    AlertState, AppConfig, CommandOutcome, CommandResult, DockEdge, Language, MonitorClient,
+    MonitorCommand, MonitorView, Notice, data_directory,
 };
 use std::{
+    collections::BTreeSet,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -70,6 +71,54 @@ pub struct CaptureOptions {
     pub path: PathBuf,
     pub page: Page,
 }
+
+/// Answers of the commands the window sends, other than process actions, as they show in
+/// the status bar. Of the saves only the latest answers: the engine supersedes the earlier
+/// ones, or they are out of date. A successful save clears only what saving reported.
+#[derive(Default)]
+struct Answers {
+    /// Saves still waiting for their answer.
+    saves: BTreeSet<u64>,
+    latest_save: Option<u64>,
+    /// Notice the latest failed save put in the status bar.
+    save_notice: Option<Notice>,
+}
+
+impl Answers {
+    fn saving(&mut self, id: u64) {
+        self.saves.insert(id);
+        self.latest_save = Some(id);
+    }
+    fn save_failed(&mut self, notice: Notice, message: &mut Option<Notice>) {
+        self.save_notice = Some(notice.clone());
+        *message = Some(notice);
+    }
+    fn answer(&mut self, result: CommandResult, message: &mut Option<Notice>) {
+        if !self.saves.remove(&result.id) {
+            if let Err(notice) = result.result {
+                *message = Some(notice);
+            }
+            return;
+        }
+        if self.latest_save != Some(result.id) {
+            return;
+        }
+        match result.result {
+            Err(notice) => self.save_failed(notice, message),
+            Ok(CommandOutcome::Saved) => {
+                if self
+                    .save_notice
+                    .take()
+                    .is_some_and(|n| message.as_ref() == Some(&n))
+                {
+                    *message = None;
+                }
+            }
+            Ok(_) => {}
+        }
+    }
+}
+
 pub struct DesktopApp {
     client: MonitorClient,
     view: Arc<MonitorView>,
@@ -86,7 +135,7 @@ pub struct DesktopApp {
     last_query: Vec<MetricKey>,
     last_range: u64,
     message: Option<Notice>,
-    latest_save: Option<u64>,
+    answers: Answers,
     capture: Option<CaptureOptions>,
     capture_requested: bool,
     started: Instant,
@@ -184,7 +233,7 @@ impl DesktopApp {
             last_query: Vec::new(),
             last_range: 0,
             message: None,
-            latest_save: None,
+            answers: Answers::default(),
             capture,
             capture_requested: false,
             started: Instant::now(),
@@ -198,7 +247,7 @@ impl DesktopApp {
     }
     fn save_config(&mut self, config: AppConfig, explicit: bool) {
         if let Err(error) = config.validate() {
-            self.message = Some(error);
+            self.answers.save_failed(error, &mut self.message);
             return;
         }
         match self.client.try_command(MonitorCommand::SaveConfig {
@@ -207,9 +256,9 @@ impl DesktopApp {
         }) {
             Ok(id) => {
                 self.active_config = config;
-                self.latest_save = Some(id);
+                self.answers.saving(id);
             }
-            Err(error) => self.message = Some(error),
+            Err(error) => self.answers.save_failed(error, &mut self.message),
         }
     }
     /// Applies a change to both the draft and the accepted settings and saves it at once,
@@ -497,16 +546,7 @@ impl eframe::App for DesktopApp {
                 self.process_result(result.result.map(|_| ()));
                 continue;
             }
-            if self.latest_save.is_some_and(|id| result.id < id) {
-                continue;
-            }
-            match result.result {
-                Err(error) => self.message = Some(error),
-                Ok(CommandOutcome::Saved) if self.latest_save == Some(result.id) => {
-                    self.message = None;
-                }
-                _ => {}
-            }
+            self.answers.answer(result, &mut self.message);
         }
         let language = self.active_config.language.unwrap_or(self.system_language);
         if language != i18n::language() {
@@ -727,5 +767,54 @@ impl eframe::App for DesktopApp {
                     });
             });
         self.query();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qqq_domain::Reason;
+
+    fn answer(
+        answers: &mut Answers,
+        message: &mut Option<Notice>,
+        id: u64,
+        result: Result<CommandOutcome, Notice>,
+    ) {
+        answers.answer(CommandResult { id, result }, message);
+    }
+
+    #[test]
+    fn a_later_save_neither_hides_nor_clears_another_commands_notice() {
+        let mut answers = Answers::default();
+        let mut message = None;
+        // Saving a remote host sends its password first, then the host list.
+        answers.saving(2);
+        let unsaved = Notice::SecretUnsaved(Reason::AccessDenied);
+        answer(&mut answers, &mut message, 1, Err(unsaved.clone()));
+        answer(&mut answers, &mut message, 2, Ok(CommandOutcome::Saved));
+        assert_eq!(message, Some(unsaved));
+        // A notice of the window itself, such as a taken shortcut, outlasts a save too.
+        let taken = Notice::HotkeyUnavailable(Reason::HotkeyTaken);
+        message = Some(taken.clone());
+        answers.saving(3);
+        answer(&mut answers, &mut message, 3, Ok(CommandOutcome::Saved));
+        assert_eq!(message, Some(taken));
+    }
+
+    #[test]
+    fn only_the_latest_save_answers_and_its_success_clears_its_failure() {
+        let mut answers = Answers::default();
+        let mut message = None;
+        answers.saving(1);
+        answers.saving(2);
+        answer(&mut answers, &mut message, 1, Err(Notice::CorruptKept));
+        assert_eq!(message, None);
+        answer(&mut answers, &mut message, 2, Err(Notice::CorruptKept));
+        assert_eq!(message, Some(Notice::CorruptKept));
+        answers.saving(3);
+        answer(&mut answers, &mut message, 3, Ok(CommandOutcome::Saved));
+        assert_eq!(message, None);
+        assert!(answers.saves.is_empty());
     }
 }
