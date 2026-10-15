@@ -39,38 +39,18 @@ impl Mood {
     }
 }
 
-/// Bust for the sidebar card, full figure for the settings page.
-#[derive(Clone, Copy, Debug, Hash)]
-enum Pose {
-    Bust,
-    Figure,
-}
-
-impl Pose {
-    fn size(self) -> [usize; 2] {
-        match self {
-            Self::Bust => sprites::BUST_SIZE,
-            Self::Figure => sprites::FIGURE_SIZE,
-        }
-    }
-}
-
-/// Sprite texture of a pose and mood, uploaded on first use and kept in the context.
+/// Bust sprite texture of a mood, uploaded on first use and kept in the context.
 /// Nearest sampling keeps every sprite pixel square when drawn at a whole number of
 /// physical pixels.
-fn texture(ctx: &egui::Context, pose: Pose, mood: Mood) -> egui::TextureHandle {
+fn texture(ctx: &egui::Context, mood: Mood) -> egui::TextureHandle {
     let n = mood.illustration();
-    let id = egui::Id::new(("mascot", pose, n));
+    let id = egui::Id::new(("mascot", n));
     if let Some(texture) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
         return texture;
     }
-    let (name, pixels) = match pose {
-        Pose::Bust => ("bust", sprites::BUST[n - 1]),
-        Pose::Figure => ("figure", sprites::FIGURE[n - 1]),
-    };
     let texture = ctx.load_texture(
-        format!("mascot-{name}-{n}"),
-        egui::ColorImage::from_rgba_unmultiplied(pose.size(), pixels),
+        format!("mascot-bust-{n}"),
+        egui::ColorImage::from_rgba_unmultiplied(sprites::BUST_SIZE, sprites::BUST[n - 1]),
         egui::TextureOptions::NEAREST,
     );
     ctx.data_mut(|d| d.insert_temp(id, texture.clone()));
@@ -106,7 +86,7 @@ fn assess(view: &MonitorView) -> (Mood, String) {
 /// Character card: a dark frame with a teal halftone band, like the banner behind the
 /// character in her key art, and the sprite standing on the frame's bottom edge.
 /// `bob` moves the sprite down by that much; the frame hides the overflow.
-fn paint_card(painter: &egui::Painter, frame: Rect, unit: f32, pose: Pose, mood: Mood, bob: f32) {
+fn paint_card(painter: &egui::Painter, frame: Rect, unit: f32, mood: Mood, bob: f32) {
     let ctx = painter.ctx();
     let frame = pixel::snap_rect(ctx, frame);
     let border = pixel::unit(ctx, 2.0);
@@ -143,7 +123,7 @@ fn paint_card(painter: &egui::Painter, frame: Rect, unit: f32, pose: Pose, mood:
         row += 1;
     }
     painter.extend(shapes);
-    let [width, height] = pose.size();
+    let [width, height] = sprites::BUST_SIZE;
     let size = vec2(width as f32, height as f32) * unit;
     let origin = pixel::snap(
         ctx,
@@ -155,7 +135,7 @@ fn paint_card(painter: &egui::Painter, frame: Rect, unit: f32, pose: Pose, mood:
     painter
         .with_clip_rect(inner.intersect(painter.clip_rect()))
         .image(
-            texture(ctx, pose, mood).id(),
+            texture(ctx, mood).id(),
             Rect::from_min_size(origin, size),
             Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             Color32::WHITE,
@@ -163,9 +143,9 @@ fn paint_card(painter: &egui::Painter, frame: Rect, unit: f32, pose: Pose, mood:
 }
 
 /// Outer size of the character card around a sprite drawn at `unit` per sprite pixel.
-fn card_size(ctx: &egui::Context, unit: f32, pose: Pose) -> Vec2 {
+fn card_size(ctx: &egui::Context, unit: f32) -> Vec2 {
     let border = pixel::unit(ctx, 2.0);
-    let [width, height] = pose.size();
+    let [width, height] = sprites::BUST_SIZE;
     vec2(width as f32, height as f32) * unit + vec2(border * 2.0 + 8.0, border * 2.0 + 6.0)
 }
 
@@ -173,7 +153,7 @@ fn card_size(ctx: &egui::Context, unit: f32, pose: Pose) -> Vec2 {
 fn card_height(ctx: &egui::Context, text_height: f32) -> f32 {
     let unit = pixel::unit(ctx, 2.0);
     let bubble = text_height + (BUBBLE_PADDING + unit) * 2.0;
-    let card = card_size(ctx, pixel::unit(ctx, 1.0), Pose::Bust);
+    let card = card_size(ctx, pixel::unit(ctx, 1.0));
     bubble + 3.0 * unit + 4.0 + card.y + 6.0 + NAME_HEIGHT
 }
 
@@ -206,7 +186,7 @@ pub fn show(ui: &mut egui::Ui, view: &MonitorView, animate: bool) {
         width - (padding + unit) * 2.0,
     );
     let bubble_height = galley.size().y + (padding + unit) * 2.0;
-    let card = card_size(&ctx, sprite_unit, Pose::Bust);
+    let card = card_size(&ctx, sprite_unit);
     let height = card_height(&ctx, galley.size().y);
     let available = ui.available_rect_before_wrap();
     if available.height() < height + CARD_GAP {
@@ -276,7 +256,7 @@ pub fn show(ui: &mut egui::Ui, view: &MonitorView, animate: bool) {
         ),
         card,
     );
-    paint_card(painter, frame, sprite_unit, Pose::Bust, mood, bob);
+    paint_card(painter, frame, sprite_unit, mood, bob);
     painter.text(
         pos2(rect.center().x, rect.bottom()),
         egui::Align2::CENTER_BOTTOM,
@@ -284,17 +264,6 @@ pub fn show(ui: &mut egui::Ui, view: &MonitorView, animate: bool) {
         FontId::proportional(11.0),
         theme::NIGHT_MUTED,
     );
-}
-
-/// Full-figure character card for the settings page, `logical_unit` per sprite pixel.
-pub fn portrait(ui: &mut egui::Ui, view: &MonitorView, logical_unit: f32) -> egui::Response {
-    let unit = pixel::unit(ui.ctx(), logical_unit);
-    let (rect, response) = ui.allocate_exact_size(
-        card_size(ui.ctx(), unit, Pose::Figure),
-        egui::Sense::hover(),
-    );
-    paint_card(ui.painter(), rect, unit, Pose::Figure, assess(view).0, 0.0);
-    response
 }
 
 #[cfg(test)]

@@ -7,10 +7,9 @@ use std::{env, fmt::Write as _, fs, path::PathBuf};
 
 /// Source pixels per sprite pixel along each axis.
 const CELL: u32 = 10;
-/// Crops in source pixels as `[left, top, right, bottom]`: the bust for the sidebar card
-/// and the full figure for the settings page. Both keep the effects drawn beside her.
+/// Crop of the bust for the sidebar card in source pixels as `[left, top, right, bottom]`,
+/// keeping the effects drawn beside her.
 const BUST: [u32; 4] = [160, 20, 1090, 800];
-const FIGURE: [u32; 4] = [160, 20, 1090, 1240];
 /// Pixels whose channels are all at least this bright count as background when they
 /// connect to the image border.
 const BACKGROUND: u8 = 246;
@@ -23,16 +22,14 @@ fn main() {
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     println!("cargo:rerun-if-changed=build.rs");
     let mut code = String::new();
-    for (name, crop) in [("BUST", BUST), ("FIGURE", FIGURE)] {
-        let size = [(crop[2] - crop[0]) / CELL, (crop[3] - crop[1]) / CELL];
-        writeln!(
-            code,
-            "pub const {name}_SIZE: [usize; 2] = [{}, {}];",
-            size[0], size[1]
-        )
-        .unwrap();
-    }
-    let mut lists = [String::new(), String::new()];
+    writeln!(
+        code,
+        "pub const BUST_SIZE: [usize; 2] = [{}, {}];",
+        (BUST[2] - BUST[0]) / CELL,
+        (BUST[3] - BUST[1]) / CELL
+    )
+    .unwrap();
+    let mut list = String::new();
     for n in 1..=6 {
         let path = assets.join(format!("mint-{n}.png"));
         println!("cargo:rerun-if-changed={}", path.display());
@@ -40,14 +37,11 @@ fn main() {
             .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
             .to_rgb8();
         let mask = foreground(&image);
-        for (list, (name, crop)) in lists.iter_mut().zip([("bust", BUST), ("figure", FIGURE)]) {
-            let file = out.join(format!("{name}-{n}.rgba"));
-            fs::write(&file, pixelize(&image, &mask, crop)).unwrap();
-            write!(list, "include_bytes!({:?}), ", file.to_str().unwrap()).unwrap();
-        }
+        let file = out.join(format!("bust-{n}.rgba"));
+        fs::write(&file, pixelize(&image, &mask, BUST)).unwrap();
+        write!(list, "include_bytes!({:?}), ", file.to_str().unwrap()).unwrap();
     }
-    writeln!(code, "pub const BUST: [&[u8]; 6] = [{}];", lists[0]).unwrap();
-    writeln!(code, "pub const FIGURE: [&[u8]; 6] = [{}];", lists[1]).unwrap();
+    writeln!(code, "pub const BUST: [&[u8]; 6] = [{list}];").unwrap();
     fs::write(out.join("mascot_sprites.rs"), code).unwrap();
 }
 

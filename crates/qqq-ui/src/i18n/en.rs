@@ -230,8 +230,9 @@ pub const STRINGS: Strings = Strings {
     history_usage: |used| format!("History memory {used} / 16 MiB"),
     collectors_ok: "All sources are working",
     refresh_devices: "Refresh devices",
-    about_mint: "MINT, the mascot, changes her expression with CPU and memory load: relaxed, calm, busy and overloaded.",
-    about_animations: "With animations off, her expression still follows the load, but she stops bobbing and the window does not redraw for her.",
+    about: "About",
+    about_intro: "An anime pixel-art multi-purpose task manager for Windows, where MINT, the mascot, keeps an eye on your PC with you: real-time performance monitoring with history charts, process management, Linux hosts monitored over SSH, frame counting for the foreground app, alerts, and tools such as screenshots and clipboard history.",
+    about_github: "GitHub page",
 
     process_name: "Name",
     process_user: "User",
@@ -391,14 +392,16 @@ pub const STRINGS: Strings = Strings {
     },
     alert_note: "Rules read the latest valid reading of each source. Once a reading stays past its threshold for the hold time, a Windows notification arrives; once it stays back on the other side for the same time, the rule is normal again. A rule notifies at most once a minute. Notifications also arrive while the window sits in the tray or docks as the mini bar, and clicking one opens the main window.",
 
-    screenshots_page: PageText {
-        nav: "Screenshots",
-        title: "Screenshots",
-        hint: "Capture a screen region with a shortcut and keep the latest shots",
+    tools_page: PageText {
+        nav: "Tools",
+        title: "Tools",
+        hint: "Handy tools such as screenshots and clipboard history",
     },
+    tool_screenshots: "Screenshots",
+    tool_clipboard: "Clipboard",
     tray_screenshot: "Take screenshot",
     hours_ago: |v| format!("{v} h ago"),
-    shot_take: "Screenshot",
+    shot_take: "Take screenshot",
     shot_hint: "Drag to select a region · Click to capture the whole screen · Right-click or Esc to cancel",
     shot_folder: "Open folder",
     shot_hotkey: "Shortcut",
@@ -412,22 +415,17 @@ pub const STRINGS: Strings = Strings {
         _ => format!("{n} screenshots"),
     },
     shot_recent: "Recent screenshots",
-    shot_empty: "No screenshots yet. Press the shortcut or click Screenshot to start.",
+    shot_empty: "No screenshots yet. Press the shortcut or click Take screenshot.",
     shot_loading: "Reading screenshots…",
     shot_note: |folder| {
         format!(
-            "When you release the mouse, the selected region is copied to the clipboard and saved as a PNG in {folder}. Beyond the number to keep, the oldest screenshots are removed first. Clicking Screenshot on this page hides the main window before the capture."
+            "When you release the mouse, the selected region is copied to the clipboard and saved as a PNG in {folder}. Beyond the number to keep, the oldest screenshots are removed first. Take screenshot hides the main window before the capture."
         )
     },
     copy: "Copy",
     open: "Open",
     delete: "Delete",
 
-    clipboard_page: PageText {
-        nav: "Clipboard",
-        title: "Clipboard history",
-        hint: "Keep what you copy and put any of it back on the clipboard",
-    },
     clip_option: "Record text, pictures and files copied to the clipboard",
     clip_off: "Clipboard history is off. Once on, it records what you copy from then on.",
     clip_clear: "Clear history",

@@ -52,14 +52,7 @@ impl DesktopApp {
         let on = self.active_config.clipboard_manager;
         theme::card().show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 10.0;
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                tag(
-                    ui,
-                    Some(&pixel::ICON_CLIPBOARD),
-                    t.clipboard_page.nav,
-                    theme::ACCENT,
-                );
+            ui.scope(|ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                 let mut enabled = on;
                 if ui.checkbox(&mut enabled, t.clip_option).changed() {

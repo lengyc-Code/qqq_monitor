@@ -32,8 +32,8 @@ pub use native::set_window_icon;
 pub use native::ui_languages;
 /// Screen geometry and pointer state for docking the window, in physical pixels.
 pub use native::{covers_point, monitor_at, mouse_button_held};
-/// Opening a file or folder with its default program, and the local time.
-pub use native::{local_time, open_path};
+/// Opening a file, folder or web address with its default program, and the local time.
+pub use native::{local_time, open_path, open_url};
 /// Toast notifications with the application's name and icon.
 pub use notify::{notify, prepare as prepare_notifications};
 /// Notification-area icon and taskbar button of the application window, and the

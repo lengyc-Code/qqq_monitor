@@ -94,6 +94,8 @@ pub struct Desktop {
     pub set_clipboard: fn(&Clip) -> Result<(), Reason>,
     /// Opens a file with its default program, or a folder.
     pub open_path: fn(&std::path::Path) -> Result<(), Reason>,
+    /// Opens a web address in the default browser.
+    pub open_url: fn(&str) -> Result<(), Reason>,
     /// Local date and time as year, month, day, hour, minute, second and millisecond.
     pub local_time: fn(std::time::SystemTime) -> Option<[u16; 7]>,
 }

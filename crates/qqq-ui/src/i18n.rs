@@ -225,8 +225,11 @@ pub struct Strings {
     pub history_usage: fn(&str) -> String,
     pub collectors_ok: &'static str,
     pub refresh_devices: &'static str,
-    pub about_mint: &'static str,
-    pub about_animations: &'static str,
+    /// Tag of the settings card with the logo, the version and the project introduction.
+    pub about: &'static str,
+    pub about_intro: &'static str,
+    /// Button that opens the project's GitHub page.
+    pub about_github: &'static str,
 
     // Processes.
     pub process_name: &'static str,
@@ -370,8 +373,13 @@ pub struct Strings {
     pub alert_body: fn(&str, &str, bool, Option<&str>) -> String,
     pub alert_note: &'static str,
 
+    // Tools.
+    pub tools_page: PageText,
+    /// Tabs of the tools page, also the labels of their settings rows.
+    pub tool_screenshots: &'static str,
+    pub tool_clipboard: &'static str,
+
     // Screenshots.
-    pub screenshots_page: PageText,
     /// Screenshot item of the notification-area icon menu.
     pub tray_screenshot: &'static str,
     pub hours_ago: fn(u64) -> String,
@@ -399,7 +407,6 @@ pub struct Strings {
     pub delete: &'static str,
 
     // Clipboard.
-    pub clipboard_page: PageText,
     pub clip_option: &'static str,
     pub clip_off: &'static str,
     pub clip_clear: &'static str,

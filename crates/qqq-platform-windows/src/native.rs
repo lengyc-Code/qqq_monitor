@@ -179,7 +179,16 @@ pub fn local_time(at: std::time::SystemTime) -> Option<[u16; 7]> {
 
 /// Opens a file with its default program, or a folder in File Explorer.
 pub fn open_path(path: &std::path::Path) -> Result<(), Reason> {
-    let file = HSTRING::from(path.as_os_str());
+    shell_open(&HSTRING::from(path.as_os_str()))
+}
+
+/// Opens a web address in the default browser.
+pub fn open_url(url: &str) -> Result<(), Reason> {
+    shell_open(&HSTRING::from(url))
+}
+
+/// Runs the shell's "open" verb on a file, folder or web address.
+fn shell_open(file: &HSTRING) -> Result<(), Reason> {
     let mut info = SHELLEXECUTEINFOW {
         cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
         lpVerb: w!("open"),

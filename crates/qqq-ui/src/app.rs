@@ -26,8 +26,7 @@ pub enum Page {
     Processes,
     Remote,
     Alerts,
-    Screenshots,
-    Clipboard,
+    Tools,
     Settings,
 }
 impl Page {
@@ -44,8 +43,7 @@ impl Page {
             Self::Processes => &t.processes_page,
             Self::Remote => &t.remote_page,
             Self::Alerts => &t.alerts_page,
-            Self::Screenshots => &t.screenshots_page,
-            Self::Clipboard => &t.clipboard_page,
+            Self::Tools => &t.tools_page,
             Self::Settings => &t.settings_page,
         }
     }
@@ -62,8 +60,7 @@ impl Page {
             Self::Processes => "PROCESSES",
             Self::Remote => "REMOTE",
             Self::Alerts => "ALERTS",
-            Self::Screenshots => "CAPTURE",
-            Self::Clipboard => "CLIPBOARD",
+            Self::Tools => "TOOLS",
             Self::Settings => "CONFIG",
         }
     }
@@ -107,6 +104,8 @@ pub struct DesktopApp {
     shots: shots::Shots,
     /// Number of screenshots the library was last told to keep.
     shots_kept: usize,
+    /// Tool the tools page shows.
+    tool: pages::tools::Tool,
     snip: pages::screenshots::Snip,
     screenshot_page: pages::screenshots::ScreenshotPage,
     /// Screenshot shortcut last registered; `None` until the first registration.
@@ -153,6 +152,7 @@ impl DesktopApp {
                 desktop.local_time,
             ),
             shots_kept: config.screenshot_history,
+            tool: Default::default(),
             snip: Default::default(),
             screenshot_page: Default::default(),
             hotkey: None,
@@ -296,11 +296,7 @@ impl DesktopApp {
                 .map(|metric| MetricKey::new("frames", metric))
                 .into(),
             Page::Remote => self.remote_query(),
-            Page::Processes
-            | Page::Alerts
-            | Page::Screenshots
-            | Page::Clipboard
-            | Page::Settings => Vec::new(),
+            Page::Processes | Page::Alerts | Page::Tools | Page::Settings => Vec::new(),
         };
         if keys != self.last_query || self.range != self.last_range {
             match self.client.try_command(MonitorCommand::SetQuery {
@@ -365,8 +361,7 @@ impl DesktopApp {
                     (Page::Processes, &pixel::ICON_PROCESS),
                     (Page::Remote, &pixel::ICON_REMOTE),
                     (Page::Alerts, &pixel::ICON_BELL),
-                    (Page::Screenshots, &pixel::ICON_CAMERA),
-                    (Page::Clipboard, &pixel::ICON_CLIPBOARD),
+                    (Page::Tools, &pixel::ICON_TOOLS),
                     (Page::Settings, &pixel::ICON_GEAR),
                 ];
                 // Buttons shrink from 40 towards 26 points on shorter windows, leaving room
@@ -425,11 +420,7 @@ impl DesktopApp {
             });
             if !matches!(
                 self.page,
-                Page::Processes
-                    | Page::Alerts
-                    | Page::Screenshots
-                    | Page::Clipboard
-                    | Page::Settings
+                Page::Processes | Page::Alerts | Page::Tools | Page::Settings
             ) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
@@ -729,8 +720,7 @@ impl eframe::App for DesktopApp {
                             Page::Processes => {}
                             Page::Remote => self.remote(ui, &view),
                             Page::Alerts => self.alerts(ui, &view),
-                            Page::Screenshots => self.screenshots(ui),
-                            Page::Clipboard => self.clipboard(ui),
+                            Page::Tools => self.tools(ui),
                             Page::Settings => self.settings(ui, &view),
                         }
                         ui.add_space(8.0);

@@ -221,8 +221,9 @@ pub const STRINGS: Strings = Strings {
     history_usage: |used| format!("历史数据占用 {used} / 16 MiB"),
     collectors_ok: "所有采集源工作正常",
     refresh_devices: "立即刷新设备",
-    about_mint: "看板娘 MINT 酱会根据 CPU 与内存负载切换表情：悠闲、平静、忙碌和超载。",
-    about_animations: "关闭界面动效后表情仍会随负载变化，但不再晃动，也不会额外刷新界面。",
+    about: "关于",
+    about_intro: "二次元像素风格的 Windows 多功能任务管理器，由看板娘「MINT 酱」陪你看着电脑的状态：实时性能监控与历史曲线、进程管理、通过 SSH 监控 Linux 主机、前台应用的帧率统计、监控告警，以及截图与剪贴板管理等小工具。",
+    about_github: "GitHub 主页",
 
     process_name: "名称",
     process_user: "用户",
@@ -370,14 +371,16 @@ pub const STRINGS: Strings = Strings {
     },
     alert_note: "规则读取各采集源的最新有效读数：读数越过阈值并保持设定的持续时间后推送 Windows 通知，回到另一侧并保持同样时间后恢复正常；同一规则两次通知至少间隔 1 分钟。窗口收进托盘或吸附为迷你状态栏时同样推送，点击通知可打开主窗口。",
 
-    screenshots_page: PageText {
-        nav: "截图",
-        title: "截图",
-        hint: "按快捷键截取屏幕区域，保留最近的截图",
+    tools_page: PageText {
+        nav: "小工具",
+        title: "小工具",
+        hint: "截图与剪贴板管理等实用工具",
     },
+    tool_screenshots: "截图",
+    tool_clipboard: "剪贴板",
     tray_screenshot: "截图",
     hours_ago: |v| format!("{v} 小时前"),
-    shot_take: "截图",
+    shot_take: "开始截图",
     shot_hint: "拖动选择截图区域 · 单击截取整个屏幕 · 右键或 Esc 取消",
     shot_folder: "打开文件夹",
     shot_hotkey: "快捷键",
@@ -388,22 +391,17 @@ pub const STRINGS: Strings = Strings {
     keep: "保留数量",
     shot_count: |n| format!("{n} 张"),
     shot_recent: "最近的截图",
-    shot_empty: "还没有截图。按下快捷键或点击「截图」开始。",
+    shot_empty: "还没有截图。按下快捷键或点击「开始截图」。",
     shot_loading: "正在读取截图…",
     shot_note: |folder| {
         format!(
-            "松开鼠标后，所选区域复制到剪贴板并以 PNG 保存在 {folder}；超出保留数量时先删除最早的截图。在本页点击「截图」时，主窗口先隐藏再截取。"
+            "松开鼠标后，所选区域复制到剪贴板并以 PNG 保存在 {folder}；超出保留数量时先删除最早的截图。点击「开始截图」时，主窗口先隐藏再截取。"
         )
     },
     copy: "复制",
     open: "打开",
     delete: "删除",
 
-    clipboard_page: PageText {
-        nav: "剪贴板",
-        title: "剪贴板管理",
-        hint: "记录复制过的内容，一键复制回剪贴板",
-    },
     clip_option: "记录复制到剪贴板的文本、图片与文件",
     clip_off: "剪贴板管理未开启。开启后会记录此后复制的内容。",
     clip_clear: "清空记录",

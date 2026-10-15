@@ -260,6 +260,18 @@ pub const ICON_BELL: Icon = [
     "#########",
     "...#o#...",
 ];
+/// A toolbox: the tools page.
+pub const ICON_TOOLS: Icon = [
+    "...###...",
+    "..#...#..",
+    "#########",
+    "#ooooooo#",
+    "####o####",
+    "#ooo#ooo#",
+    "#ooooooo#",
+    "#ooooooo#",
+    "#########",
+];
 /// A camera: screenshots.
 pub const ICON_CAMERA: Icon = [
     "...###...",

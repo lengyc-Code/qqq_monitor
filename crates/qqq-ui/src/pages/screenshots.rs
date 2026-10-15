@@ -1,4 +1,4 @@
-use super::super::{DesktopApp, Page};
+use super::{super::DesktopApp, super::Page, tools::Tool};
 use crate::{components::*, i18n, pixel, shots, theme};
 use eframe::egui::{self, RichText, vec2};
 use qqq_domain::{CaptureEnd, Clip, Hotkey};
@@ -45,7 +45,7 @@ impl DesktopApp {
     /// Registers the shortcut as the settings ask, starts requested screenshots and handles
     /// finished ones. Runs every frame, whichever page is shown.
     pub(in crate::app) fn screenshot_logic(&mut self, ctx: &egui::Context) {
-        if self.page != Page::Screenshots {
+        if self.page != Page::Tools || self.tool != Tool::Screenshots {
             self.screenshot_page = ScreenshotPage::default();
         }
         if self.capture.is_none() {

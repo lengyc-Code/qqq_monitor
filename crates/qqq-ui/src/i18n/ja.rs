@@ -221,8 +221,9 @@ pub const STRINGS: Strings = Strings {
     history_usage: |used| format!("履歴データ {used} / 16 MiB"),
     collectors_ok: "すべてのデータソースが正常に動作しています",
     refresh_devices: "デバイスを再検出",
-    about_mint: "看板娘の MINT ちゃんは CPU とメモリの負荷に合わせて、のんびり・おだやか・いそがしい・オーバーロードの表情に変わります。",
-    about_animations: "アニメーションをオフにしても表情は負荷に合わせて変わりますが、揺れなくなり、そのための再描画も行いません。",
+    about: "アプリ情報",
+    about_intro: "看板娘「MINT ちゃん」が PC の様子を見守る、アニメ風ピクセルアートの Windows 向け多機能タスクマネージャーです。リアルタイムのパフォーマンス監視と履歴グラフ、プロセス管理、SSH による Linux ホストの監視、前面のアプリのフレームレート計測、監視アラートに加え、スクリーンショットやクリップボード履歴などのツールを備えています。",
+    about_github: "GitHub ページ",
 
     process_name: "名前",
     process_user: "ユーザー",
@@ -385,14 +386,16 @@ pub const STRINGS: Strings = Strings {
     },
     alert_note: "ルールは各データソースの最新の有効な値を読み取ります。値がしきい値を超えた状態が継続時間だけ続くと Windows 通知を送り、反対側に戻った状態が同じ時間続くと正常に戻ります。同じルールの通知は 1 分に 1 回までです。ウィンドウをトレイに格納したりミニバーにドッキングしたりしていても通知し、通知をクリックするとメイン ウィンドウが開きます。",
 
-    screenshots_page: PageText {
-        nav: "キャプチャ",
-        title: "スクリーンショット",
-        hint: "ショートカットで画面の範囲をキャプチャし、最近のスクリーンショットを保存",
+    tools_page: PageText {
+        nav: "ツール",
+        title: "ツール",
+        hint: "スクリーンショットやクリップボード履歴などの便利な機能",
     },
+    tool_screenshots: "キャプチャ",
+    tool_clipboard: "クリップボード",
     tray_screenshot: "スクリーンショット",
     hours_ago: |v| format!("{v} 時間前"),
-    shot_take: "キャプチャ",
+    shot_take: "キャプチャ開始",
     shot_hint: "ドラッグで範囲を選択 · クリックで画面全体 · 右クリックか Esc でキャンセル",
     shot_folder: "フォルダーを開く",
     shot_hotkey: "ショートカット",
@@ -403,22 +406,17 @@ pub const STRINGS: Strings = Strings {
     keep: "保存数",
     shot_count: |n| format!("{n} 枚"),
     shot_recent: "最近のスクリーンショット",
-    shot_empty: "スクリーンショットはまだありません。ショートカットを押すか「キャプチャ」をクリックしてください。",
+    shot_empty: "スクリーンショットはまだありません。ショートカットを押すか「キャプチャ開始」をクリックしてください。",
     shot_loading: "スクリーンショットを読み込み中…",
     shot_note: |folder| {
         format!(
-            "マウスを離すと、選択した範囲がクリップボードにコピーされ、PNG として {folder} に保存されます。保存数を超えると古いものから削除します。このページの「キャプチャ」はメイン ウィンドウを隠してからキャプチャします。"
+            "マウスを離すと、選択した範囲がクリップボードにコピーされ、PNG として {folder} に保存されます。保存数を超えると古いものから削除します。「キャプチャ開始」はメイン ウィンドウを隠してからキャプチャします。"
         )
     },
     copy: "コピー",
     open: "開く",
     delete: "削除",
 
-    clipboard_page: PageText {
-        nav: "コピー履歴",
-        title: "クリップボード履歴",
-        hint: "コピーした内容を記録し、ワンクリックでクリップボードに戻す",
-    },
     clip_option: "クリップボードにコピーしたテキスト・画像・ファイルを記録",
     clip_off: "クリップボード履歴はオフです。オンにすると、それ以降にコピーした内容を記録します。",
     clip_clear: "履歴を消去",

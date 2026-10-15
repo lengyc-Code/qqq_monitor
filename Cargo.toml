@@ -4,6 +4,7 @@ version = "0.3.0"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT"
+repository = "https://github.com/lengyc-Code/qqq_monitor"
 
 [workspace]
 members = ["crates/qqq-domain", "crates/qqq-engine", "crates/qqq-platform-windows", "crates/qqq-remote", "crates/qqq-ui"]
@@ -14,6 +15,7 @@ version = "0.3.0"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT"
+repository = "https://github.com/lengyc-Code/qqq_monitor"
 
 [workspace.dependencies]
 qqq-domain = { path = "crates/qqq-domain" }
