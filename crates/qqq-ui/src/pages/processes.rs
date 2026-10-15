@@ -246,9 +246,7 @@ impl DesktopApp {
             self.process.host = ProcessHost::Windows;
             self.process.selected = None;
         }
-        let shown = self.page == Page::Processes
-            && self.dock.edge().is_none()
-            && ctx.input(|i| i.viewport().minimized != Some(true));
+        let shown = self.page == Page::Processes && self.dock.edge().is_none() && !self.asleep(ctx);
         let watch = shown.then(|| self.process.host.clone());
         if watch != self.process.watching {
             match self

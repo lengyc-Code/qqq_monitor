@@ -11,7 +11,10 @@ use qqq_engine::{
 use std::{
     collections::BTreeSet,
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -66,6 +69,10 @@ impl Page {
         }
     }
 }
+
+/// A new view repaints the window after this delay, so that the views one sampling round
+/// publishes share a pass.
+const VIEW_BATCH: Duration = Duration::from_millis(50);
 
 pub struct CaptureOptions {
     pub path: PathBuf,
@@ -164,6 +171,9 @@ pub struct DesktopApp {
     clips_kept: usize,
     /// Whether the clipboard is followed; `None` until first decided.
     watching: Option<bool>,
+    /// The window shows nothing, so a new view leaves the GUI asleep. The tray icon, the
+    /// screenshot shortcut, clipboard changes and saved screenshots wake it on their own.
+    asleep: Arc<AtomicBool>,
 }
 
 impl DesktopApp {
@@ -183,7 +193,13 @@ impl DesktopApp {
         theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx, config.animations);
         let context = cc.egui_ctx.clone();
-        client.set_ui_wake(Arc::new(move || context.request_repaint()));
+        let asleep = Arc::new(AtomicBool::new(false));
+        let wake = Arc::clone(&asleep);
+        client.set_ui_wake(Arc::new(move || {
+            if !wake.load(Ordering::Relaxed) {
+                context.request_repaint_after(VIEW_BATCH);
+            }
+        }));
         let view = client
             .try_latest_view()
             .unwrap_or_else(|| Arc::new(MonitorView::empty(config.clone())));
@@ -208,6 +224,7 @@ impl DesktopApp {
             clips: Default::default(),
             clips_kept: config.clipboard_history,
             watching: None,
+            asleep,
             desktop,
             tray: if start_in_tray {
                 tray::Tray::hidden(&desktop)
@@ -268,6 +285,10 @@ impl DesktopApp {
         let mut config = self.active_config.clone();
         change(&mut config);
         self.save_config(config, true);
+    }
+    /// The window is hidden in the tray or minimized.
+    fn asleep(&self, ctx: &egui::Context) -> bool {
+        self.tray.is_hidden() || ctx.input(|i| i.viewport().minimized == Some(true))
     }
     fn select_initial_devices(&mut self) {
         // Devices of this computer; remote hosts have their own page.
@@ -581,6 +602,9 @@ impl eframe::App for DesktopApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
         }
+        // The window comes back through its own events, which repaint it with the latest
+        // view.
+        self.asleep.store(self.asleep(ctx), Ordering::Relaxed);
         self.dock
             .set_frames(ctx, &self.desktop, self.active_config.frame_monitoring);
         self.dock
@@ -624,6 +648,12 @@ impl eframe::App for DesktopApp {
         }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
+        // eframe lays out and paints a window hidden in the tray as if it were shown. It
+        // stays empty instead, so that animations schedule nothing until the icon brings it
+        // back; that frame is laid out before the window appears.
+        if self.tray.is_hidden() {
+            return;
+        }
         let t = i18n::t();
         let view = Arc::clone(&self.view);
         if let Some(edge) = self.dock.edge() {

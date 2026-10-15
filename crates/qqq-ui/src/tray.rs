@@ -90,6 +90,11 @@ impl Tray {
         }
     }
 
+    /// Whether the window is hidden, leaving only the icon.
+    pub fn is_hidden(&self) -> bool {
+        self.hidden
+    }
+
     /// Whether the user asked for the window from the icon; shows a hidden or minimized
     /// window again.
     pub fn opened(&mut self, ctx: &egui::Context, desktop: &Desktop) -> bool {
