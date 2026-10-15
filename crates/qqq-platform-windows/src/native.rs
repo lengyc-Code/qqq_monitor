@@ -384,7 +384,8 @@ impl CounterQuery {
                 }
                 // SAFETY: PDH_FMT_DOUBLE was requested, selecting the union's doubleValue member.
                 let value = unsafe { item.FmtValue.Anonymous.doubleValue };
-                values.insert(
+                add_instance(
+                    &mut values,
                     name,
                     if [PDH_CSTATUS_VALID_DATA, PDH_CSTATUS_NEW_DATA]
                         .contains(&item.FmtValue.CStatus)
@@ -400,6 +401,15 @@ impl CounterQuery {
             return Ok(values);
         }
         Err(CollectorError(Reason::InstancesChanging))
+    }
+}
+
+/// Instances sharing a name add up, such as the GPU engine instances a virtual machine
+/// worker reports once per guest device; the name stays `None` until one is valid.
+fn add_instance(values: &mut Values, name: String, value: Option<f64>) {
+    let total = values.entry(name).or_insert(None);
+    if let Some(value) = value {
+        *total = Some(total.unwrap_or(0.0) + value);
     }
 }
 
@@ -531,5 +541,22 @@ pub fn set_window_icon(hwnd: isize) {
                 Some(LPARAM(icon.0 as isize)),
             )
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instances_sharing_a_name_add_up() {
+        let mut values = Values::new();
+        let engine = "pid_7_luid_0x00000000_0x000101aa_phys_0_eng_0_engtype_3d";
+        add_instance(&mut values, engine.into(), Some(84.0));
+        add_instance(&mut values, engine.into(), None);
+        add_instance(&mut values, engine.into(), Some(1.0));
+        add_instance(&mut values, "idle".into(), None);
+        assert_eq!(values[engine], Some(85.0));
+        assert_eq!(values["idle"], None);
     }
 }

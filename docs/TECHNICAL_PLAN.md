@@ -157,7 +157,7 @@ PDH 使用 `PdhAddEnglishCounterW` 添加 PhysicalDisk 通配符查询，通过 
 
 GPU 采集器独立于渲染器，用 DXGI 枚举全部 adapter，取得名称、LUID、专用显存与共享内存总量，展示其中的硬件 adapter；性能计数器按 LUID 对应到 adapter。总使用率按最忙引擎汇总，与 Windows 任务管理器口径一致；3D、Copy、Compute 等引擎类型分别计算后取最大值。Windows 任务管理器的 GPU 数据依赖 WDDM 2.0 及以上驱动，官方也区分专用和共享显存。[Microsoft GPU 指标说明](https://devblogs.microsoft.com/directx/gpus-in-the-task-manager/)。
 
-GPU Engine 计数器实例名包含进程 ID、adapter LUID、物理节点、引擎编号与类型，例如 `pid_4_luid_0x00000000_0x0000D1A3_phys_0_eng_0_engtype_3D`；采集器按 adapter 与同一引擎汇总各进程，再取最忙引擎，第一轮预热。GPU Adapter Memory 按 adapter 和物理节点给出整机专用与共享用量，采集器按 adapter 汇总。普通权限即可读取；本机 NVIDIA GeForce RTX 4090 已得到有效利用率与显存读数，集成显卡、混合显卡和虚拟环境另行验证。
+GPU Engine 计数器实例名包含进程 ID、adapter LUID、物理节点、引擎编号与类型，例如 `pid_4_luid_0x00000000_0x0000D1A3_phys_0_eng_0_engtype_3D`；采集器按 adapter 与同一引擎汇总各进程，再取最忙引擎，第一轮预热。PDH 实例数组中的同名实例逐一相加，例如 WSL2 等虚拟机工作进程 `vmwp` 按每个来宾设备报告一组同名引擎实例，其负载可能落在任意一个上。GPU Adapter Memory 按 adapter 和物理节点给出整机专用与共享用量，采集器按 adapter 汇总。普通权限即可读取；本机 NVIDIA GeForce RTX 4090 已得到有效利用率与显存读数，集成显卡、混合显卡和虚拟环境另行验证。
 
 NVIDIA、AMD、Intel 厂商 SDK，以及温度、功耗和风扇功能保留为独立采集器扩展。普通权限、混合显卡和虚拟环境无法拿到的数据展示原因，不用管理员权限作为核心功能默认前提。
 
