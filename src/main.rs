@@ -32,7 +32,7 @@ fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|s| s == "--help") {
         println!(
-            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           打开或截图的页面：overview/cpu/memory/gpu/frames/disk/network/processes/remote/alerts/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja\n  --autostart           以开机自动启动的方式启动：开启“开机启动时直接收进托盘”时只显示托盘图标"
+            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           打开或截图的页面：overview/cpu/memory/gpu/frames/disk/network/processes/remote/alerts/screenshots/clipboard/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja\n  --autostart           以开机自动启动的方式启动：开启“开机启动时直接收进托盘”时只显示托盘图标"
         );
         return Ok(());
     }
@@ -96,6 +96,8 @@ fn run() -> Result<(), String> {
             Some("processes") => Page::Processes,
             Some("remote") => Page::Remote,
             Some("alerts") => Page::Alerts,
+            Some("screenshots") => Page::Screenshots,
+            Some("clipboard") => Page::Clipboard,
             Some("settings") => Page::Settings,
             _ => return Err("未知页面".into()),
         }),
@@ -141,6 +143,15 @@ fn run() -> Result<(), String> {
         notify: qqq_platform_windows::notify,
         prepare_notifications: qqq_platform_windows::prepare_notifications,
         restart_elevated: qqq_platform_windows::restart_elevated,
+        set_hotkey: qqq_platform_windows::set_hotkey,
+        screenshot_requested: qqq_platform_windows::screenshot_requested,
+        start_capture: qqq_platform_windows::start_capture,
+        take_capture: qqq_platform_windows::take_capture,
+        watch_clipboard: qqq_platform_windows::watch_clipboard,
+        take_clipboard: qqq_platform_windows::take_clipboard,
+        set_clipboard: qqq_platform_windows::set_clipboard,
+        open_path: qqq_platform_windows::open_path,
+        local_time: qqq_platform_windows::local_time,
     };
     let result = eframe::run_native(
         "QQQ Monitor",

@@ -47,6 +47,21 @@ pub enum Notice {
     NotificationFailed(Reason),
     /// The application could not start again with administrator rights.
     ElevationFailed(Reason),
+    /// The screenshot shortcut is not a valid key combination.
+    InvalidHotkey,
+    /// The number of screenshots or clipboard entries to keep is not one of the choices.
+    InvalidRecordLimit,
+    /// The screenshot shortcut could not be registered.
+    HotkeyUnavailable(Reason),
+    /// The screen could not be captured.
+    ScreenshotFailed(Reason),
+    /// A screenshot file could not be written, read or removed, with the system's
+    /// description.
+    ScreenshotFile(String),
+    /// Content could not be put on the clipboard.
+    ClipboardFailed(Reason),
+    /// A file or folder could not be opened.
+    OpenFailed(Reason),
 }
 
 /// State of the settings: how they were loaded, or what became of the latest save.

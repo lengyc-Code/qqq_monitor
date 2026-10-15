@@ -369,6 +369,52 @@ pub const STRINGS: Strings = Strings {
         }
     },
     alert_note: "规则读取各采集源的最新有效读数：读数越过阈值并保持设定的持续时间后推送 Windows 通知，回到另一侧并保持同样时间后恢复正常；同一规则两次通知至少间隔 1 分钟。窗口收进托盘或吸附为迷你状态栏时同样推送，点击通知可打开主窗口。",
+
+    screenshots_page: PageText {
+        nav: "截图",
+        title: "截图",
+        hint: "按快捷键截取屏幕区域，保留最近的截图",
+    },
+    tray_screenshot: "截图",
+    hours_ago: |v| format!("{v} 小时前"),
+    shot_take: "截图",
+    shot_hint: "拖动选择截图区域 · 单击截取整个屏幕 · 右键或 Esc 取消",
+    shot_folder: "打开文件夹",
+    shot_hotkey: "快捷键",
+    shot_hotkey_option: |key| format!("按 {key} 截图"),
+    shot_hotkey_change: "修改",
+    shot_hotkey_press: "请按下新的快捷键，Esc 取消",
+    shot_hotkey_invalid: "快捷键需要 Ctrl 或 Alt 加字母或数字，也可以是 F1 至 F24",
+    keep: "保留数量",
+    shot_count: |n| format!("{n} 张"),
+    shot_recent: "最近的截图",
+    shot_empty: "还没有截图。按下快捷键或点击「截图」开始。",
+    shot_loading: "正在读取截图…",
+    shot_note: |folder| {
+        format!(
+            "松开鼠标后，所选区域复制到剪贴板并以 PNG 保存在 {folder}；超出保留数量时先删除最早的截图。在本页点击「截图」时，主窗口先隐藏再截取。"
+        )
+    },
+    copy: "复制",
+    open: "打开",
+    delete: "删除",
+
+    clipboard_page: PageText {
+        nav: "剪贴板",
+        title: "剪贴板管理",
+        hint: "记录复制过的内容，一键复制回剪贴板",
+    },
+    clip_option: "记录复制到剪贴板的文本、图片与文件",
+    clip_off: "剪贴板管理未开启。开启后会记录此后复制的内容。",
+    clip_clear: "清空记录",
+    clip_count: |n| format!("{n} 条"),
+    clip_recent: "剪贴板记录",
+    clip_empty: "还没有记录。复制文本、图片或文件后会显示在这里。",
+    clip_text: |n| format!("文本 · {n} 字"),
+    clip_picture: |w, h| format!("图片 · {w} × {h}"),
+    clip_files: |n| format!("{n} 个文件"),
+    clip_more: |n| format!("另有 {n} 项"),
+    clip_note: "点击记录即可复制回剪贴板，最新的记录排在最前。记录只保存在内存中，退出程序后清空；密码管理器标记为不记录的内容会被跳过；图片合计最多占用 256 MiB 内存。",
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -470,6 +516,8 @@ fn reason(reason: &Reason) -> String {
         Reason::NoFrames => "前台应用没有通过 Direct3D 呈现新画面".into(),
         Reason::NotificationsOff => "系统设置中已关闭本程序的通知".into(),
         Reason::Declined => "操作已取消".into(),
+        Reason::HotkeyTaken => "快捷键已被其他程序占用".into(),
+        Reason::ClipboardBusy => "剪贴板正被其他程序占用".into(),
     }
 }
 
@@ -504,6 +552,15 @@ fn notice(notice: &Notice) -> String {
         Notice::ElevationFailed(reason) => {
             format!("无法以管理员身份重新启动：{}", self::reason(reason))
         }
+        Notice::InvalidHotkey => "截图快捷键无效".into(),
+        Notice::InvalidRecordLimit => "保留数量不在可选范围内".into(),
+        Notice::HotkeyUnavailable(reason) => {
+            format!("无法注册截图快捷键：{}", self::reason(reason))
+        }
+        Notice::ScreenshotFailed(reason) => format!("截图失败：{}", self::reason(reason)),
+        Notice::ScreenshotFile(error) => format!("截图文件操作失败：{error}"),
+        Notice::ClipboardFailed(reason) => format!("无法使用剪贴板：{}", self::reason(reason)),
+        Notice::OpenFailed(reason) => format!("无法打开：{}", self::reason(reason)),
     }
 }
 

@@ -1,12 +1,12 @@
 #[path = "pages/mod.rs"]
 mod pages;
 
-use crate::{components, dock, i18n, mascot, minibar, pixel, theme, tray};
+use crate::{clips, components, dock, i18n, mascot, minibar, pixel, shots, theme, tray};
 use eframe::egui::{self, RichText, pos2, vec2};
-use qqq_domain::{DeviceKind, MetricKey};
+use qqq_domain::{DeviceKind, Hotkey, MetricKey};
 use qqq_engine::{
     AlertState, AppConfig, CommandOutcome, DockEdge, Language, MonitorClient, MonitorCommand,
-    MonitorView, Notice,
+    MonitorView, Notice, data_directory,
 };
 use std::{
     path::PathBuf,
@@ -26,6 +26,8 @@ pub enum Page {
     Processes,
     Remote,
     Alerts,
+    Screenshots,
+    Clipboard,
     Settings,
 }
 impl Page {
@@ -42,6 +44,8 @@ impl Page {
             Self::Processes => &t.processes_page,
             Self::Remote => &t.remote_page,
             Self::Alerts => &t.alerts_page,
+            Self::Screenshots => &t.screenshots_page,
+            Self::Clipboard => &t.clipboard_page,
             Self::Settings => &t.settings_page,
         }
     }
@@ -58,6 +62,8 @@ impl Page {
             Self::Processes => "PROCESSES",
             Self::Remote => "REMOTE",
             Self::Alerts => "ALERTS",
+            Self::Screenshots => "CAPTURE",
+            Self::Clipboard => "CLIPBOARD",
             Self::Settings => "CONFIG",
         }
     }
@@ -98,6 +104,18 @@ pub struct DesktopApp {
     system_language: Language,
     /// Whether the program starts at sign-in, read when the settings page opens.
     autostart: Option<bool>,
+    shots: shots::Shots,
+    /// Number of screenshots the library was last told to keep.
+    shots_kept: usize,
+    snip: pages::screenshots::Snip,
+    screenshot_page: pages::screenshots::ScreenshotPage,
+    /// Screenshot shortcut last registered; `None` until the first registration.
+    hotkey: Option<Option<Hotkey>>,
+    clips: clips::Clips,
+    /// Number of clipboard entries last kept.
+    clips_kept: usize,
+    /// Whether the clipboard is followed; `None` until first decided.
+    watching: Option<bool>,
 }
 
 impl DesktopApp {
@@ -128,6 +146,19 @@ impl DesktopApp {
             .unwrap_or(Page::Overview);
         Self {
             dock: dock::Dock::new(&config),
+            shots: shots::Shots::new(
+                &cc.egui_ctx,
+                data_directory().join("screenshots"),
+                config.screenshot_history,
+                desktop.local_time,
+            ),
+            shots_kept: config.screenshot_history,
+            snip: Default::default(),
+            screenshot_page: Default::default(),
+            hotkey: None,
+            clips: Default::default(),
+            clips_kept: config.clipboard_history,
+            watching: None,
             desktop,
             tray: if start_in_tray {
                 tray::Tray::hidden(&desktop)
@@ -180,6 +211,14 @@ impl DesktopApp {
             }
             Err(error) => self.message = Some(error),
         }
+    }
+    /// Applies a change to both the draft and the accepted settings and saves it at once,
+    /// like the language choice.
+    fn apply_now(&mut self, change: impl Fn(&mut AppConfig)) {
+        change(&mut self.config);
+        let mut config = self.active_config.clone();
+        change(&mut config);
+        self.save_config(config, true);
     }
     fn select_initial_devices(&mut self) {
         // Devices of this computer; remote hosts have their own page.
@@ -257,7 +296,11 @@ impl DesktopApp {
                 .map(|metric| MetricKey::new("frames", metric))
                 .into(),
             Page::Remote => self.remote_query(),
-            Page::Processes | Page::Alerts | Page::Settings => Vec::new(),
+            Page::Processes
+            | Page::Alerts
+            | Page::Screenshots
+            | Page::Clipboard
+            | Page::Settings => Vec::new(),
         };
         if keys != self.last_query || self.range != self.last_range {
             match self.client.try_command(MonitorCommand::SetQuery {
@@ -322,12 +365,14 @@ impl DesktopApp {
                     (Page::Processes, &pixel::ICON_PROCESS),
                     (Page::Remote, &pixel::ICON_REMOTE),
                     (Page::Alerts, &pixel::ICON_BELL),
+                    (Page::Screenshots, &pixel::ICON_CAMERA),
+                    (Page::Clipboard, &pixel::ICON_CLIPBOARD),
                     (Page::Settings, &pixel::ICON_GEAR),
                 ];
-                // Buttons shrink from 40 towards 30 points on shorter windows, leaving room
+                // Buttons shrink from 40 towards 26 points on shorter windows, leaving room
                 // for the mascot card below them; one point absorbs pixel rounding.
                 let room = ui.available_height() - mascot::room(ui) - 1.0;
-                let pitch = (room / pages.len() as f32).clamp(36.0, 46.0);
+                let pitch = (room / pages.len() as f32).clamp(32.0, 46.0);
                 let height = pitch - ui.spacing().item_spacing.y;
                 for (page, icon) in pages {
                     if theme::nav_button(
@@ -378,7 +423,14 @@ impl DesktopApp {
                         .size(12.0),
                 );
             });
-            if !matches!(self.page, Page::Processes | Page::Alerts | Page::Settings) {
+            if !matches!(
+                self.page,
+                Page::Processes
+                    | Page::Alerts
+                    | Page::Screenshots
+                    | Page::Clipboard
+                    | Page::Settings
+            ) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     for (secs, label) in [
@@ -441,6 +493,10 @@ fn backdrop(ui: &egui::Ui) {
 }
 
 impl eframe::App for DesktopApp {
+    fn on_exit(&mut self) {
+        // A screenshot taken just before exiting is still written.
+        self.shots.finish(Duration::from_secs(2));
+    }
     fn logic(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         if let Some(view) = self.client.try_latest_view() {
             self.view = view;
@@ -473,6 +529,8 @@ impl eframe::App for DesktopApp {
         self.select_initial_devices();
         self.query();
         self.watch_processes(ctx);
+        self.screenshot_logic(ctx);
+        self.clipboard_logic(ctx);
         if self.page == Page::Alerts {
             // Windows notices a new notification identity with a delay, so it is set up
             // before the first alert.
@@ -671,6 +729,8 @@ impl eframe::App for DesktopApp {
                             Page::Processes => {}
                             Page::Remote => self.remote(ui, &view),
                             Page::Alerts => self.alerts(ui, &view),
+                            Page::Screenshots => self.screenshots(ui),
+                            Page::Clipboard => self.clipboard(ui),
                             Page::Settings => self.settings(ui, &view),
                         }
                         ui.add_space(8.0);

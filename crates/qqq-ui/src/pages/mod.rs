@@ -1,4 +1,5 @@
 pub(super) mod alerts;
+mod clipboard;
 mod cpu;
 mod disk;
 mod frames;
@@ -8,4 +9,5 @@ mod network;
 mod overview;
 pub(super) mod processes;
 pub(super) mod remote;
+pub(super) mod screenshots;
 mod settings;

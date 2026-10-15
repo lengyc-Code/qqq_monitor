@@ -1,11 +1,14 @@
-//! Notification-area icon and taskbar button of the application window.
+//! Notification-area icon and taskbar button of the application window, and the
+//! screenshot shortcut.
 //!
 //! The icon belongs to a hidden top-level window created on the GUI thread. The message
-//! loop the GUI already runs delivers it the icon's clicks, its menu and the
-//! `TaskbarCreated` broadcast that follows an Explorer restart. All functions act on the
-//! state of the calling thread, so only the GUI thread that called [`attach`] reaches it.
+//! loop the GUI already runs delivers it the icon's clicks, its menu, the
+//! `TaskbarCreated` broadcast that follows an Explorer restart, the screenshot shortcut
+//! and clipboard changes. All functions act on the state of the calling thread, so only
+//! the GUI thread that called [`attach`] reaches it.
 
-use crate::native::APP_ICON;
+use crate::{clipboard, native::APP_ICON};
+use qqq_domain::{Hotkey, HotkeyKey, Reason};
 use std::{
     cell::{Cell, OnceCell, RefCell},
     mem::size_of,
@@ -13,7 +16,10 @@ use std::{
 };
 use windows::{
     Win32::{
-        Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+        Foundation::{
+            ERROR_HOTKEY_ALREADY_REGISTERED, ERROR_INVALID_WINDOW_HANDLE, HWND, LPARAM, LRESULT,
+            WPARAM,
+        },
         Graphics::Dwm::{DWMWA_CLOAK, DwmSetWindowAttribute},
         System::{
             Com::{
@@ -23,6 +29,9 @@ use windows::{
         },
         UI::{
             HiDpi::{GetDpiForSystem, GetSystemMetricsForDpi},
+            Input::KeyboardAndMouse::{
+                MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey, UnregisterHotKey,
+            },
             Shell::{
                 ITaskbarList, NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE,
                 NIM_MODIFY, NIM_SETVERSION, NIN_SELECT, NINF_KEY, NOTIFY_ICON_MESSAGE,
@@ -30,11 +39,13 @@ use windows::{
             },
             WindowsAndMessaging::{
                 AppendMenuW, ChangeWindowMessageFilterEx, CreatePopupMenu, CreateWindowExW,
-                DefWindowProcW, DestroyMenu, HICON, IMAGE_ICON, IsWindowVisible, LR_DEFAULTCOLOR,
-                LoadImageW, MF_STRING, MSGFLT_ALLOW, PostMessageW, RegisterClassW,
-                RegisterWindowMessageW, SM_CXSMICON, SetForegroundWindow, SetMenuDefaultItem,
-                TPM_BOTTOMALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
-                WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_NULL, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
+                DefWindowProcW, DestroyMenu, HICON, IMAGE_ICON, IsWindowVisible, KillTimer,
+                LR_DEFAULTCOLOR, LoadImageW, MF_SEPARATOR, MF_STRING, MSGFLT_ALLOW, PostMessageW,
+                RegisterClassW, RegisterWindowMessageW, SM_CXSMICON, SetForegroundWindow,
+                SetMenuDefaultItem, SetTimer, TPM_BOTTOMALIGN, TPM_NONOTIFY, TPM_RETURNCMD,
+                TPM_RIGHTBUTTON, TrackPopupMenu, WM_APP, WM_CLIPBOARDUPDATE, WM_CLOSE,
+                WM_CONTEXTMENU, WM_HOTKEY, WM_NULL, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW,
+                WS_POPUP,
             },
         },
     },
@@ -53,11 +64,18 @@ const ICON_ID: u32 = 1;
 const KEY_SELECT: u32 = NIN_SELECT | NINF_KEY;
 const MENU_OPEN: usize = 1;
 const MENU_EXIT: usize = 2;
+const MENU_SCREENSHOT: usize = 3;
+/// Identity of the screenshot shortcut among the window's shortcuts.
+const HOTKEY_ID: i32 = 1;
+/// Timer that asks for a screenshot once the icon's menu has faded from the screen.
+const SCREENSHOT_TIMER: usize = 1;
+const MENU_FADE_MS: u32 = 250;
 
-/// Icon text: the tooltip and the labels of the "open" and "exit" menu items.
+/// Icon text: the tooltip and the labels of the "open", "screenshot" and "exit" menu items.
 struct Labels {
     tip: String,
     open: String,
+    screenshot: String,
     exit: String,
 }
 
@@ -74,6 +92,8 @@ struct Tray {
     no_button: Cell<bool>,
     /// The user asked for the application window since the last [`opened`] call.
     opened: Cell<bool>,
+    /// The user asked for a screenshot since the last [`screenshot_requested`] call.
+    screenshot: Cell<bool>,
     wake: Box<dyn Fn()>,
 }
 
@@ -133,8 +153,9 @@ pub fn attach(main: isize, wake: impl Fn() + 'static) -> bool {
     };
     // SAFETY: the message name is a static NUL-terminated string.
     let taskbar_created = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
-    for message in [NOTIFY, taskbar_created] {
-        // Explorer runs at medium integrity; an elevated instance must accept its messages.
+    for message in [NOTIFY, taskbar_created, WM_CLIPBOARDUPDATE] {
+        // Explorer and the applications that copy run at medium integrity; an elevated
+        // instance must accept their messages.
         // SAFETY: `window` belongs to this thread; no filter information is requested.
         let _ = unsafe { ChangeWindowMessageFilterEx(window, message, MSGFLT_ALLOW, None) };
     }
@@ -151,6 +172,7 @@ pub fn attach(main: isize, wake: impl Fn() + 'static) -> bool {
             labels: RefCell::new(None),
             no_button: Cell::new(false),
             opened: Cell::new(false),
+            screenshot: Cell::new(false),
             wake: Box::new(wake),
         });
     });
@@ -187,13 +209,24 @@ fn small_icon(module: windows::Win32::Foundation::HINSTANCE) -> HICON {
     .map_or(HICON::default(), |icon| HICON(icon.0))
 }
 
-/// Shows the icon with a tooltip and the labels of its "open" and "exit" menu items, or
-/// updates the text of the shown icon.
-pub fn show(tip: &str, open: &str, exit: &str) {
+/// The hidden window of the calling thread's tray.
+pub(crate) fn window() -> Option<HWND> {
+    with(|tray| tray.window)
+}
+
+/// Asks the GUI to poll the tray, from the GUI thread.
+pub(crate) fn wake() {
+    with(|tray| (tray.wake)());
+}
+
+/// Shows the icon with a tooltip and the labels of its "open", "screenshot" and "exit" menu
+/// items, or updates the text of the shown icon.
+pub fn show(tip: &str, open: &str, screenshot: &str, exit: &str) {
     with(|tray| {
         let labels = Labels {
             tip: tip.into(),
             open: open.into(),
+            screenshot: screenshot.into(),
             exit: exit.into(),
         };
         if tray.labels.replace(Some(labels)).is_some() {
@@ -249,6 +282,67 @@ pub fn cloak(cloaked: bool) {
 /// Whether the user asked for the application window from the icon since the last call.
 pub fn opened() -> bool {
     with(|tray| tray.opened.take()).unwrap_or(false)
+}
+
+/// Registers the screenshot shortcut, replacing the previous one, or with `None` removes it.
+pub fn set_hotkey(hotkey: Option<Hotkey>) -> Result<(), Reason> {
+    with(|tray| {
+        // SAFETY: the shortcut belongs to this thread's own window; removing a shortcut that
+        // is not registered only fails.
+        let _ = unsafe { UnregisterHotKey(Some(tray.window), HOTKEY_ID) };
+        let Some(hotkey) = hotkey else {
+            return Ok(());
+        };
+        let mut modifiers = MOD_NOREPEAT;
+        for (held, modifier) in [
+            (hotkey.ctrl, MOD_CONTROL),
+            (hotkey.alt, MOD_ALT),
+            (hotkey.shift, MOD_SHIFT),
+        ] {
+            if held {
+                modifiers |= modifier;
+            }
+        }
+        // SAFETY: plain value arguments naming this thread's own window.
+        unsafe {
+            RegisterHotKey(
+                Some(tray.window),
+                HOTKEY_ID,
+                modifiers,
+                virtual_key(hotkey.key),
+            )
+        }
+        .map_err(|error| {
+            if error.code() == ERROR_HOTKEY_ALREADY_REGISTERED.to_hresult() {
+                Reason::HotkeyTaken
+            } else {
+                Reason::CallFailed {
+                    api: "RegisterHotKey",
+                    code: error.code().0 as u32,
+                }
+            }
+        })
+    })
+    .unwrap_or(Err(Reason::CallFailed {
+        api: "RegisterHotKey",
+        code: ERROR_INVALID_WINDOW_HANDLE.0,
+    }))
+}
+
+/// Whether the user asked for a screenshot with the shortcut or from the icon's menu since
+/// the last call.
+pub fn screenshot_requested() -> bool {
+    with(|tray| tray.screenshot.take()).unwrap_or(false)
+}
+
+/// Virtual-key code of a shortcut key.
+fn virtual_key(key: HotkeyKey) -> u32 {
+    match key {
+        // Letters and digits share their ASCII codes.
+        HotkeyKey::Letter(c) | HotkeyKey::Digit(c) => c as u32,
+        // VK_F1 is 0x70, and F1 to F24 follow it in order.
+        HotkeyKey::Function(n) => 0x70 + u32::from(n) - 1,
+    }
 }
 
 impl Tray {
@@ -322,15 +416,21 @@ impl Tray {
         self.opened.set(true);
         (self.wake)();
     }
+
+    fn request_screenshot(&self) {
+        self.screenshot.set(true);
+        (self.wake)();
+    }
 }
 
 /// Shows the icon's menu at a screen point and acts on the chosen item.
 fn menu(window: HWND, x: i32, y: i32) {
-    let Some(Some((open, exit, main))) = with(|tray| {
+    let Some(Some((open, screenshot, exit, main))) = with(|tray| {
         let labels = tray.labels.borrow();
         let labels = labels.as_ref()?;
         Some((
             HSTRING::from(&labels.open),
+            HSTRING::from(&labels.screenshot),
             HSTRING::from(&labels.exit),
             tray.main,
         ))
@@ -345,6 +445,8 @@ fn menu(window: HWND, x: i32, y: i32) {
             return;
         };
         let _ = AppendMenuW(menu, MF_STRING, MENU_OPEN, &open);
+        let _ = AppendMenuW(menu, MF_STRING, MENU_SCREENSHOT, &screenshot);
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(menu, MF_STRING, MENU_EXIT, &exit);
         let _ = SetMenuDefaultItem(menu, MENU_OPEN as u32, 0);
         // The menu closes on an outside click only while its owner is in the foreground.
@@ -366,6 +468,11 @@ fn menu(window: HWND, x: i32, y: i32) {
         MENU_OPEN => {
             with(Tray::open);
         }
+        // The screen is captured once the menu has left it.
+        // SAFETY: the timer belongs to this thread's own window.
+        MENU_SCREENSHOT => unsafe {
+            SetTimer(Some(window), SCREENSHOT_TIMER, MENU_FADE_MS, None);
+        },
         // Closing goes through the window's own close path, which saves the configuration.
         // SAFETY: posting to a window handle has no memory preconditions.
         MENU_EXIT => unsafe {
@@ -405,6 +512,20 @@ unsafe extern "system" fn procedure(
         }
         OPEN => {
             with(Tray::open);
+            LRESULT(0)
+        }
+        WM_HOTKEY if wparam.0 == HOTKEY_ID as usize => {
+            with(Tray::request_screenshot);
+            LRESULT(0)
+        }
+        WM_TIMER if wparam.0 == SCREENSHOT_TIMER => {
+            // SAFETY: stops this thread's own one-shot timer.
+            let _ = unsafe { KillTimer(Some(window), SCREENSHOT_TIMER) };
+            with(Tray::request_screenshot);
+            LRESULT(0)
+        }
+        WM_CLIPBOARDUPDATE => {
+            clipboard::changed();
             LRESULT(0)
         }
         _ => {

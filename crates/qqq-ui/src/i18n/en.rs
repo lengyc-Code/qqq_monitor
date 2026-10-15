@@ -390,6 +390,64 @@ pub const STRINGS: Strings = Strings {
         }
     },
     alert_note: "Rules read the latest valid reading of each source. Once a reading stays past its threshold for the hold time, a Windows notification arrives; once it stays back on the other side for the same time, the rule is normal again. A rule notifies at most once a minute. Notifications also arrive while the window sits in the tray or docks as the mini bar, and clicking one opens the main window.",
+
+    screenshots_page: PageText {
+        nav: "Screenshots",
+        title: "Screenshots",
+        hint: "Capture a screen region with a shortcut and keep the latest shots",
+    },
+    tray_screenshot: "Take screenshot",
+    hours_ago: |v| format!("{v} h ago"),
+    shot_take: "Screenshot",
+    shot_hint: "Drag to select a region · Click to capture the whole screen · Right-click or Esc to cancel",
+    shot_folder: "Open folder",
+    shot_hotkey: "Shortcut",
+    shot_hotkey_option: |key| format!("Press {key} to take a screenshot"),
+    shot_hotkey_change: "Change",
+    shot_hotkey_press: "Press the new shortcut, or Esc to cancel",
+    shot_hotkey_invalid: "Use Ctrl or Alt with a letter or digit, or one of F1 to F24",
+    keep: "Keep",
+    shot_count: |n| match n {
+        1 => "1 screenshot".into(),
+        _ => format!("{n} screenshots"),
+    },
+    shot_recent: "Recent screenshots",
+    shot_empty: "No screenshots yet. Press the shortcut or click Screenshot to start.",
+    shot_loading: "Reading screenshots…",
+    shot_note: |folder| {
+        format!(
+            "When you release the mouse, the selected region is copied to the clipboard and saved as a PNG in {folder}. Beyond the number to keep, the oldest screenshots are removed first. Clicking Screenshot on this page hides the main window before the capture."
+        )
+    },
+    copy: "Copy",
+    open: "Open",
+    delete: "Delete",
+
+    clipboard_page: PageText {
+        nav: "Clipboard",
+        title: "Clipboard history",
+        hint: "Keep what you copy and put any of it back on the clipboard",
+    },
+    clip_option: "Record text, pictures and files copied to the clipboard",
+    clip_off: "Clipboard history is off. Once on, it records what you copy from then on.",
+    clip_clear: "Clear history",
+    clip_count: |n| match n {
+        1 => "1 entry".into(),
+        _ => format!("{n} entries"),
+    },
+    clip_recent: "Clipboard history",
+    clip_empty: "Nothing recorded yet. Text, pictures and files you copy appear here.",
+    clip_text: |n| match n {
+        1 => "Text · 1 character".into(),
+        _ => format!("Text · {n} characters"),
+    },
+    clip_picture: |w, h| format!("Picture · {w} × {h}"),
+    clip_files: |n| match n {
+        1 => "1 file".into(),
+        _ => format!("{n} files"),
+    },
+    clip_more: |n| format!("and {n} more"),
+    clip_note: "Click an entry to copy it back to the clipboard; the newest entry comes first. History stays in memory and clears when the program exits. Content that password managers mark as private is skipped, and pictures take at most 256 MiB of memory together.",
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -500,6 +558,8 @@ fn reason(reason: &Reason) -> String {
             "notifications of this app are off in the system settings".into()
         }
         Reason::Declined => "the request was declined".into(),
+        Reason::HotkeyTaken => "another application already uses the shortcut".into(),
+        Reason::ClipboardBusy => "another application is using the clipboard".into(),
     }
 }
 
@@ -547,6 +607,22 @@ fn notice(notice: &Notice) -> String {
                 self::reason(reason)
             )
         }
+        Notice::InvalidHotkey => "The screenshot shortcut is invalid".into(),
+        Notice::InvalidRecordLimit => "The number to keep is not one of the choices".into(),
+        Notice::HotkeyUnavailable(reason) => {
+            format!(
+                "The screenshot shortcut is unavailable: {}",
+                self::reason(reason)
+            )
+        }
+        Notice::ScreenshotFailed(reason) => {
+            format!("The screenshot failed: {}", self::reason(reason))
+        }
+        Notice::ScreenshotFile(error) => format!("Screenshot file error: {error}"),
+        Notice::ClipboardFailed(reason) => {
+            format!("The clipboard is unavailable: {}", self::reason(reason))
+        }
+        Notice::OpenFailed(reason) => format!("Could not open: {}", self::reason(reason)),
     }
 }
 

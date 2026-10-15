@@ -78,7 +78,9 @@ impl Tray {
         if icon != self.icon {
             let t = i18n::t();
             match icon {
-                Some(_) => (desktop.show_tray)(t.window_title, t.tray_open, t.tray_exit),
+                Some(_) => {
+                    (desktop.show_tray)(t.window_title, t.tray_open, t.tray_screenshot, t.tray_exit)
+                }
                 None => (desktop.hide_tray)(),
             }
             self.icon = icon;

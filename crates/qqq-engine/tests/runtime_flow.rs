@@ -200,6 +200,31 @@ fn config_recovers_fields_and_preserves_corrupt_file_until_explicit_save() {
     assert_eq!(ConfigStore::load(scratch.config()).config, loaded.config);
 }
 
+#[test]
+fn screenshot_and_clipboard_settings_recover_one_by_one() {
+    let scratch = Scratch::new();
+    fs::write(
+        scratch.config(),
+        "screenshot_hotkey = 'Shift+A'\nscreenshot_history = 50\nclipboard_manager = true\nclipboard_history = 7\n",
+    )
+    .unwrap();
+    let loaded = ConfigStore::load(scratch.config());
+    assert_eq!(loaded.warning, Some(Notice::InvalidValue));
+    assert_eq!(loaded.config.screenshot_hotkey, "Ctrl+Alt+A");
+    assert_eq!(loaded.config.hotkey(), Some(Hotkey::DEFAULT));
+    assert_eq!(loaded.config.screenshot_history, 50);
+    assert!(loaded.config.clipboard_manager);
+    assert_eq!(loaded.config.clipboard_history, 50);
+    let mut config = loaded.config.clone();
+    config.screenshot_hotkey = "Ctrl+Shift+F2".into();
+    config.screenshot_hotkey_enabled = false;
+    let mut store = loaded.store;
+    store.save(&config, true).unwrap();
+    assert_eq!(ConfigStore::load(scratch.config()).config, config);
+    config.screenshot_history = 30;
+    assert_eq!(config.validate(), Err(Notice::InvalidRecordLimit));
+}
+
 struct FakeProcesses {
     acted: Sender<(ProcessId, ProcessAction)>,
 }

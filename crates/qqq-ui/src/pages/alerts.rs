@@ -213,16 +213,6 @@ fn state_text(view: &MonitorView, rule: &AlertRule) -> (String, Color32) {
     }
 }
 
-/// How long ago something happened.
-fn ago(secs: u64) -> String {
-    let t = i18n::t();
-    if secs < 60 {
-        (t.seconds_ago)(secs as f64)
-    } else {
-        (t.minutes_ago)(secs / 60)
-    }
-}
-
 impl DesktopApp {
     /// Saves the rules right away, like the remote hosts.
     fn save_alerts(&mut self, rules: Vec<AlertRule>) {

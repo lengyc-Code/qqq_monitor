@@ -37,6 +37,8 @@ impl DesktopApp {
                         t.edge_docking,
                         t.minimize_to_tray,
                         t.frame_monitoring,
+                        t.screenshots_page.nav,
+                        t.clipboard_page.nav,
                         t.autostart,
                     ],
                     14.0,
@@ -120,6 +122,24 @@ impl DesktopApp {
                     let mut on = self.active_config.frame_monitoring;
                     if ui.checkbox(&mut on, t.frame_monitoring_option).changed() {
                         self.set_frame_monitoring(on);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    row_label(ui, t.screenshots_page.nav);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    // Applied and saved at once, like the switch on the screenshots page.
+                    let mut on = self.active_config.screenshot_hotkey_enabled;
+                    let option = (t.shot_hotkey_option)(&self.active_config.screenshot_hotkey);
+                    if ui.checkbox(&mut on, option).changed() {
+                        self.apply_now(|config| config.screenshot_hotkey_enabled = on);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    row_label(ui, t.clipboard_page.nav);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    let mut on = self.active_config.clipboard_manager;
+                    if ui.checkbox(&mut on, t.clip_option).changed() {
+                        self.apply_now(|config| config.clipboard_manager = on);
                     }
                 });
                 ui.horizontal(|ui| {

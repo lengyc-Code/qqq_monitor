@@ -9,7 +9,7 @@
 
 use crate::i18n;
 use eframe::egui::{self, Pos2, Rect, Vec2, ViewportCommand, pos2, vec2};
-use qqq_domain::Reason;
+use qqq_domain::{CaptureEnd, Clip, Hotkey, Reason};
 use qqq_engine::{AppConfig, DockEdge};
 use std::time::Duration;
 
@@ -52,9 +52,9 @@ pub struct Desktop {
     pub covers: fn([f32; 2]) -> bool,
     /// Whether a mouse button is held, including while the system moves the window.
     pub button_held: fn() -> bool,
-    /// Shows the notification-area icon with a tooltip and the labels of its "open" and
-    /// "exit" menu items, or updates the text of the shown icon.
-    pub show_tray: fn(&str, &str, &str),
+    /// Shows the notification-area icon with a tooltip and the labels of its "open",
+    /// "screenshot" and "exit" menu items, or updates the text of the shown icon.
+    pub show_tray: fn(&str, &str, &str, &str),
     /// Removes the notification-area icon.
     pub hide_tray: fn(),
     /// Whether the user asked for the window from the icon since the last call.
@@ -75,6 +75,27 @@ pub struct Desktop {
     pub prepare_notifications: fn(),
     /// Starts the application again with administrator rights and these arguments.
     pub restart_elevated: fn(&str) -> Result<(), Reason>,
+    /// Registers the screenshot shortcut in place of the previous one, or with `None`
+    /// removes it.
+    pub set_hotkey: fn(Option<Hotkey>) -> Result<(), Reason>,
+    /// Whether the user asked for a screenshot with the shortcut or from the icon's menu
+    /// since the last call.
+    pub screenshot_requested: fn() -> bool,
+    /// Freezes the screen for the user to select a region, showing this hint.
+    pub start_capture: fn(&str) -> Result<(), Reason>,
+    /// How the latest region selection ended, once.
+    pub take_capture: fn() -> Option<CaptureEnd>,
+    /// Starts or stops following the clipboard; starting counts the current content as a
+    /// change.
+    pub watch_clipboard: fn(bool) -> Result<(), Reason>,
+    /// Text, picture or files put on the clipboard since the last call.
+    pub take_clipboard: fn() -> Option<Clip>,
+    /// Puts content on the clipboard.
+    pub set_clipboard: fn(&Clip) -> Result<(), Reason>,
+    /// Opens a file with its default program, or a folder.
+    pub open_path: fn(&std::path::Path) -> Result<(), Reason>,
+    /// Local date and time as year, month, day, hour, minute, second and millisecond.
+    pub local_time: fn(std::time::SystemTime) -> Option<[u16; 7]>,
 }
 
 /// Work area of the monitor around a window, in points, and which of its

@@ -369,6 +369,53 @@ pub struct Strings {
     /// Notification text: value, threshold, whether above, and the hold time if any.
     pub alert_body: fn(&str, &str, bool, Option<&str>) -> String,
     pub alert_note: &'static str,
+
+    // Screenshots.
+    pub screenshots_page: PageText,
+    /// Screenshot item of the notification-area icon menu.
+    pub tray_screenshot: &'static str,
+    pub hours_ago: fn(u64) -> String,
+    pub shot_take: &'static str,
+    /// Shown over the frozen screen while the user selects a region.
+    pub shot_hint: &'static str,
+    pub shot_folder: &'static str,
+    pub shot_hotkey: &'static str,
+    /// Option that registers the shortcut, named by its keys.
+    pub shot_hotkey_option: fn(&str) -> String,
+    pub shot_hotkey_change: &'static str,
+    pub shot_hotkey_press: &'static str,
+    pub shot_hotkey_invalid: &'static str,
+    /// Label of the number of screenshots or clipboard entries kept.
+    pub keep: &'static str,
+    /// Number of screenshots.
+    pub shot_count: fn(usize) -> String,
+    pub shot_recent: &'static str,
+    pub shot_empty: &'static str,
+    pub shot_loading: &'static str,
+    /// What happens to a selected region, with the folder that keeps the files.
+    pub shot_note: fn(&str) -> String,
+    pub copy: &'static str,
+    pub open: &'static str,
+    pub delete: &'static str,
+
+    // Clipboard.
+    pub clipboard_page: PageText,
+    pub clip_option: &'static str,
+    pub clip_off: &'static str,
+    pub clip_clear: &'static str,
+    /// Number of clipboard entries.
+    pub clip_count: fn(usize) -> String,
+    pub clip_recent: &'static str,
+    pub clip_empty: &'static str,
+    /// A text entry with its number of characters.
+    pub clip_text: fn(usize) -> String,
+    /// A picture entry with its width and height.
+    pub clip_picture: fn(u32, u32) -> String,
+    /// A files entry with its number of files.
+    pub clip_files: fn(usize) -> String,
+    /// Files beyond those listed.
+    pub clip_more: fn(usize) -> String,
+    pub clip_note: &'static str,
 }
 
 /// Index of the active language in [`Language::ALL`].

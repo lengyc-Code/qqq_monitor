@@ -113,6 +113,10 @@ pub enum Reason {
     NotificationsOff,
     /// The user declined the request, such as the prompt for administrator rights.
     Declined,
+    /// Another application already uses the keyboard shortcut.
+    HotkeyTaken,
+    /// Another application keeps the clipboard open.
+    ClipboardBusy,
 }
 
 #[derive(Clone, Debug)]

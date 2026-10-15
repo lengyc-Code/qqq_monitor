@@ -2,7 +2,7 @@ use qqq_domain::{CollectorError, Reason};
 use std::{collections::BTreeMap, mem::size_of, ptr};
 use windows::{
     Win32::{
-        Foundation::{ERROR_CANCELLED, HWND, LPARAM, POINT, RECT, WPARAM},
+        Foundation::{ERROR_CANCELLED, FILETIME, HWND, LPARAM, POINT, RECT, SYSTEMTIME, WPARAM},
         Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME},
         Graphics::{
             Dxgi::{
@@ -15,7 +15,11 @@ use windows::{
         },
         NetworkManagement::{IpHelper::*, Ndis::IfOperStatusUp},
         Storage::FileSystem::{GetDriveTypeW, GetVolumeNameForVolumeMountPointW},
-        System::{LibraryLoader::GetModuleHandleW, Performance::*},
+        System::{
+            LibraryLoader::GetModuleHandleW,
+            Performance::*,
+            Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime},
+        },
         UI::{
             HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi},
             Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON},
@@ -144,6 +148,49 @@ pub fn restart_elevated(arguments: &str) -> Result<(), Reason> {
                 code: error.code().0 as u32,
             }
         }
+    })
+}
+
+/// Local date and time of `at` as year, month, day, hour, minute, second and millisecond.
+pub fn local_time(at: std::time::SystemTime) -> Option<[u16; 7]> {
+    // FILETIME counts 100-nanosecond intervals from 1601-01-01.
+    let ticks =
+        at.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos() / 100 + 116_444_736_000_000_000;
+    let file = FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    };
+    let (mut utc, mut local) = (SYSTEMTIME::default(), SYSTEMTIME::default());
+    // SAFETY: the structures are locals that outlive the calls; the current time zone is used.
+    unsafe {
+        FileTimeToSystemTime(&file, &mut utc).ok()?;
+        SystemTimeToTzSpecificLocalTime(None, &utc, &mut local).ok()?;
+    }
+    Some([
+        local.wYear,
+        local.wMonth,
+        local.wDay,
+        local.wHour,
+        local.wMinute,
+        local.wSecond,
+        local.wMilliseconds,
+    ])
+}
+
+/// Opens a file with its default program, or a folder in File Explorer.
+pub fn open_path(path: &std::path::Path) -> Result<(), Reason> {
+    let file = HSTRING::from(path.as_os_str());
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        lpVerb: w!("open"),
+        lpFile: PCWSTR(file.as_ptr()),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    // SAFETY: the structure has its size set and the strings it points to outlive the call.
+    unsafe { ShellExecuteExW(&mut info) }.map_err(|error| Reason::CallFailed {
+        api: "ShellExecuteExW",
+        code: error.code().0 as u32,
     })
 }
 

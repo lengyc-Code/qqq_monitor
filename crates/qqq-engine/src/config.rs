@@ -1,6 +1,6 @@
 use crate::{AlertRule, MAX_ALERT_RULES, Notice};
 use directories::ProjectDirs;
-use qqq_domain::{RemoteAuth, RemoteEndpoint};
+use qqq_domain::{Hotkey, RemoteAuth, RemoteEndpoint};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -72,6 +72,10 @@ pub enum RemoteAuthKind {
 
 /// Most remote hosts the configuration holds.
 pub const MAX_REMOTE_HOSTS: usize = 64;
+/// Numbers of screenshots the configuration can keep.
+pub const SCREENSHOT_HISTORY: [usize; 4] = [10, 20, 50, 100];
+/// Numbers of clipboard entries the configuration can keep.
+pub const CLIPBOARD_HISTORY: [usize; 4] = [20, 50, 100, 200];
 
 /// A Linux host monitored over SSH. Passwords and passphrases stay out of the file.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -175,6 +179,16 @@ pub struct AppConfig {
     pub dock_position: Option<[f32; 2]>,
     /// Count the frames of the application in the foreground.
     pub frame_monitoring: bool,
+    /// Shortcut that starts a screenshot from any application, written like `Ctrl+Alt+A`.
+    pub screenshot_hotkey: String,
+    /// Register the screenshot shortcut with the system.
+    pub screenshot_hotkey_enabled: bool,
+    /// Most screenshots kept, one of [`SCREENSHOT_HISTORY`].
+    pub screenshot_history: usize,
+    /// Record what is copied to the clipboard.
+    pub clipboard_manager: bool,
+    /// Most clipboard entries kept, one of [`CLIPBOARD_HISTORY`].
+    pub clipboard_history: usize,
     /// Linux hosts monitored over SSH, in the order the GUI lists them. Saved after the
     /// plain values, as an array of tables.
     pub remote_hosts: Vec<RemoteHost>,
@@ -198,6 +212,11 @@ impl Default for AppConfig {
             dock: None,
             dock_position: None,
             frame_monitoring: false,
+            screenshot_hotkey: Hotkey::DEFAULT.to_string(),
+            screenshot_hotkey_enabled: true,
+            screenshot_history: 20,
+            clipboard_manager: false,
+            clipboard_history: 50,
             remote_hosts: Vec::new(),
             alerts: Vec::new(),
         }
@@ -226,6 +245,14 @@ impl AppConfig {
         {
             return Err(Notice::InvalidWindowPosition);
         }
+        if self.hotkey().is_none() {
+            return Err(Notice::InvalidHotkey);
+        }
+        if !SCREENSHOT_HISTORY.contains(&self.screenshot_history)
+            || !CLIPBOARD_HISTORY.contains(&self.clipboard_history)
+        {
+            return Err(Notice::InvalidRecordLimit);
+        }
         if self.remote_hosts.len() > MAX_REMOTE_HOSTS {
             return Err(Notice::InvalidRemoteHost);
         }
@@ -245,6 +272,12 @@ impl AppConfig {
             }
         }
         Ok(())
+    }
+
+    /// The screenshot shortcut, whether or not it is enabled; `None` when the saved text is
+    /// not a valid shortcut.
+    pub fn hotkey(&self) -> Option<Hotkey> {
+        Hotkey::parse(&self.screenshot_hotkey)
     }
 }
 
@@ -311,6 +344,11 @@ impl ConfigStore {
                     field!(dock, Option<DockEdge>);
                     field!(dock_position, Option<[f32; 2]>);
                     field!(frame_monitoring, bool);
+                    field!(screenshot_hotkey, String);
+                    field!(screenshot_hotkey_enabled, bool);
+                    field!(screenshot_history, usize);
+                    field!(clipboard_manager, bool);
+                    field!(clipboard_history, usize);
                     // Each entry recovers on its own, so one bad entry keeps the others.
                     macro_rules! entries {
                         ($name:ident, $ty:ty, $limit:expr) => {

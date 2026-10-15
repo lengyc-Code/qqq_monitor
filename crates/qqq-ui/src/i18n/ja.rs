@@ -384,6 +384,52 @@ pub const STRINGS: Strings = Strings {
         }
     },
     alert_note: "ルールは各データソースの最新の有効な値を読み取ります。値がしきい値を超えた状態が継続時間だけ続くと Windows 通知を送り、反対側に戻った状態が同じ時間続くと正常に戻ります。同じルールの通知は 1 分に 1 回までです。ウィンドウをトレイに格納したりミニバーにドッキングしたりしていても通知し、通知をクリックするとメイン ウィンドウが開きます。",
+
+    screenshots_page: PageText {
+        nav: "キャプチャ",
+        title: "スクリーンショット",
+        hint: "ショートカットで画面の範囲をキャプチャし、最近のスクリーンショットを保存",
+    },
+    tray_screenshot: "スクリーンショット",
+    hours_ago: |v| format!("{v} 時間前"),
+    shot_take: "キャプチャ",
+    shot_hint: "ドラッグで範囲を選択 · クリックで画面全体 · 右クリックか Esc でキャンセル",
+    shot_folder: "フォルダーを開く",
+    shot_hotkey: "ショートカット",
+    shot_hotkey_option: |key| format!("{key} でキャプチャ"),
+    shot_hotkey_change: "変更",
+    shot_hotkey_press: "新しいショートカットを押してください（Esc でキャンセル）",
+    shot_hotkey_invalid: "Ctrl か Alt と英字・数字の組み合わせ、または F1〜F24 を使えます",
+    keep: "保存数",
+    shot_count: |n| format!("{n} 枚"),
+    shot_recent: "最近のスクリーンショット",
+    shot_empty: "スクリーンショットはまだありません。ショートカットを押すか「キャプチャ」をクリックしてください。",
+    shot_loading: "スクリーンショットを読み込み中…",
+    shot_note: |folder| {
+        format!(
+            "マウスを離すと、選択した範囲がクリップボードにコピーされ、PNG として {folder} に保存されます。保存数を超えると古いものから削除します。このページの「キャプチャ」はメイン ウィンドウを隠してからキャプチャします。"
+        )
+    },
+    copy: "コピー",
+    open: "開く",
+    delete: "削除",
+
+    clipboard_page: PageText {
+        nav: "コピー履歴",
+        title: "クリップボード履歴",
+        hint: "コピーした内容を記録し、ワンクリックでクリップボードに戻す",
+    },
+    clip_option: "クリップボードにコピーしたテキスト・画像・ファイルを記録",
+    clip_off: "クリップボード履歴はオフです。オンにすると、それ以降にコピーした内容を記録します。",
+    clip_clear: "履歴を消去",
+    clip_count: |n| format!("{n} 件"),
+    clip_recent: "クリップボード履歴",
+    clip_empty: "まだ記録はありません。テキスト・画像・ファイルをコピーするとここに表示されます。",
+    clip_text: |n| format!("テキスト · {n} 文字"),
+    clip_picture: |w, h| format!("画像 · {w} × {h}"),
+    clip_files: |n| format!("{n} 個のファイル"),
+    clip_more: |n| format!("ほか {n} 件"),
+    clip_note: "項目をクリックするとクリップボードにコピーし直します。新しい項目ほど上に並びます。履歴はメモリにだけ保持し、プログラムの終了時に消去します。パスワード マネージャーが記録対象外とした内容はスキップし、画像は合計 256 MiB までメモリを使います。",
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -502,6 +548,8 @@ fn reason(reason: &Reason) -> String {
         Reason::NoFrames => "前面のアプリが Direct3D で新しいフレームを表示していません".into(),
         Reason::NotificationsOff => "システムの設定でこのアプリの通知がオフになっています".into(),
         Reason::Declined => "操作は取り消されました".into(),
+        Reason::HotkeyTaken => "ショートカットはほかのアプリが使用しています".into(),
+        Reason::ClipboardBusy => "クリップボードはほかのアプリが使用中です".into(),
     }
 }
 
@@ -540,6 +588,22 @@ fn notice(notice: &Notice) -> String {
         Notice::ElevationFailed(reason) => {
             format!("管理者として再起動できません：{}", self::reason(reason))
         }
+        Notice::InvalidHotkey => "スクリーンショットのショートカットが無効です".into(),
+        Notice::InvalidRecordLimit => "保存数が選択肢にありません".into(),
+        Notice::HotkeyUnavailable(reason) => {
+            format!(
+                "スクリーンショットのショートカットを登録できません：{}",
+                self::reason(reason)
+            )
+        }
+        Notice::ScreenshotFailed(reason) => {
+            format!("キャプチャできません：{}", self::reason(reason))
+        }
+        Notice::ScreenshotFile(error) => format!("スクリーンショットのファイル操作に失敗：{error}"),
+        Notice::ClipboardFailed(reason) => {
+            format!("クリップボードを使用できません：{}", self::reason(reason))
+        }
+        Notice::OpenFailed(reason) => format!("開けません：{}", self::reason(reason)),
     }
 }
 

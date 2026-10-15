@@ -1,7 +1,9 @@
 use crate::{i18n, pixel, theme};
 use eframe::egui::{self, Color32, FontId, RichText, Sense, pos2, vec2};
 use egui_plot::{HoverPosition, Line, Plot};
-use qqq_domain::{DeviceDescriptor, DeviceKind, MetricKey, MetricReading, SampleState, Unit};
+use qqq_domain::{
+    DeviceDescriptor, DeviceKind, MetricKey, MetricReading, Picture, SampleState, Unit,
+};
 use qqq_engine::MonitorView;
 
 /// Widest strings the big pixel numbers must fit, so a row of cards shares one size.
@@ -51,6 +53,63 @@ pub fn span(secs: u64) -> String {
         (minutes, 0) => (t.minutes)(minutes),
         (minutes, seconds) => format!("{} {}", (t.minutes)(minutes), (t.seconds)(seconds as f64)),
     }
+}
+
+/// How long ago something happened, given in seconds.
+pub fn ago(secs: u64) -> String {
+    let t = i18n::t();
+    match secs {
+        0..60 => (t.seconds_ago)(secs as f64),
+        60..3600 => (t.minutes_ago)(secs / 60),
+        _ => (t.hours_ago)(secs / 3600),
+    }
+}
+
+/// Local date and time as `2026-10-15 14:30:12`.
+pub fn timestamp(parts: [u16; 7]) -> String {
+    let [year, month, day, hour, minute, second, _] = parts;
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
+}
+
+/// A copy of the picture scaled down to fit within `max` pixels, for showing it small.
+/// Each pixel averages up to 4 × 4 samples of the area it covers.
+pub fn thumbnail(picture: &Picture, max: [usize; 2]) -> egui::ColorImage {
+    let (width, height) = (picture.width as usize, picture.height as usize);
+    if width == 0 || height == 0 {
+        return egui::ColorImage::new([1, 1], vec![Color32::TRANSPARENT]);
+    }
+    let scale = (max[0] as f64 / width as f64)
+        .min(max[1] as f64 / height as f64)
+        .min(1.0);
+    let size = [
+        ((width as f64 * scale).round() as usize).max(1),
+        ((height as f64 * scale).round() as usize).max(1),
+    ];
+    // Positions of up to four samples spread over `start..end`.
+    let samples = |start: usize, end: usize| {
+        let span = (end - start).max(1);
+        let count = span.min(4);
+        (0..count).map(move |i| start + (2 * i + 1) * span / (2 * count))
+    };
+    let mut rgba = Vec::with_capacity(size[0] * size[1] * 4);
+    for y in 0..size[1] {
+        let (top, bottom) = (y * height / size[1], (y + 1) * height / size[1]);
+        for x in 0..size[0] {
+            let (left, right) = (x * width / size[0], (x + 1) * width / size[0]);
+            let (mut sum, mut count) = ([0_u32; 4], 0);
+            for sy in samples(top, bottom) {
+                for sx in samples(left, right) {
+                    let at = (sy.min(height - 1) * width + sx.min(width - 1)) * 4;
+                    for (total, value) in sum.iter_mut().zip(&picture.rgba[at..at + 4]) {
+                        *total += u32::from(*value);
+                    }
+                    count += 1;
+                }
+            }
+            rgba.extend(sum.map(|total| (total / count) as u8));
+        }
+    }
+    egui::ColorImage::from_rgba_unmultiplied(size, &rgba)
 }
 
 /// Metrics that alert rules can watch, in the order the rule editor offers them.

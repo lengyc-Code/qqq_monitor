@@ -260,6 +260,30 @@ pub const ICON_BELL: Icon = [
     "#########",
     "...#o#...",
 ];
+/// A camera: screenshots.
+pub const ICON_CAMERA: Icon = [
+    "...###...",
+    "#########",
+    "#.......#",
+    "#..###..#",
+    "#.#ooo#.#",
+    "#.#ooo#.#",
+    "#..###..#",
+    "#.......#",
+    "#########",
+];
+/// A clipboard with a pinned note: clipboard history.
+pub const ICON_CLIPBOARD: Icon = [
+    "...###...",
+    ".##ooo##.",
+    ".#.....#.",
+    ".#.###.#.",
+    ".#.....#.",
+    ".#.###.#.",
+    ".#.....#.",
+    ".#.##..#.",
+    ".#######.",
+];
 pub const ICON_DOCK_TOP: Icon = [
     "#########",
     "#ooooooo#",
