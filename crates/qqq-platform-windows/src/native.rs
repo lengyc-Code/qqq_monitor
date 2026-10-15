@@ -2,7 +2,10 @@ use qqq_domain::{CollectorError, Reason};
 use std::{collections::BTreeMap, mem::size_of, ptr};
 use windows::{
     Win32::{
-        Foundation::{ERROR_CANCELLED, FILETIME, HWND, LPARAM, POINT, RECT, SYSTEMTIME, WPARAM},
+        Foundation::{
+            ERROR_CANCELLED, ERROR_FILE_NOT_FOUND, FILETIME, HWND, LPARAM, POINT, RECT, SYSTEMTIME,
+            WPARAM,
+        },
         Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME},
         Graphics::{
             Dxgi::{
@@ -58,22 +61,25 @@ pub struct NetworkRow {
 struct InterfaceTable(*mut MIB_IF_TABLE2);
 impl Drop for InterfaceTable {
     fn drop(&mut self) {
-        /* SAFETY: table is allocated by GetIfTable2 and freed once after all reads. */
+        /* SAFETY: table is allocated by GetIfTable2Ex and freed once after all reads. */
         unsafe {
             FreeMibTable(self.0.cast());
         }
     }
 }
 
+/// Interfaces with their traffic counters, listed without statistics first: reading an
+/// interface's statistics queries its driver stack, which blocks the calling thread about
+/// once per interface, so only the interfaces that are reported have them read.
 pub fn network_rows() -> Result<Vec<NetworkRow>, CollectorError> {
     let mut pointer = ptr::null_mut();
     // SAFETY: API writes an owned MIB table pointer to valid local storage.
-    let status = unsafe { GetIfTable2(&mut pointer) };
+    let status = unsafe { GetIfTable2Ex(MibIfTableNormalWithoutStatistics, &mut pointer) };
     if status.0 != 0 {
-        return Err(error("GetIfTable2", status.0));
+        return Err(error("GetIfTable2Ex", status.0));
     }
     if pointer.is_null() {
-        return Err(bad_data("GetIfTable2"));
+        return Err(bad_data("GetIfTable2Ex"));
     }
     let table = InterfaceTable(pointer);
     // SAFETY: successful API call allocates NumEntries contiguous rows after the header.
@@ -84,12 +90,25 @@ pub fn network_rows() -> Result<Vec<NetworkRow>, CollectorError> {
         )
     };
     let mut result = Vec::new();
-    for row in rows.iter().filter(|row| {
+    for listed in rows.iter().filter(|row| {
         // Filter modules duplicate their underlying adapter's traffic. Endpoint
         // interfaces do not provide network connectivity (MIB_IF_ROW2 flags).
         row.Type != IF_TYPE_SOFTWARE_LOOPBACK
             && row.InterfaceAndOperStatusFlags._bitfield & (0b10 | 0b1000_0000) == 0
     }) {
+        let mut row = MIB_IF_ROW2 {
+            InterfaceLuid: listed.InterfaceLuid,
+            ..Default::default()
+        };
+        // SAFETY: the row is valid local storage whose InterfaceLuid names the interface.
+        let status = unsafe { GetIfEntry2(&mut row) };
+        if status == ERROR_FILE_NOT_FOUND {
+            // Removed since the listing; the next sample's listing leaves it out as well.
+            continue;
+        }
+        if status.0 != 0 {
+            return Err(error("GetIfEntry2", status.0));
+        }
         // SAFETY: NET_LUID's documented Value member is a 64-bit interface identifier.
         let luid = unsafe { row.InterfaceLuid.Value };
         result.push(NetworkRow {
