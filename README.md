@@ -13,7 +13,7 @@
   <b>English</b> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a>
 </p>
 
-QQQ Monitor is a multi-purpose task manager for Windows, written in Rust. Version 0.4.0 focuses on real-time performance monitoring: it collects CPU, memory, GPU, disk and network data from native Windows APIs, shows history charts and device details in a native GUI, and can dock to a screen edge as an always-on-top mini bar. Docked or minimized, it stays in the notification area. It also lists and manages the processes of Windows and of running WSL distributions, monitors one or more Linux hosts over SSH, counts the frame rate and frame time of games and other foreground apps, and sends Windows notifications when a metric crosses its threshold. A shortcut-driven screenshot tool and a clipboard history round it off.
+QQQ Monitor is a multi-purpose task manager for Windows, written in Rust. Version 0.4.1 focuses on real-time performance monitoring: it collects CPU, memory, GPU, disk and network data from native Windows APIs, shows history charts and device details in a native GUI, and can dock to a screen edge as an always-on-top mini bar. Docked or minimized, it stays in the notification area. It also lists and manages the processes of Windows and of running WSL distributions, monitors one or more Linux hosts over SSH, counts the frame rate and frame time of games and other foreground apps, and sends Windows notifications when a metric crosses its threshold. A shortcut-driven screenshot tool and a clipboard history round it off.
 
 ## Main window
 
