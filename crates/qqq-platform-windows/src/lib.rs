@@ -4,6 +4,7 @@ mod clipboard;
 mod cpu_memory;
 mod disk_io;
 mod frames;
+mod fullscreen;
 mod gpu;
 mod inventory;
 mod native;
@@ -24,6 +25,8 @@ pub use autostart::{ARGUMENT as AUTOSTART_ARGUMENT, enabled as autostart, set as
 pub use capture::{start as start_capture, take as take_capture};
 /// Following, reading and setting the clipboard.
 pub use clipboard::{set as set_clipboard, take as take_clipboard, watch as watch_clipboard};
+/// Full-screen applications in the foreground, for letting clicks through the docked bar.
+pub use fullscreen::{at as fullscreen_at, watch as watch_foreground};
 /// Starting this executable again with administrator rights.
 pub use native::restart_elevated;
 /// Window icons from the icon resource embedded in the executable.

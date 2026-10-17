@@ -132,6 +132,8 @@ fn run() -> Result<(), String> {
         monitor_at: qqq_platform_windows::monitor_at,
         covers: qqq_platform_windows::covers_point,
         button_held: qqq_platform_windows::mouse_button_held,
+        fullscreen_at: qqq_platform_windows::fullscreen_at,
+        watch_foreground: qqq_platform_windows::watch_foreground,
         show_tray: qqq_platform_windows::show_tray,
         hide_tray: qqq_platform_windows::hide_tray,
         tray_opened: qqq_platform_windows::tray_opened,

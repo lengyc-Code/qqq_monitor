@@ -68,6 +68,7 @@ Drag the window to the top, left or right screen edge and release it: the window
 - GPU and GPU memory follow the card selected on the GPU page, which defaults to the card with the most memory.
 - With frame monitoring on, the mini bar adds FPS, the frame rate of the foreground app, which turns orange below 50 and red below 30; the top bar widens to 640 points and the side bar grows to 316 points.
 - Drag the mini bar along its edge or onto another edge. Dropping it away from every edge restores the full window at the drop point; double-clicking the bar or pressing its expand button restores the window's previous position and size.
+- While a game, video or other app runs full screen in the foreground on the mini bar's monitor, the mouse passes through the bar and every click goes to that app, so a game steered with the mouse keeps the focus. Once an ordinary window is in front again, the bar can be dragged and expanded as usual.
 - The three buttons in the status bar of the main window dock it to the top, left or right edge directly.
 - Windows snap and maximize gestures keep their system behavior.
 - When the app closes while docked, it starts as the mini bar next time.

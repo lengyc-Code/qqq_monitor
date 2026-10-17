@@ -6,6 +6,10 @@
 //! Moves are judged once the window rests with no mouse button held, so the
 //! system move loop and Windows snap layouts keep working: snapping or
 //! maximizing resizes the window, and only a pure move docks it.
+//!
+//! While a full-screen application on its monitor is in the foreground, the
+//! bar lets the mouse through: a game that steers with the mouse can leave the
+//! hidden pointer over the bar, and its clicks stay with the game.
 
 use crate::i18n;
 use eframe::egui::{self, Pos2, Rect, Vec2, ViewportCommand, pos2, vec2};
@@ -52,6 +56,11 @@ pub struct Desktop {
     pub covers: fn([f32; 2]) -> bool,
     /// Whether a mouse button is held, including while the system moves the window.
     pub button_held: fn() -> bool,
+    /// Whether a full-screen window of another process is in the foreground on the monitor
+    /// that holds a point.
+    pub fullscreen_at: fn([f32; 2]) -> bool,
+    /// Starts or stops waking the GUI whenever another application comes to the foreground.
+    pub watch_foreground: fn(bool),
     /// Shows the notification-area icon with a tooltip and the labels of its "open",
     /// "screenshot" and "exit" menu items, or updates the text of the shown icon.
     pub show_tray: fn(&str, &str, &str, &str),
@@ -196,6 +205,8 @@ pub struct Dock {
     commanded: bool,
     /// The bar shows the frame rate gauge.
     frames: bool,
+    /// The mouse passes through the bar to a full-screen application.
+    passthrough: bool,
 }
 
 /// Window geometry from the current frame's viewport info.
@@ -236,6 +247,7 @@ impl Dock {
             moved_from: None,
             commanded: false,
             frames: config.frame_monitoring,
+            passthrough: false,
         }
     }
 
@@ -259,6 +271,7 @@ impl Dock {
         let Some(window) = window(ctx) else {
             return;
         };
+        self.follow_fullscreen(ctx, desktop, window.outer);
         let Some(last) = self.last else {
             self.last = Some(window.outer);
             self.changed_at = window.now;
@@ -349,6 +362,9 @@ impl Dock {
         if maximized {
             commands.push(ViewportCommand::Maximized(true));
         }
+        if std::mem::take(&mut self.passthrough) {
+            commands.push(ViewportCommand::MousePassthrough(false));
+        }
         self.apply(ctx, commands);
         self.edge = None;
     }
@@ -368,6 +384,19 @@ impl Dock {
         config.window_size = [size.x.max(MIN_SIZE.x), size.y.max(MIN_SIZE.y)];
         if let Some(position) = position {
             config.window_position = Some(position.into());
+        }
+    }
+
+    /// Lets the mouse through the bar while a full-screen application on its monitor is in
+    /// the foreground, following foreground changes while docked.
+    fn follow_fullscreen(&mut self, ctx: &egui::Context, desktop: &Desktop, outer: Rect) {
+        let docked = self.edge.is_some();
+        (desktop.watch_foreground)(docked);
+        let center = outer.center() * ctx.pixels_per_point();
+        let passthrough = docked && (desktop.fullscreen_at)([center.x, center.y]);
+        if passthrough != self.passthrough {
+            self.passthrough = passthrough;
+            ctx.send_viewport_cmd(ViewportCommand::MousePassthrough(passthrough));
         }
     }
 

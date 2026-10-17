@@ -458,7 +458,7 @@ pub fn gpu_adapters() -> Result<Vec<GpuAdapter>, CollectorError> {
     Ok(adapters)
 }
 
-fn point(at: [f32; 2]) -> POINT {
+pub(crate) fn point(at: [f32; 2]) -> POINT {
     POINT {
         x: at[0].round() as i32,
         y: at[1].round() as i32,
