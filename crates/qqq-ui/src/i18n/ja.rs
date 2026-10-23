@@ -1,7 +1,7 @@
 //! Japanese.
 
 use super::{PageText, Strings};
-use qqq_domain::Reason;
+use qqq_domain::{Reason, Shortcut};
 use qqq_engine::{Notice, SaveStatus};
 
 pub const STRINGS: Strings = Strings {
@@ -222,7 +222,7 @@ pub const STRINGS: Strings = Strings {
     collectors_ok: "すべてのデータソースが正常に動作しています",
     refresh_devices: "デバイスを再検出",
     about: "アプリ情報",
-    about_intro: "看板娘「MINT ちゃん」が PC の様子を見守る、アニメ風ピクセルアートの Windows 向け多機能タスクマネージャーです。リアルタイムのパフォーマンス監視と履歴グラフ、プロセス管理、SSH による Linux ホストの監視、前面のアプリのフレームレート計測、監視アラートに加え、スクリーンショットやクリップボード履歴などのツールを備えています。",
+    about_intro: "看板娘「MINT ちゃん」が PC の様子を見守る、アニメ風ピクセルアートの Windows 向け多機能タスクマネージャーです。リアルタイムのパフォーマンス監視と履歴グラフ、プロセス管理、SSH による Linux ホストの監視、前面のアプリのフレームレート計測、監視アラートに加え、スクリーンショット、クリップボード履歴、付箋などのツールを備えています。",
     about_github: "GitHub ページ",
 
     process_name: "名前",
@@ -389,10 +389,11 @@ pub const STRINGS: Strings = Strings {
     tools_page: PageText {
         nav: "ツール",
         title: "ツール",
-        hint: "スクリーンショットやクリップボード履歴などの便利な機能",
+        hint: "スクリーンショット、クリップボード履歴、付箋などの便利な機能",
     },
     tool_screenshots: "キャプチャ",
     tool_clipboard: "クリップボード",
+    tool_notes: "付箋",
     tray_screenshot: "スクリーンショット",
     hours_ago: |v| format!("{v} 時間前"),
     shot_take: "キャプチャ開始",
@@ -428,6 +429,35 @@ pub const STRINGS: Strings = Strings {
     clip_files: |n| format!("{n} 個のファイル"),
     clip_more: |n| format!("ほか {n} 件"),
     clip_note: "項目をクリックするとクリップボードにコピーし直します。新しい項目ほど上に並びます。履歴はメモリにだけ保持し、プログラムの終了時に消去します。パスワード マネージャーが記録対象外とした内容はスキップし、画像は合計 256 MiB までメモリを使います。",
+
+    tray_note: "付箋",
+    note_title: "QQQ 付箋",
+    note_hotkey_option: |key| format!("{key} で付箋を表示・非表示"),
+    hotkey_taken: "このキーの組み合わせはもう一方のショートカットで使用中です",
+    note_open: "付箋を開く",
+    note_new: "新しい付箋",
+    note_list: "すべての付箋",
+    note_write: "編集",
+    note_read: "プレビュー",
+    note_delete: "付箋を削除",
+    note_hide: "付箋を隠す",
+    note_untitled: "無題の付箋",
+    note_hint: "ここに書き込めます（Markdown 対応）",
+    note_read_empty: "この付箋は空です。ここをダブルクリックするか Ctrl+E を押して書き始めましょう。",
+    note_delete_confirm: "この付箋を削除しますか？",
+    note_delete_confirm_short: "削除する",
+    note_chars: |n| format!("{n} 文字"),
+    note_saving: "保存中…",
+    note_saved: "保存済み",
+    note_save_failed: |error| format!("保存できません：{error}"),
+    note_count: |n| format!("{n} 件"),
+    note_empty: "付箋はまだありません。ショートカットを押すか「付箋を開く」をクリックして書き始めましょう。",
+    note_loading: "付箋を読み込み中…",
+    note_about: |folder| {
+        format!(
+            "付箋ウィンドウはほかのウィンドウより常に手前に表示されます。ショートカットで表示し、付箋の中でもう一度押すと隠れます。タイトル バーをドラッグして移動し、右下の角をドラッグしてサイズを変更します。内容は Markdown で、Ctrl+E で編集とプレビューを切り替え、Ctrl+N で新しい付箋を作ります。プレビューではタスクにチェックを付けたり Web リンクを開いたりできます。付箋は 1 件ずつ .md ファイルとして {folder} に保存され、入力が止まると自動で保存されます。"
+        )
+    },
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -586,11 +616,15 @@ fn notice(notice: &Notice) -> String {
         Notice::ElevationFailed(reason) => {
             format!("管理者として再起動できません：{}", self::reason(reason))
         }
-        Notice::InvalidHotkey => "スクリーンショットのショートカットが無効です".into(),
+        Notice::InvalidHotkey => "ショートカットが無効です".into(),
         Notice::InvalidRecordLimit => "保存数が選択肢にありません".into(),
-        Notice::HotkeyUnavailable(reason) => {
+        Notice::HotkeyUnavailable(shortcut, reason) => {
+            let name = match shortcut {
+                Shortcut::Screenshot => "スクリーンショット",
+                Shortcut::Note => "付箋",
+            };
             format!(
-                "スクリーンショットのショートカットを登録できません：{}",
+                "{name}のショートカットを登録できません：{}",
                 self::reason(reason)
             )
         }
@@ -602,6 +636,7 @@ fn notice(notice: &Notice) -> String {
             format!("クリップボードを使用できません：{}", self::reason(reason))
         }
         Notice::OpenFailed(reason) => format!("開けません：{}", self::reason(reason)),
+        Notice::NoteFile(error) => format!("付箋ファイルの操作に失敗：{error}"),
     }
 }
 

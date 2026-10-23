@@ -1,6 +1,7 @@
-use super::super::DesktopApp;
+use super::{super::DesktopApp, tools::hotkey_option};
 use crate::{components::*, i18n, pixel, theme};
 use eframe::egui::{self, RichText, vec2};
+use qqq_domain::Shortcut;
 use qqq_engine::{Language, MonitorCommand, MonitorView, Notice};
 
 /// History budget shown in diagnostics; matches the engine's allocation limit.
@@ -50,6 +51,7 @@ impl DesktopApp {
                         t.frame_monitoring,
                         t.tool_screenshots,
                         t.tool_clipboard,
+                        t.tool_notes,
                         t.autostart,
                     ],
                     14.0,
@@ -135,16 +137,21 @@ impl DesktopApp {
                         self.set_frame_monitoring(on);
                     }
                 });
-                ui.horizontal(|ui| {
-                    row_label(ui, t.tool_screenshots);
-                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                    // Applied and saved at once, like the switch on the screenshots page.
-                    let mut on = self.active_config.screenshot_hotkey_enabled;
-                    let option = (t.shot_hotkey_option)(&self.active_config.screenshot_hotkey);
-                    if ui.checkbox(&mut on, option).changed() {
-                        self.apply_now(|config| config.screenshot_hotkey_enabled = on);
-                    }
-                });
+                // Applied and saved at once, like the switches on the tools page.
+                for (shortcut, label) in [
+                    (Shortcut::Screenshot, t.tool_screenshots),
+                    (Shortcut::Note, t.tool_notes),
+                ] {
+                    ui.horizontal(|ui| {
+                        row_label(ui, label);
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        let (keys, mut on) = self.active_config.shortcut(shortcut);
+                        let option = hotkey_option(shortcut, keys);
+                        if ui.checkbox(&mut on, option).changed() {
+                            self.apply_now(|config| *config.shortcut_mut(shortcut).1 = on);
+                        }
+                    });
+                }
                 ui.horizontal(|ui| {
                     row_label(ui, t.tool_clipboard);
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);

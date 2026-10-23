@@ -6,6 +6,7 @@ mod frames;
 mod gpu;
 mod memory;
 mod network;
+pub(super) mod notes;
 mod overview;
 pub(super) mod processes;
 pub(super) mod remote;

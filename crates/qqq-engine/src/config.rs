@@ -1,6 +1,6 @@
 use crate::{AlertRule, MAX_ALERT_RULES, Notice};
 use directories::ProjectDirs;
-use qqq_domain::{Hotkey, RemoteAuth, RemoteEndpoint};
+use qqq_domain::{Hotkey, RemoteAuth, RemoteEndpoint, Shortcut};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -76,6 +76,8 @@ pub const MAX_REMOTE_HOSTS: usize = 64;
 pub const SCREENSHOT_HISTORY: [usize; 4] = [10, 20, 50, 100];
 /// Numbers of clipboard entries the configuration can keep.
 pub const CLIPBOARD_HISTORY: [usize; 4] = [20, 50, 100, 200];
+/// Smallest inner size of the note window, in points.
+pub const NOTE_MIN_SIZE: [f32; 2] = [300.0, 220.0];
 
 /// A Linux host monitored over SSH. Passwords and passphrases stay out of the file.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -189,6 +191,15 @@ pub struct AppConfig {
     pub clipboard_manager: bool,
     /// Most clipboard entries kept, one of [`CLIPBOARD_HISTORY`].
     pub clipboard_history: usize,
+    /// Shortcut that shows or hides the note window from any application.
+    pub note_hotkey: String,
+    /// Register the note shortcut with the system.
+    pub note_hotkey_enabled: bool,
+    /// Inner size of the note window, in points.
+    pub note_size: [f32; 2],
+    /// Outer position of the note window, in points; `None` places it beside the main
+    /// window's work area edge.
+    pub note_position: Option<[f32; 2]>,
     /// Linux hosts monitored over SSH, in the order the GUI lists them. Saved after the
     /// plain values, as an array of tables.
     pub remote_hosts: Vec<RemoteHost>,
@@ -212,11 +223,15 @@ impl Default for AppConfig {
             dock: None,
             dock_position: None,
             frame_monitoring: false,
-            screenshot_hotkey: Hotkey::DEFAULT.to_string(),
+            screenshot_hotkey: Hotkey::SCREENSHOT.to_string(),
             screenshot_hotkey_enabled: true,
             screenshot_history: 20,
             clipboard_manager: false,
             clipboard_history: 50,
+            note_hotkey: Hotkey::NOTE.to_string(),
+            note_hotkey_enabled: true,
+            note_size: [360.0, 440.0],
+            note_position: None,
             remote_hosts: Vec::new(),
             alerts: Vec::new(),
         }
@@ -238,14 +253,22 @@ impl AppConfig {
         {
             return Err(Notice::InvalidWindowSize);
         }
-        if [self.window_position, self.dock_position]
+        if !self
+            .note_size
+            .iter()
+            .zip(NOTE_MIN_SIZE)
+            .all(|(v, min)| v.is_finite() && (min..=16384.0).contains(v))
+        {
+            return Err(Notice::InvalidWindowSize);
+        }
+        if [self.window_position, self.dock_position, self.note_position]
             .iter()
             .flatten()
             .any(|p| !p.iter().all(|v| v.is_finite()))
         {
             return Err(Notice::InvalidWindowPosition);
         }
-        if self.hotkey().is_none() {
+        if Shortcut::ALL.iter().any(|s| self.hotkey(*s).is_none()) {
             return Err(Notice::InvalidHotkey);
         }
         if !SCREENSHOT_HISTORY.contains(&self.screenshot_history)
@@ -274,10 +297,29 @@ impl AppConfig {
         Ok(())
     }
 
-    /// The screenshot shortcut, whether or not it is enabled; `None` when the saved text is
-    /// not a valid shortcut.
-    pub fn hotkey(&self) -> Option<Hotkey> {
-        Hotkey::parse(&self.screenshot_hotkey)
+    /// A shortcut, whether or not it is enabled; `None` when the saved text is not a valid
+    /// shortcut.
+    pub fn hotkey(&self, shortcut: Shortcut) -> Option<Hotkey> {
+        Hotkey::parse(self.shortcut(shortcut).0)
+    }
+
+    /// Written form of a shortcut and whether it is registered with the system.
+    pub fn shortcut(&self, shortcut: Shortcut) -> (&str, bool) {
+        match shortcut {
+            Shortcut::Screenshot => (&self.screenshot_hotkey, self.screenshot_hotkey_enabled),
+            Shortcut::Note => (&self.note_hotkey, self.note_hotkey_enabled),
+        }
+    }
+
+    /// The written form of a shortcut and its switch, for changing them.
+    pub fn shortcut_mut(&mut self, shortcut: Shortcut) -> (&mut String, &mut bool) {
+        match shortcut {
+            Shortcut::Screenshot => (
+                &mut self.screenshot_hotkey,
+                &mut self.screenshot_hotkey_enabled,
+            ),
+            Shortcut::Note => (&mut self.note_hotkey, &mut self.note_hotkey_enabled),
+        }
     }
 }
 
@@ -349,6 +391,10 @@ impl ConfigStore {
                     field!(screenshot_history, usize);
                     field!(clipboard_manager, bool);
                     field!(clipboard_history, usize);
+                    field!(note_hotkey, String);
+                    field!(note_hotkey_enabled, bool);
+                    field!(note_size, [f32; 2]);
+                    field!(note_position, Option<[f32; 2]>);
                     // Each entry recovers on its own, so one bad entry keeps the others.
                     macro_rules! entries {
                         ($name:ident, $ty:ty, $limit:expr) => {

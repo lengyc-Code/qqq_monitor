@@ -1,7 +1,7 @@
 //! English.
 
 use super::{PageText, Strings};
-use qqq_domain::Reason;
+use qqq_domain::{Reason, Shortcut};
 use qqq_engine::{Notice, SaveStatus};
 
 pub const STRINGS: Strings = Strings {
@@ -231,7 +231,7 @@ pub const STRINGS: Strings = Strings {
     collectors_ok: "All sources are working",
     refresh_devices: "Refresh devices",
     about: "About",
-    about_intro: "An anime pixel-art multi-purpose task manager for Windows, where MINT, the mascot, keeps an eye on your PC with you: real-time performance monitoring with history charts, process management, Linux hosts monitored over SSH, frame counting for the foreground app, alerts, and tools such as screenshots and clipboard history.",
+    about_intro: "An anime pixel-art multi-purpose task manager for Windows, where MINT, the mascot, keeps an eye on your PC with you: real-time performance monitoring with history charts, process management, Linux hosts monitored over SSH, frame counting for the foreground app, alerts, and tools such as screenshots, clipboard history and notes.",
     about_github: "GitHub page",
 
     process_name: "Name",
@@ -395,10 +395,11 @@ pub const STRINGS: Strings = Strings {
     tools_page: PageText {
         nav: "Tools",
         title: "Tools",
-        hint: "Handy tools such as screenshots and clipboard history",
+        hint: "Handy tools such as screenshots, clipboard history and notes",
     },
     tool_screenshots: "Screenshots",
     tool_clipboard: "Clipboard",
+    tool_notes: "Notes",
     tray_screenshot: "Take screenshot",
     hours_ago: |v| format!("{v} h ago"),
     shot_take: "Take screenshot",
@@ -446,6 +447,41 @@ pub const STRINGS: Strings = Strings {
     },
     clip_more: |n| format!("and {n} more"),
     clip_note: "Click an entry to copy it back to the clipboard; the newest entry comes first. History stays in memory and clears when the program exits. Content that password managers mark as private is skipped, and pictures take at most 256 MiB of memory together.",
+
+    tray_note: "Notes",
+    note_title: "QQQ Notes",
+    note_hotkey_option: |key| format!("Press {key} to show or hide the notes"),
+    hotkey_taken: "The other shortcut already uses these keys",
+    note_open: "Open notes",
+    note_new: "New note",
+    note_list: "All notes",
+    note_write: "Edit",
+    note_read: "Preview",
+    note_delete: "Delete note",
+    note_hide: "Hide notes",
+    note_untitled: "Untitled note",
+    note_hint: "Write here; Markdown works",
+    note_read_empty: "This note is empty. Double-click here or press Ctrl+E to start writing.",
+    note_delete_confirm: "Delete this note?",
+    note_delete_confirm_short: "Delete for good",
+    note_chars: |n| match n {
+        1 => "1 character".into(),
+        _ => format!("{n} characters"),
+    },
+    note_saving: "Saving…",
+    note_saved: "Saved",
+    note_save_failed: |error| format!("Could not save: {error}"),
+    note_count: |n| match n {
+        1 => "1 note".into(),
+        _ => format!("{n} notes"),
+    },
+    note_empty: "No notes yet. Press the shortcut or click Open notes to start one.",
+    note_loading: "Reading notes…",
+    note_about: |folder| {
+        format!(
+            "The note window stays above other windows. The shortcut shows it and, pressed again in the note, hides it; drag its title bar to move it and its lower right corner to resize it. Notes are Markdown: Ctrl+E switches between editing and the preview, and Ctrl+N starts a new note; in the preview, tick tasks and open web links. Each note is a .md file in {folder}, saved a moment after you stop typing."
+        )
+    },
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -605,11 +641,15 @@ fn notice(notice: &Notice) -> String {
                 self::reason(reason)
             )
         }
-        Notice::InvalidHotkey => "The screenshot shortcut is invalid".into(),
+        Notice::InvalidHotkey => "A shortcut is invalid".into(),
         Notice::InvalidRecordLimit => "The number to keep is not one of the choices".into(),
-        Notice::HotkeyUnavailable(reason) => {
+        Notice::HotkeyUnavailable(shortcut, reason) => {
+            let name = match shortcut {
+                Shortcut::Screenshot => "screenshot",
+                Shortcut::Note => "notes",
+            };
             format!(
-                "The screenshot shortcut is unavailable: {}",
+                "The {name} shortcut is unavailable: {}",
                 self::reason(reason)
             )
         }
@@ -621,6 +661,7 @@ fn notice(notice: &Notice) -> String {
             format!("The clipboard is unavailable: {}", self::reason(reason))
         }
         Notice::OpenFailed(reason) => format!("Could not open: {}", self::reason(reason)),
+        Notice::NoteFile(error) => format!("Note file error: {error}"),
     }
 }
 

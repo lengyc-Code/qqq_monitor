@@ -1,4 +1,4 @@
-use qqq_domain::Reason;
+use qqq_domain::{Reason, Shortcut};
 
 /// Outcome of a command or a configuration operation that the user should see. Notices
 /// are language-neutral; the GUI phrases them in the interface language.
@@ -47,12 +47,12 @@ pub enum Notice {
     NotificationFailed(Reason),
     /// The application could not start again with administrator rights.
     ElevationFailed(Reason),
-    /// The screenshot shortcut is not a valid key combination.
+    /// The screenshot or note shortcut is not a valid key combination.
     InvalidHotkey,
     /// The number of screenshots or clipboard entries to keep is not one of the choices.
     InvalidRecordLimit,
-    /// The screenshot shortcut could not be registered.
-    HotkeyUnavailable(Reason),
+    /// A shortcut could not be registered.
+    HotkeyUnavailable(Shortcut, Reason),
     /// The screen could not be captured.
     ScreenshotFailed(Reason),
     /// A screenshot file could not be written, read or removed, with the system's
@@ -62,6 +62,8 @@ pub enum Notice {
     ClipboardFailed(Reason),
     /// A file or folder could not be opened.
     OpenFailed(Reason),
+    /// A note file could not be written, read or removed, with the system's description.
+    NoteFile(String),
 }
 
 /// State of the settings: how they were loaded, or what became of the latest save.

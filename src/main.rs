@@ -146,6 +146,7 @@ fn run() -> Result<(), String> {
         restart_elevated: qqq_platform_windows::restart_elevated,
         set_hotkey: qqq_platform_windows::set_hotkey,
         screenshot_requested: qqq_platform_windows::screenshot_requested,
+        note_requested: qqq_platform_windows::note_requested,
         start_capture: qqq_platform_windows::start_capture,
         take_capture: qqq_platform_windows::take_capture,
         watch_clipboard: qqq_platform_windows::watch_clipboard,

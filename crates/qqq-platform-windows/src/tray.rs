@@ -1,14 +1,14 @@
 //! Notification-area icon and taskbar button of the application window, and the
-//! screenshot shortcut.
+//! screenshot and note shortcuts.
 //!
 //! The icon belongs to a hidden top-level window created on the GUI thread. The message
 //! loop the GUI already runs delivers it the icon's clicks, its menu, the
-//! `TaskbarCreated` broadcast that follows an Explorer restart, the screenshot shortcut
-//! and clipboard changes. All functions act on the state of the calling thread, so only
+//! `TaskbarCreated` broadcast that follows an Explorer restart, the shortcuts and
+//! clipboard changes. All functions act on the state of the calling thread, so only
 //! the GUI thread that called [`attach`] reaches it.
 
 use crate::{clipboard, native::APP_ICON};
-use qqq_domain::{Hotkey, HotkeyKey, Reason};
+use qqq_domain::{Hotkey, HotkeyKey, Reason, Shortcut};
 use std::{
     cell::{Cell, OnceCell, RefCell},
     mem::size_of,
@@ -65,17 +65,18 @@ const KEY_SELECT: u32 = NIN_SELECT | NINF_KEY;
 const MENU_OPEN: usize = 1;
 const MENU_EXIT: usize = 2;
 const MENU_SCREENSHOT: usize = 3;
-/// Identity of the screenshot shortcut among the window's shortcuts.
-const HOTKEY_ID: i32 = 1;
+const MENU_NOTE: usize = 4;
 /// Timer that asks for a screenshot once the icon's menu has faded from the screen.
 const SCREENSHOT_TIMER: usize = 1;
 const MENU_FADE_MS: u32 = 250;
 
-/// Icon text: the tooltip and the labels of the "open", "screenshot" and "exit" menu items.
+/// Icon text: the tooltip and the labels of the "open", "screenshot", "note" and "exit"
+/// menu items.
 struct Labels {
     tip: String,
     open: String,
     screenshot: String,
+    note: String,
     exit: String,
 }
 
@@ -94,6 +95,8 @@ struct Tray {
     opened: Cell<bool>,
     /// The user asked for a screenshot since the last [`screenshot_requested`] call.
     screenshot: Cell<bool>,
+    /// The user asked for the note window since the last [`note_requested`] call.
+    note: Cell<bool>,
     wake: Box<dyn Fn()>,
 }
 
@@ -173,6 +176,7 @@ pub fn attach(main: isize, wake: impl Fn() + 'static) -> bool {
             no_button: Cell::new(false),
             opened: Cell::new(false),
             screenshot: Cell::new(false),
+            note: Cell::new(false),
             wake: Box::new(wake),
         });
     });
@@ -219,14 +223,15 @@ pub(crate) fn wake() {
     with(|tray| (tray.wake)());
 }
 
-/// Shows the icon with a tooltip and the labels of its "open", "screenshot" and "exit" menu
-/// items, or updates the text of the shown icon.
-pub fn show(tip: &str, open: &str, screenshot: &str, exit: &str) {
+/// Shows the icon with a tooltip and the labels of its "open", "screenshot", "note" and
+/// "exit" menu items, or updates the text of the shown icon.
+pub fn show(tip: &str, open: &str, screenshot: &str, note: &str, exit: &str) {
     with(|tray| {
         let labels = Labels {
             tip: tip.into(),
             open: open.into(),
             screenshot: screenshot.into(),
+            note: note.into(),
             exit: exit.into(),
         };
         if tray.labels.replace(Some(labels)).is_some() {
@@ -284,12 +289,21 @@ pub fn opened() -> bool {
     with(|tray| tray.opened.take()).unwrap_or(false)
 }
 
-/// Registers the screenshot shortcut, replacing the previous one, or with `None` removes it.
-pub fn set_hotkey(hotkey: Option<Hotkey>) -> Result<(), Reason> {
+/// Identity of a shortcut among the tray window's shortcuts.
+fn hotkey_id(shortcut: Shortcut) -> i32 {
+    match shortcut {
+        Shortcut::Screenshot => 1,
+        Shortcut::Note => 2,
+    }
+}
+
+/// Registers a shortcut, replacing its previous keys, or with `None` removes it.
+pub fn set_hotkey(shortcut: Shortcut, hotkey: Option<Hotkey>) -> Result<(), Reason> {
+    let id = hotkey_id(shortcut);
     with(|tray| {
         // SAFETY: the shortcut belongs to this thread's own window; removing a shortcut that
         // is not registered only fails.
-        let _ = unsafe { UnregisterHotKey(Some(tray.window), HOTKEY_ID) };
+        let _ = unsafe { UnregisterHotKey(Some(tray.window), id) };
         let Some(hotkey) = hotkey else {
             return Ok(());
         };
@@ -304,24 +318,17 @@ pub fn set_hotkey(hotkey: Option<Hotkey>) -> Result<(), Reason> {
             }
         }
         // SAFETY: plain value arguments naming this thread's own window.
-        unsafe {
-            RegisterHotKey(
-                Some(tray.window),
-                HOTKEY_ID,
-                modifiers,
-                virtual_key(hotkey.key),
-            )
-        }
-        .map_err(|error| {
-            if error.code() == ERROR_HOTKEY_ALREADY_REGISTERED.to_hresult() {
-                Reason::HotkeyTaken
-            } else {
-                Reason::CallFailed {
-                    api: "RegisterHotKey",
-                    code: error.code().0 as u32,
+        unsafe { RegisterHotKey(Some(tray.window), id, modifiers, virtual_key(hotkey.key)) }
+            .map_err(|error| {
+                if error.code() == ERROR_HOTKEY_ALREADY_REGISTERED.to_hresult() {
+                    Reason::HotkeyTaken
+                } else {
+                    Reason::CallFailed {
+                        api: "RegisterHotKey",
+                        code: error.code().0 as u32,
+                    }
                 }
-            }
-        })
+            })
     })
     .unwrap_or(Err(Reason::CallFailed {
         api: "RegisterHotKey",
@@ -333,6 +340,12 @@ pub fn set_hotkey(hotkey: Option<Hotkey>) -> Result<(), Reason> {
 /// the last call.
 pub fn screenshot_requested() -> bool {
     with(|tray| tray.screenshot.take()).unwrap_or(false)
+}
+
+/// Whether the user asked for the note window with the shortcut or from the icon's menu
+/// since the last call.
+pub fn note_requested() -> bool {
+    with(|tray| tray.note.take()).unwrap_or(false)
 }
 
 /// Virtual-key code of a shortcut key.
@@ -421,16 +434,22 @@ impl Tray {
         self.screenshot.set(true);
         (self.wake)();
     }
+
+    fn request_note(&self) {
+        self.note.set(true);
+        (self.wake)();
+    }
 }
 
 /// Shows the icon's menu at a screen point and acts on the chosen item.
 fn menu(window: HWND, x: i32, y: i32) {
-    let Some(Some((open, screenshot, exit, main))) = with(|tray| {
+    let Some(Some((open, screenshot, note, exit, main))) = with(|tray| {
         let labels = tray.labels.borrow();
         let labels = labels.as_ref()?;
         Some((
             HSTRING::from(&labels.open),
             HSTRING::from(&labels.screenshot),
+            HSTRING::from(&labels.note),
             HSTRING::from(&labels.exit),
             tray.main,
         ))
@@ -446,6 +465,7 @@ fn menu(window: HWND, x: i32, y: i32) {
         };
         let _ = AppendMenuW(menu, MF_STRING, MENU_OPEN, &open);
         let _ = AppendMenuW(menu, MF_STRING, MENU_SCREENSHOT, &screenshot);
+        let _ = AppendMenuW(menu, MF_STRING, MENU_NOTE, &note);
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(menu, MF_STRING, MENU_EXIT, &exit);
         let _ = SetMenuDefaultItem(menu, MENU_OPEN as u32, 0);
@@ -473,6 +493,9 @@ fn menu(window: HWND, x: i32, y: i32) {
         MENU_SCREENSHOT => unsafe {
             SetTimer(Some(window), SCREENSHOT_TIMER, MENU_FADE_MS, None);
         },
+        MENU_NOTE => {
+            with(Tray::request_note);
+        }
         // Closing goes through the window's own close path, which saves the configuration.
         // SAFETY: posting to a window handle has no memory preconditions.
         MENU_EXIT => unsafe {
@@ -514,8 +537,12 @@ unsafe extern "system" fn procedure(
             with(Tray::open);
             LRESULT(0)
         }
-        WM_HOTKEY if wparam.0 == HOTKEY_ID as usize => {
+        WM_HOTKEY if wparam.0 == hotkey_id(Shortcut::Screenshot) as usize => {
             with(Tray::request_screenshot);
+            LRESULT(0)
+        }
+        WM_HOTKEY if wparam.0 == hotkey_id(Shortcut::Note) as usize => {
+            with(Tray::request_note);
             LRESULT(0)
         }
         WM_TIMER if wparam.0 == SCREENSHOT_TIMER => {

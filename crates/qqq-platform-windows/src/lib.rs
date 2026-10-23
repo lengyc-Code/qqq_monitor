@@ -40,10 +40,10 @@ pub use native::{local_time, open_path, open_url};
 /// Toast notifications with the application's name and icon.
 pub use notify::{notify, prepare as prepare_notifications};
 /// Notification-area icon and taskbar button of the application window, and the
-/// screenshot shortcut.
+/// screenshot and note shortcuts.
 pub use tray::{
-    attach as attach_tray, cloak as cloak_window, hide as hide_tray, opened as tray_opened,
-    screenshot_requested, set_hotkey, set_taskbar_button, show as show_tray,
+    attach as attach_tray, cloak as cloak_window, hide as hide_tray, note_requested,
+    opened as tray_opened, screenshot_requested, set_hotkey, set_taskbar_button, show as show_tray,
 };
 
 struct BuiltinFactory {

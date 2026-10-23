@@ -1,7 +1,9 @@
 #[path = "pages/mod.rs"]
 mod pages;
 
-use crate::{clips, components, dock, i18n, mascot, minibar, pixel, shots, theme, tray};
+use crate::{
+    clips, components, dock, i18n, mascot, minibar, note, notes, pixel, shots, theme, tray,
+};
 use eframe::egui::{self, RichText, pos2, vec2};
 use qqq_domain::{DeviceKind, Hotkey, MetricKey};
 use qqq_engine::{
@@ -163,9 +165,16 @@ pub struct DesktopApp {
     /// Tool the tools page shows.
     tool: pages::tools::Tool,
     snip: pages::screenshots::Snip,
-    screenshot_page: pages::screenshots::ScreenshotPage,
-    /// Screenshot shortcut last registered; `None` until the first registration.
-    hotkey: Option<Option<Hotkey>>,
+    /// A new shortcut being recorded on the tools page.
+    recorder: pages::tools::Recorder,
+    /// Keys of each shortcut last registered, in the order of
+    /// [`qqq_domain::Shortcut::ALL`]; `None` until the first registration.
+    hotkeys: [Option<Option<Hotkey>>; 2],
+    /// The note window, which paints in its own passes.
+    note: note::Shared,
+    /// How the note window is created, settled on the first frame.
+    note_builder: Option<egui::ViewportBuilder>,
+    note_page: pages::notes::NotePage,
     clips: clips::Clips,
     /// Number of clipboard entries last kept.
     clips_kept: usize,
@@ -208,6 +217,19 @@ impl DesktopApp {
             .map(|v| v.page)
             .or(page)
             .unwrap_or(Page::Overview);
+        // The worker repaints the note window, and the main window unless it is asleep.
+        let context = cc.egui_ctx.clone();
+        let awake = Arc::clone(&asleep);
+        let notes = notes::Notes::new(
+            data_directory().join("notes"),
+            desktop.local_time,
+            move || {
+                context.request_repaint_of(note::id());
+                if !awake.load(Ordering::Relaxed) {
+                    context.request_repaint();
+                }
+            },
+        );
         Self {
             dock: dock::Dock::new(&config),
             shots: shots::Shots::new(
@@ -219,8 +241,13 @@ impl DesktopApp {
             shots_kept: config.screenshot_history,
             tool: Default::default(),
             snip: Default::default(),
-            screenshot_page: Default::default(),
-            hotkey: None,
+            recorder: Default::default(),
+            hotkeys: [None; 2],
+            note: Arc::new(std::sync::Mutex::new(note::NoteWindow::new(
+                notes, &desktop,
+            ))),
+            note_builder: None,
+            note_page: Default::default(),
             clips: Default::default(),
             clips_kept: config.clipboard_history,
             watching: None,
@@ -285,6 +312,19 @@ impl DesktopApp {
         let mut config = self.active_config.clone();
         change(&mut config);
         self.save_config(config, true);
+    }
+    /// Keeps the note window, which starts hidden. eframe creates it at the end of the first
+    /// frame and keeps it while every frame asks for it.
+    fn note_viewport(&mut self, ctx: &egui::Context) {
+        let builder = self
+            .note_builder
+            .get_or_insert_with(|| note::builder(&self.active_config, ctx, &self.desktop))
+            .clone()
+            .with_title(i18n::t().note_title);
+        let shared = Arc::clone(&self.note);
+        ctx.show_viewport_deferred(note::id(), builder, move |ui, _| {
+            note::lock(&shared).ui(ui);
+        });
     }
     /// The window is hidden in the tray or minimized.
     fn asleep(&self, ctx: &egui::Context) -> bool {
@@ -555,8 +595,9 @@ fn backdrop(ui: &egui::Ui) {
 
 impl eframe::App for DesktopApp {
     fn on_exit(&mut self) {
-        // A screenshot taken just before exiting is still written.
+        // A screenshot taken or a note typed just before exiting is still written.
         self.shots.finish(Duration::from_secs(2));
+        note::lock(&self.note).notes.finish(Duration::from_secs(2));
     }
     fn logic(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         if let Some(view) = self.client.try_latest_view() {
@@ -581,8 +622,10 @@ impl eframe::App for DesktopApp {
         self.select_initial_devices();
         self.query();
         self.watch_processes(ctx);
+        self.hotkey_logic();
         self.screenshot_logic(ctx);
         self.clipboard_logic(ctx);
+        self.note_logic(ctx);
         if self.page == Page::Alerts {
             // Windows notices a new notification identity with a delay, so it is set up
             // before the first alert.
@@ -614,6 +657,7 @@ impl eframe::App for DesktopApp {
             if self.capture.is_none() {
                 let mut config = self.active_config.clone();
                 self.dock.store(ctx, &mut config);
+                note::store(ctx, &mut config);
                 self.save_config(config, false);
             }
         }
@@ -648,10 +692,14 @@ impl eframe::App for DesktopApp {
         }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
-        // eframe lays out and paints a window hidden in the tray as if it were shown. It
-        // stays empty instead, so that animations schedule nothing until the icon brings it
-        // back; that frame is laid out before the window appears.
-        if self.tray.is_hidden() {
+        if self.capture.is_none() {
+            self.note_viewport(ui.ctx());
+        }
+        // eframe lays out and paints a window hidden in the tray as if it were shown, and a
+        // minimized one while the note window is open. It stays empty instead, so that
+        // animations schedule nothing until it comes back; that frame is laid out before
+        // the window appears.
+        if self.asleep(ui.ctx()) {
             return;
         }
         let t = i18n::t();
@@ -803,7 +851,7 @@ impl eframe::App for DesktopApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qqq_domain::Reason;
+    use qqq_domain::{Reason, Shortcut};
 
     fn answer(
         answers: &mut Answers,
@@ -825,7 +873,7 @@ mod tests {
         answer(&mut answers, &mut message, 2, Ok(CommandOutcome::Saved));
         assert_eq!(message, Some(unsaved));
         // A notice of the window itself, such as a taken shortcut, outlasts a save too.
-        let taken = Notice::HotkeyUnavailable(Reason::HotkeyTaken);
+        let taken = Notice::HotkeyUnavailable(Shortcut::Screenshot, Reason::HotkeyTaken);
         message = Some(taken.clone());
         answers.saving(3);
         answer(&mut answers, &mut message, 3, Ok(CommandOutcome::Saved));

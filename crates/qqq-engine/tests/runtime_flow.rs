@@ -224,6 +224,10 @@ fn every_setting_round_trips() {
         screenshot_history: 100,
         clipboard_manager: true,
         clipboard_history: 200,
+        note_hotkey: "Alt+F9".into(),
+        note_hotkey_enabled: false,
+        note_size: [420.0, 520.0],
+        note_position: Some([1400.0, 120.0]),
         remote_hosts: vec![RemoteHost {
             id: "db".into(),
             name: "Database".into(),
@@ -275,7 +279,10 @@ fn screenshot_and_clipboard_settings_recover_one_by_one() {
     let loaded = ConfigStore::load(scratch.config());
     assert_eq!(loaded.warning, Some(Notice::InvalidValue));
     assert_eq!(loaded.config.screenshot_hotkey, "Ctrl+Alt+A");
-    assert_eq!(loaded.config.hotkey(), Some(Hotkey::DEFAULT));
+    assert_eq!(
+        loaded.config.hotkey(Shortcut::Screenshot),
+        Some(Hotkey::SCREENSHOT)
+    );
     assert_eq!(loaded.config.screenshot_history, 50);
     assert!(loaded.config.clipboard_manager);
     assert_eq!(loaded.config.clipboard_history, 50);
@@ -287,6 +294,29 @@ fn screenshot_and_clipboard_settings_recover_one_by_one() {
     assert_eq!(ConfigStore::load(scratch.config()).config, config);
     config.screenshot_history = 30;
     assert_eq!(config.validate(), Err(Notice::InvalidRecordLimit));
+}
+
+#[test]
+fn note_settings_recover_one_by_one() {
+    let scratch = Scratch::new();
+    fs::write(
+        scratch.config(),
+        "note_hotkey = 'N'
+note_hotkey_enabled = false
+note_size = [120.0, 900.0]
+note_position = [30.0, 40.0]
+",
+    )
+    .unwrap();
+    let loaded = ConfigStore::load(scratch.config());
+    assert_eq!(loaded.warning, Some(Notice::InvalidValue));
+    assert_eq!(loaded.config.hotkey(Shortcut::Note), Some(Hotkey::NOTE));
+    assert!(!loaded.config.note_hotkey_enabled);
+    assert_eq!(loaded.config.note_size, AppConfig::default().note_size);
+    assert_eq!(loaded.config.note_position, Some([30.0, 40.0]));
+    let mut config = loaded.config;
+    config.note_size = [NOTE_MIN_SIZE[0] - 1.0, 400.0];
+    assert_eq!(config.validate(), Err(Notice::InvalidWindowSize));
 }
 
 struct FakeProcesses {

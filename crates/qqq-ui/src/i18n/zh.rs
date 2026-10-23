@@ -1,7 +1,7 @@
 //! Simplified Chinese.
 
 use super::{PageText, Strings};
-use qqq_domain::Reason;
+use qqq_domain::{Reason, Shortcut};
 use qqq_engine::{Notice, SaveStatus};
 
 pub const STRINGS: Strings = Strings {
@@ -222,7 +222,7 @@ pub const STRINGS: Strings = Strings {
     collectors_ok: "所有采集源工作正常",
     refresh_devices: "立即刷新设备",
     about: "关于",
-    about_intro: "二次元像素风格的 Windows 多功能任务管理器，由看板娘「MINT 酱」陪你看着电脑的状态：实时性能监控与历史曲线、进程管理、通过 SSH 监控 Linux 主机、前台应用的帧率统计、监控告警，以及截图与剪贴板管理等小工具。",
+    about_intro: "二次元像素风格的 Windows 多功能任务管理器，由看板娘「MINT 酱」陪你看着电脑的状态：实时性能监控与历史曲线、进程管理、通过 SSH 监控 Linux 主机、前台应用的帧率统计、监控告警，以及截图、剪贴板管理与便签等小工具。",
     about_github: "GitHub 主页",
 
     process_name: "名称",
@@ -374,10 +374,11 @@ pub const STRINGS: Strings = Strings {
     tools_page: PageText {
         nav: "小工具",
         title: "小工具",
-        hint: "截图与剪贴板管理等实用工具",
+        hint: "截图、剪贴板管理与便签等实用工具",
     },
     tool_screenshots: "截图",
     tool_clipboard: "剪贴板",
+    tool_notes: "便签",
     tray_screenshot: "截图",
     hours_ago: |v| format!("{v} 小时前"),
     shot_take: "开始截图",
@@ -413,6 +414,35 @@ pub const STRINGS: Strings = Strings {
     clip_files: |n| format!("{n} 个文件"),
     clip_more: |n| format!("另有 {n} 项"),
     clip_note: "点击记录即可复制回剪贴板，最新的记录排在最前。记录只保存在内存中，退出程序后清空；密码管理器标记为不记录的内容会被跳过；图片合计最多占用 256 MiB 内存。",
+
+    tray_note: "便签",
+    note_title: "QQQ 便签",
+    note_hotkey_option: |key| format!("按 {key} 显示或隐藏便签"),
+    hotkey_taken: "这个组合键已用于另一个快捷键",
+    note_open: "打开便签",
+    note_new: "新建便签",
+    note_list: "全部便签",
+    note_write: "编辑",
+    note_read: "预览",
+    note_delete: "删除便签",
+    note_hide: "隐藏便签",
+    note_untitled: "无标题便签",
+    note_hint: "在这里记录，支持 Markdown",
+    note_read_empty: "这条便签还是空的。双击此处或按 Ctrl+E 开始书写。",
+    note_delete_confirm: "删除这条便签？",
+    note_delete_confirm_short: "确认删除",
+    note_chars: |n| format!("{n} 字"),
+    note_saving: "正在保存…",
+    note_saved: "已保存",
+    note_save_failed: |error| format!("保存失败：{error}"),
+    note_count: |n| format!("{n} 条"),
+    note_empty: "还没有便签。按下快捷键或点击「打开便签」开始记录。",
+    note_loading: "正在读取便签…",
+    note_about: |folder| {
+        format!(
+            "便签窗口始终位于其他窗口之上：按快捷键显示，在便签中再按一次隐藏；拖动标题栏移动，拖动右下角调整大小。内容使用 Markdown，按 Ctrl+E 在编辑与预览之间切换，按 Ctrl+N 新建便签；预览中可以勾选任务、打开网页链接。每条便签是 {folder} 中的一个 .md 文件，停止输入片刻后自动保存。"
+        )
+    },
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -550,15 +580,20 @@ fn notice(notice: &Notice) -> String {
         Notice::ElevationFailed(reason) => {
             format!("无法以管理员身份重新启动：{}", self::reason(reason))
         }
-        Notice::InvalidHotkey => "截图快捷键无效".into(),
+        Notice::InvalidHotkey => "快捷键无效".into(),
         Notice::InvalidRecordLimit => "保留数量不在可选范围内".into(),
-        Notice::HotkeyUnavailable(reason) => {
-            format!("无法注册截图快捷键：{}", self::reason(reason))
+        Notice::HotkeyUnavailable(shortcut, reason) => {
+            let name = match shortcut {
+                Shortcut::Screenshot => "截图",
+                Shortcut::Note => "便签",
+            };
+            format!("无法注册{name}快捷键：{}", self::reason(reason))
         }
         Notice::ScreenshotFailed(reason) => format!("截图失败：{}", self::reason(reason)),
         Notice::ScreenshotFile(error) => format!("截图文件操作失败：{error}"),
         Notice::ClipboardFailed(reason) => format!("无法使用剪贴板：{}", self::reason(reason)),
         Notice::OpenFailed(reason) => format!("无法打开：{}", self::reason(reason)),
+        Notice::NoteFile(error) => format!("便签文件操作失败：{error}"),
     }
 }
 

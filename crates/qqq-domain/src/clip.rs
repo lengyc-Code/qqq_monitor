@@ -1,4 +1,5 @@
-//! Screenshots, clipboard contents and the keyboard shortcut that starts a screenshot.
+//! Screenshots, clipboard contents and the keyboard shortcuts that start a screenshot or
+//! show the note window.
 
 use std::{fmt, sync::Arc};
 
@@ -64,6 +65,19 @@ pub enum HotkeyKey {
     Function(u8),
 }
 
+/// What a keyboard shortcut registered with the system does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shortcut {
+    /// Starts a screenshot.
+    Screenshot,
+    /// Shows or hides the note window.
+    Note,
+}
+
+impl Shortcut {
+    pub const ALL: [Self; 2] = [Self::Screenshot, Self::Note];
+}
+
 /// A keyboard shortcut: modifier keys held with one key, written like `Ctrl+Alt+A`.
 /// Letters and digits need Ctrl or Alt, so the shortcut never takes over typing; function
 /// keys work alone too.
@@ -76,12 +90,19 @@ pub struct Hotkey {
 }
 
 impl Hotkey {
-    /// Ctrl+Alt+A.
-    pub const DEFAULT: Self = Self {
+    /// Ctrl+Alt+A, the default screenshot shortcut.
+    pub const SCREENSHOT: Self = Self {
         ctrl: true,
         alt: true,
         shift: false,
         key: HotkeyKey::Letter('A'),
+    };
+    /// Ctrl+Alt+N, the default note shortcut.
+    pub const NOTE: Self = Self {
+        ctrl: true,
+        alt: true,
+        shift: false,
+        key: HotkeyKey::Letter('N'),
     };
 
     /// Whether the key exists and the modifiers suit it.
@@ -162,8 +183,9 @@ mod tests {
         ] {
             assert_eq!(Hotkey::parse(text).unwrap().to_string(), text);
         }
-        assert_eq!(Hotkey::parse(" alt + ctrl + a "), Some(Hotkey::DEFAULT));
-        assert_eq!(Hotkey::DEFAULT.to_string(), "Ctrl+Alt+A");
+        assert_eq!(Hotkey::parse(" alt + ctrl + a "), Some(Hotkey::SCREENSHOT));
+        assert_eq!(Hotkey::SCREENSHOT.to_string(), "Ctrl+Alt+A");
+        assert_eq!(Hotkey::NOTE.to_string(), "Ctrl+Alt+N");
     }
 
     #[test]

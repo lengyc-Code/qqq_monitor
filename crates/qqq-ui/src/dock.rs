@@ -13,7 +13,7 @@
 
 use crate::i18n;
 use eframe::egui::{self, Pos2, Rect, Vec2, ViewportCommand, pos2, vec2};
-use qqq_domain::{CaptureEnd, Clip, Hotkey, Reason};
+use qqq_domain::{CaptureEnd, Clip, Hotkey, Reason, Shortcut};
 use qqq_engine::{AppConfig, DockEdge};
 use std::time::Duration;
 
@@ -62,8 +62,8 @@ pub struct Desktop {
     /// Starts or stops waking the GUI whenever another application comes to the foreground.
     pub watch_foreground: fn(bool),
     /// Shows the notification-area icon with a tooltip and the labels of its "open",
-    /// "screenshot" and "exit" menu items, or updates the text of the shown icon.
-    pub show_tray: fn(&str, &str, &str, &str),
+    /// "screenshot", "note" and "exit" menu items, or updates the text of the shown icon.
+    pub show_tray: fn(&str, &str, &str, &str, &str),
     /// Removes the notification-area icon.
     pub hide_tray: fn(),
     /// Whether the user asked for the window from the icon since the last call.
@@ -84,12 +84,14 @@ pub struct Desktop {
     pub prepare_notifications: fn(),
     /// Starts the application again with administrator rights and these arguments.
     pub restart_elevated: fn(&str) -> Result<(), Reason>,
-    /// Registers the screenshot shortcut in place of the previous one, or with `None`
-    /// removes it.
-    pub set_hotkey: fn(Option<Hotkey>) -> Result<(), Reason>,
+    /// Registers a shortcut in place of its previous keys, or with `None` removes it.
+    pub set_hotkey: fn(Shortcut, Option<Hotkey>) -> Result<(), Reason>,
     /// Whether the user asked for a screenshot with the shortcut or from the icon's menu
     /// since the last call.
     pub screenshot_requested: fn() -> bool,
+    /// Whether the user asked for the note window with the shortcut or from the icon's menu
+    /// since the last call.
+    pub note_requested: fn() -> bool,
     /// Freezes the screen for the user to select a region, showing this hint.
     pub start_capture: fn(&str) -> Result<(), Reason>,
     /// How the latest region selection ended, once.

@@ -38,6 +38,7 @@ tracing-appender = "0.2"
 embed-resource = "3"
 russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa"] }
 tokio = { version = "1.53", features = ["rt", "net", "time", "macros", "sync"] }
+pulldown-cmark = { version = "0.13.5", default-features = false }
 
 [dependencies]
 qqq-domain.workspace = true

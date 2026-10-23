@@ -378,6 +378,7 @@ pub struct Strings {
     /// Tabs of the tools page, also the labels of their settings rows.
     pub tool_screenshots: &'static str,
     pub tool_clipboard: &'static str,
+    pub tool_notes: &'static str,
 
     // Screenshots.
     /// Screenshot item of the notification-area icon menu.
@@ -423,6 +424,44 @@ pub struct Strings {
     /// Files beyond those listed.
     pub clip_more: fn(usize) -> String,
     pub clip_note: &'static str,
+
+    // Notes.
+    /// Note item of the notification-area icon menu.
+    pub tray_note: &'static str,
+    /// Title of the note window, as the task switcher lists it.
+    pub note_title: &'static str,
+    /// Option that registers the note shortcut, named by its keys.
+    pub note_hotkey_option: fn(&str) -> String,
+    /// The pressed keys belong to the other shortcut.
+    pub hotkey_taken: &'static str,
+    pub note_open: &'static str,
+    pub note_new: &'static str,
+    pub note_list: &'static str,
+    pub note_write: &'static str,
+    pub note_read: &'static str,
+    pub note_delete: &'static str,
+    pub note_hide: &'static str,
+    /// Title of a note without text on its first line.
+    pub note_untitled: &'static str,
+    /// Placeholder of the empty editor.
+    pub note_hint: &'static str,
+    /// Shown in place of an empty note's rendering.
+    pub note_read_empty: &'static str,
+    pub note_delete_confirm: &'static str,
+    /// Button that confirms deleting a note on the tools page.
+    pub note_delete_confirm_short: &'static str,
+    /// Number of characters of a note.
+    pub note_chars: fn(usize) -> String,
+    pub note_saving: &'static str,
+    pub note_saved: &'static str,
+    /// A note could not be written, with the system's description.
+    pub note_save_failed: fn(&str) -> String,
+    /// Number of notes.
+    pub note_count: fn(usize) -> String,
+    pub note_empty: &'static str,
+    pub note_loading: &'static str,
+    /// How the note window works, with the folder that keeps the notes.
+    pub note_about: fn(&str) -> String,
 }
 
 /// Index of the active language in [`Language::ALL`].
