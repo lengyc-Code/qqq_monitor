@@ -90,6 +90,16 @@ fn ssh_reason(error: russh::Error) -> Reason {
     }
 }
 
+/// Reason for a failure while signing in. A host that closes the connection during sign-in
+/// has usually refused too many attempts, such as the keys of an agent one after another,
+/// so the failure waits for the user like a rejected sign-in instead of trying again.
+fn sign_in_reason(error: russh::Error) -> Reason {
+    match ssh_reason(error) {
+        Reason::TimedOut => Reason::TimedOut,
+        _ => Reason::AuthFailed,
+    }
+}
+
 /// Checks the host key: against the trusted key when the user trusted one, otherwise
 /// against the user's `known_hosts`. A rejected key's reason stays in `verdict`.
 struct Client {
@@ -200,7 +210,7 @@ async fn authenticate(
             match handle
                 .authenticate_password(user, password.clone())
                 .await
-                .map_err(ssh_reason)?
+                .map_err(sign_in_reason)?
             {
                 AuthResult::Success => true,
                 // Hosts that sign in through PAM often ask for the password this way.
@@ -217,7 +227,7 @@ async fn authenticate(
             handle
                 .authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(*key), hash))
                 .await
-                .map_err(ssh_reason)?
+                .map_err(sign_in_reason)?
                 .success()
         }
         Credentials::Agent => agent(handle, user).await?,
@@ -238,7 +248,7 @@ async fn keyboard_interactive(
     let mut response = handle
         .authenticate_keyboard_interactive_start(user, None::<String>)
         .await
-        .map_err(ssh_reason)?;
+        .map_err(sign_in_reason)?;
     for _ in 0..4 {
         match response {
             KeyboardInteractiveAuthResponse::Success => return Ok(true),
@@ -257,7 +267,7 @@ async fn keyboard_interactive(
                 response = handle
                     .authenticate_keyboard_interactive_respond(answers)
                     .await
-                    .map_err(ssh_reason)?;
+                    .map_err(sign_in_reason)?;
             }
         }
     }
@@ -309,10 +319,12 @@ where
             continue;
         };
         tried = true;
+        // The host closing the connection after too many keys, and the agent declining to
+        // sign, both wait for the user.
         if handle
             .authenticate_publickey_with(user, key, hash, agent)
             .await
-            .map_err(|_| Reason::ConnectionLost)?
+            .map_err(|_| Reason::AuthFailed)?
             .success()
         {
             return Ok(true);
@@ -554,6 +566,17 @@ mod tests {
                     fingerprint
                 })
             )
+        );
+    }
+
+    #[test]
+    fn a_connection_closed_during_sign_in_waits_for_the_user() {
+        assert_eq!(sign_in_reason(russh::Error::Disconnect), Reason::AuthFailed);
+        assert_eq!(sign_in_reason(russh::Error::SendError), Reason::AuthFailed);
+        assert_eq!(sign_in_reason(russh::Error::HUP), Reason::AuthFailed);
+        assert_eq!(
+            sign_in_reason(russh::Error::ConnectionTimeout),
+            Reason::TimedOut
         );
     }
 

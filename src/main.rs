@@ -32,10 +32,33 @@ fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|s| s == "--help") {
         println!(
-            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           打开或截图的页面：overview/cpu/memory/gpu/frames/disk/network/processes/remote/alerts/tools/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja\n  --autostart           以开机自动启动的方式启动：开启“开机启动时直接收进托盘”时只显示托盘图标"
+            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           打开或截图的页面：overview/cpu/memory/gpu/frames/disk/network/processes/remote/alerts/tools/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja\n  --autostart           以开机自动启动的方式启动：开启“开机启动时直接收进托盘”时只显示托盘图标\n  --replace             等同一个可执行文件正在运行的实例退出后再启动"
         );
         return Ok(());
     }
+    // The checks run beside the program; every other start keeps one instance of this
+    // executable, which reads the configuration the previous instance saved.
+    let checking = args.iter().any(|s| s == "--smoke-test" || s == "--capture");
+    let _instance = if checking {
+        None
+    } else {
+        let replace = args
+            .iter()
+            .any(|s| s == qqq_platform_windows::REPLACE_ARGUMENT);
+        match qqq_platform_windows::claim_instance(replace) {
+            Some(lock) => Some(lock),
+            None => {
+                // Started at sign-in, the running instance already is what the user wants.
+                if !args
+                    .iter()
+                    .any(|s| s == qqq_platform_windows::AUTOSTART_ARGUMENT)
+                {
+                    qqq_platform_windows::activate_instance();
+                }
+                return Ok(());
+            }
+        }
+    };
     let loaded = ConfigStore::load_default();
     let mut config = loaded.config.clone();
     if let Some(index) = args.iter().position(|s| s == "--dock") {

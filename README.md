@@ -217,6 +217,8 @@ The executable is `target\release\qqq_monitor.exe` and runs as is. Frame monitor
 
 ### Command-line options
 
+Each executable runs one instance at a time: starting it again shows the running instance's window, and a start at sign-in leaves the running instance as it is. `--smoke-test` and `--capture` run alongside it.
+
 | Option | Effect |
 | --- | --- |
 | `--smoke-test` | Runs for about 8 seconds, checks that CPU, memory, physical disk I/O, network, volume capacity and the Windows process list all have valid readings, and prints every metric including the GPU and the process count of each running WSL distribution; exits with code 0 when every check passes |
@@ -225,6 +227,7 @@ The executable is `target\release\qqq_monitor.exe` and runs as is. Frame monitor
 | `--dock EDGE` | Starts as the mini bar: `top`, `left`, `right`; with `--capture` it captures the mini bar |
 | `--lang LANG` | Starts in an interface language, like choosing it on the Settings page: `zh-CN`, `en`, `ja`; with `--capture` it captures pages in that language |
 | `--autostart` | The argument of the autostart entry; with Start hidden in the notification area on, only the icon appears |
+| `--replace` | Waits for the running instance of the same executable to exit, then starts; the restart with administrator rights uses it |
 | `--help` | Lists the options (in Simplified Chinese) |
 
 ```powershell

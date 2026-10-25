@@ -1,8 +1,9 @@
 use super::super::{DesktopApp, Page};
 use crate::{components::label_width, i18n, pixel, theme};
 use eframe::egui::{self, RichText, vec2};
-use qqq_domain::{Hotkey, Shortcut};
+use qqq_domain::{Hotkey, Reason, Shortcut};
 use qqq_engine::Notice;
+use std::time::{Duration, Instant};
 
 /// Tool shown on the tools page.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -40,11 +41,81 @@ impl Recorder {
     }
 }
 
+/// Shortcuts registered with the system. A registration that fails, for example while
+/// another application holds the keys, is tried again after a wait that doubles from
+/// [`RETRY_FIRST`] up to [`RETRY_LAST`]; new settings try at once.
+#[derive(Default)]
+pub(in crate::app) struct Hotkeys {
+    /// Keys each shortcut is registered with, `None` for none; a shortcut missing here has
+    /// not been registered yet.
+    registered: Vec<Registration>,
+    /// Keys the settings asked for at the latest attempt.
+    wanted: Vec<Registration>,
+    /// When to try the failed registrations again, and how many earlier tries failed.
+    retry: Option<(Instant, u32)>,
+}
+
+const RETRY_FIRST: Duration = Duration::from_secs(2);
+const RETRY_LAST: Duration = Duration::from_secs(60);
+
+/// A shortcut and whether its registration succeeded.
+type Outcome = (Shortcut, Result<(), Reason>);
+
+impl Hotkeys {
+    /// Registers the shortcuts as `wanted` asks with `set`, unless the registrations
+    /// already match it or the failed ones are not due again yet. Returns the outcome of
+    /// each registration tried, and the wait before failed ones are tried again.
+    fn update(
+        &mut self,
+        wanted: Vec<Registration>,
+        now: Instant,
+        mut set: impl FnMut(Shortcut, Option<Hotkey>) -> Result<(), Reason>,
+    ) -> (Vec<Outcome>, Option<Duration>) {
+        if wanted == self.wanted {
+            match self.retry {
+                None => return (Vec::new(), None),
+                Some((at, _)) if now < at => return (Vec::new(), Some(at - now)),
+                Some(_) => {}
+            }
+        } else {
+            self.retry = None;
+        }
+        let (released, changed) = hotkey_changes(&self.registered, &wanted);
+        for shortcut in released {
+            let _ = set(shortcut, None);
+        }
+        let mut registered = wanted.clone();
+        let mut outcomes = Vec::new();
+        for (shortcut, keys) in changed {
+            let outcome = set(shortcut, keys);
+            // The shortcut's earlier keys were released before the attempt.
+            if outcome.is_err()
+                && let Some(entry) = registered.iter_mut().find(|(s, _)| *s == shortcut)
+            {
+                entry.1 = None;
+            }
+            outcomes.push((shortcut, outcome));
+        }
+        let failed = outcomes.iter().any(|(_, outcome)| outcome.is_err());
+        let tries = self.retry.map_or(0, |(_, tries)| tries + 1);
+        let wait = RETRY_FIRST
+            .saturating_mul(1 << tries.min(5))
+            .min(RETRY_LAST);
+        self.registered = registered;
+        self.wanted = wanted;
+        self.retry = failed.then_some((now + wait, tries));
+        (outcomes, failed.then_some(wait))
+    }
+}
+
 impl DesktopApp {
     /// Registers each shortcut as the settings ask. While a new shortcut is being recorded,
-    /// no shortcut is registered, so its keys reach the page.
-    pub(in crate::app) fn hotkey_logic(&mut self) {
-        if self.page != Page::Tools {
+    /// no shortcut is registered, so its keys reach the page. Recording ends once the
+    /// window can no longer receive the keys: away from the tools page, without keyboard
+    /// focus, in the tray, minimized or docked.
+    pub(in crate::app) fn hotkey_logic(&mut self, ctx: &egui::Context) {
+        let focused = ctx.input(|i| i.viewport().focused) != Some(false);
+        if self.page != Page::Tools || !focused || self.asleep(ctx) || self.dock.edge().is_some() {
             self.recorder = Recorder::default();
         }
         if self.capture.is_some() {
@@ -60,16 +131,11 @@ impl DesktopApp {
                 (shortcut, keys)
             })
             .collect();
-        if self.hotkeys == wanted {
-            return;
-        }
-        let (released, changed) = hotkey_changes(&self.hotkeys, &wanted);
-        self.hotkeys = wanted;
-        for shortcut in released {
-            let _ = (self.desktop.set_hotkey)(shortcut, None);
-        }
-        for (shortcut, wanted) in changed {
-            match (self.desktop.set_hotkey)(shortcut, wanted) {
+        let (outcomes, retry) =
+            self.hotkeys
+                .update(wanted, Instant::now(), self.desktop.set_hotkey);
+        for (shortcut, outcome) in outcomes {
+            match outcome {
                 Ok(())
                     if matches!(
                         &self.message,
@@ -81,6 +147,10 @@ impl DesktopApp {
                 Ok(()) => {}
                 Err(reason) => self.message = Some(Notice::HotkeyUnavailable(shortcut, reason)),
             }
+        }
+        // The GUI wakes for the next try also while the window rests in the tray.
+        if let Some(wait) = retry {
+            ctx.request_repaint_after(wait);
         }
     }
 
@@ -303,6 +373,66 @@ mod tests {
                 (Shortcut::Command(1), keys("F10"))
             ]
         );
+    }
+
+    #[test]
+    fn a_failed_registration_is_tried_again_after_a_growing_wait() {
+        let mut hotkeys = Hotkeys::default();
+        let wanted = vec![
+            (Shortcut::Screenshot, keys("Ctrl+Alt+A")),
+            (Shortcut::Note, keys("Ctrl+Alt+N")),
+        ];
+        let taken = |shortcut: Shortcut, keys: Option<Hotkey>| {
+            if shortcut == Shortcut::Screenshot && keys.is_some() {
+                Err(Reason::HotkeyTaken)
+            } else {
+                Ok(())
+            }
+        };
+        let start = Instant::now();
+        let (outcomes, retry) = hotkeys.update(wanted.clone(), start, taken);
+        assert_eq!(
+            outcomes,
+            [
+                (Shortcut::Screenshot, Err(Reason::HotkeyTaken)),
+                (Shortcut::Note, Ok(()))
+            ]
+        );
+        assert_eq!(retry, Some(RETRY_FIRST));
+        // Nothing is tried before the wait has passed.
+        let early = start + Duration::from_secs(1);
+        let (outcomes, retry) = hotkeys.update(wanted.clone(), early, |_, _| panic!("too early"));
+        assert!(outcomes.is_empty());
+        assert_eq!(retry, Some(Duration::from_secs(1)));
+        // Only the failed shortcut is tried again, and another failure waits twice as long.
+        let due = start + RETRY_FIRST;
+        let mut tried = Vec::new();
+        let (_, retry) = hotkeys.update(wanted.clone(), due, |shortcut, keys| {
+            tried.push(shortcut);
+            taken(shortcut, keys)
+        });
+        assert_eq!(tried, [Shortcut::Screenshot]);
+        assert_eq!(retry, Some(RETRY_FIRST * 2));
+        // Once the keys are free, the registration succeeds and nothing waits any more.
+        let free = due + RETRY_FIRST * 2;
+        let (outcomes, retry) = hotkeys.update(wanted.clone(), free, |_, _| Ok(()));
+        assert_eq!(outcomes, [(Shortcut::Screenshot, Ok(()))]);
+        assert_eq!(retry, None);
+        let later = free + RETRY_LAST;
+        let (outcomes, _) = hotkeys.update(wanted, later, |_, _| panic!("nothing to do"));
+        assert!(outcomes.is_empty());
+    }
+
+    #[test]
+    fn new_settings_are_tried_at_once_while_a_retry_waits() {
+        let mut hotkeys = Hotkeys::default();
+        let start = Instant::now();
+        let first = vec![(Shortcut::Screenshot, keys("Ctrl+Alt+A"))];
+        hotkeys.update(first, start, |_, _| Err(Reason::HotkeyTaken));
+        let second = vec![(Shortcut::Screenshot, keys("Ctrl+Alt+S"))];
+        let (outcomes, retry) = hotkeys.update(second, start, |_, _| Ok(()));
+        assert_eq!(outcomes, [(Shortcut::Screenshot, Ok(()))]);
+        assert_eq!(retry, None);
     }
 
     #[test]

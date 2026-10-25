@@ -140,14 +140,15 @@ pub fn local_volume_id(mount: &str) -> Option<String> {
 }
 
 /// Starts this executable again with administrator rights and `arguments`, once the user
-/// confirms the system's prompt; declining it fails with [`Reason::Declined`].
+/// confirms the system's prompt; declining it fails with [`Reason::Declined`]. The new
+/// instance waits for this one to exit.
 pub fn restart_elevated(arguments: &str) -> Result<(), Reason> {
     let path = std::env::current_exe().map_err(|error| Reason::CallFailed {
         api: "GetModuleFileNameW",
         code: error.raw_os_error().unwrap_or_default() as u32,
     })?;
     let file = HSTRING::from(path.as_os_str());
-    let arguments = HSTRING::from(arguments);
+    let arguments = HSTRING::from(format!("{arguments} {}", crate::instance::ARGUMENT));
     let mut info = SHELLEXECUTEINFOW {
         cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
         lpVerb: w!("runas"),

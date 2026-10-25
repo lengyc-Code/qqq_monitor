@@ -5,7 +5,7 @@ use crate::{
     clips, components, dock, i18n, mascot, minibar, note, notes, pixel, shots, theme, tray,
 };
 use eframe::egui::{self, RichText, pos2, vec2};
-use qqq_domain::{DeviceKind, Hotkey, MetricKey, ShellSession, Shortcut};
+use qqq_domain::{DeviceKind, MetricKey, ShellSession};
 use qqq_engine::{
     AlertState, AppConfig, CommandOutcome, CommandResult, DockEdge, Language, MonitorClient,
     MonitorCommand, MonitorView, Notice, data_directory,
@@ -167,9 +167,8 @@ pub struct DesktopApp {
     snip: pages::screenshots::Snip,
     /// A new shortcut being recorded on the tools page.
     recorder: pages::tools::Recorder,
-    /// Keys each shortcut was last registered with, `None` for none; a shortcut missing
-    /// here has not been registered yet.
-    hotkeys: Vec<(Shortcut, Option<Hotkey>)>,
+    /// Shortcuts registered with the system.
+    hotkeys: pages::tools::Hotkeys,
     command_page: pages::commands::CommandPage,
     /// Running PowerShell sessions of the quick commands, each with its command's ID.
     shell_sessions: Vec<(String, Box<dyn ShellSession>)>,
@@ -245,7 +244,7 @@ impl DesktopApp {
             tool: Default::default(),
             snip: Default::default(),
             recorder: Default::default(),
-            hotkeys: Vec::new(),
+            hotkeys: Default::default(),
             command_page: Default::default(),
             shell_sessions: Vec::new(),
             note: Arc::new(std::sync::Mutex::new(note::NoteWindow::new(
@@ -627,7 +626,7 @@ impl eframe::App for DesktopApp {
         self.select_initial_devices();
         self.query();
         self.watch_processes(ctx);
-        self.hotkey_logic();
+        self.hotkey_logic(ctx);
         self.screenshot_logic(ctx);
         self.clipboard_logic(ctx);
         self.note_logic(ctx);
@@ -857,7 +856,7 @@ impl eframe::App for DesktopApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qqq_domain::Reason;
+    use qqq_domain::{Reason, Shortcut};
 
     fn answer(
         answers: &mut Answers,

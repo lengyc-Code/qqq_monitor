@@ -6,6 +6,7 @@ mod disk_io;
 mod frames;
 mod fullscreen;
 mod gpu;
+mod instance;
 mod inventory;
 mod native;
 mod network;
@@ -29,6 +30,12 @@ pub use capture::{start as start_capture, take as take_capture};
 pub use clipboard::{set as set_clipboard, take as take_clipboard, watch as watch_clipboard};
 /// Full-screen applications in the foreground, for letting clicks through the docked bar.
 pub use fullscreen::{at as fullscreen_at, watch as watch_foreground};
+/// One instance of each executable: claiming it, showing the running instance's window, and
+/// the argument with which a restart waits for the instance it replaces.
+pub use instance::{
+    ARGUMENT as REPLACE_ARGUMENT, InstanceLock, activate as activate_instance,
+    claim as claim_instance,
+};
 /// Starting this executable again with administrator rights.
 pub use native::restart_elevated;
 /// Window icons from the icon resource embedded in the executable.

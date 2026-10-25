@@ -7,7 +7,7 @@
 //! clipboard changes. All functions act on the state of the calling thread, so only
 //! the GUI thread that called [`attach`] reaches it.
 
-use crate::{clipboard, native::APP_ICON};
+use crate::{clipboard, instance, native::APP_ICON};
 use qqq_domain::{Hotkey, HotkeyKey, Reason, Shortcut};
 use std::{
     cell::{Cell, OnceCell, RefCell},
@@ -58,8 +58,11 @@ const NOTIFY: u32 = WM_APP + 1;
 /// Message that re-applies the icon and the taskbar button after a `TaskbarCreated`
 /// broadcast has reached every window of the thread.
 const REAPPLY: u32 = WM_APP + 2;
-/// Message from another thread asking for the application window.
-const OPEN: u32 = WM_APP + 3;
+/// Message from another thread, or another start of this executable, asking for the
+/// application window.
+pub(crate) const OPEN: u32 = WM_APP + 3;
+/// Window class of the hidden tray window, whose title is the instance name.
+pub(crate) const CLASS: PCWSTR = w!("QqqMonitorTray");
 const ICON_ID: u32 = 1;
 /// Enter or Space on the focused icon.
 const KEY_SELECT: u32 = NIN_SELECT | NINF_KEY;
@@ -72,6 +75,9 @@ const COMMAND_HOTKEYS: i32 = 0x100;
 /// Timer that asks for a screenshot once the icon's menu has faded from the screen.
 const SCREENSHOT_TIMER: usize = 1;
 const MENU_FADE_MS: u32 = 250;
+/// Timer that reads a clipboard change again once another application may have closed the
+/// clipboard.
+const CLIPBOARD_TIMER: usize = 2;
 
 /// Icon text: the tooltip and the labels of the "open", "screenshot", "note" and "exit"
 /// menu items.
@@ -130,13 +136,15 @@ pub fn attach(main: isize, wake: impl Fn() + 'static) -> bool {
     let Ok(module) = (unsafe { GetModuleHandleW(PCWSTR::null()) }) else {
         return false;
     };
-    let class = w!("QqqMonitorTray");
+    let class = CLASS;
     let description = WNDCLASSW {
         lpfnWndProc: Some(procedure),
         hInstance: module.into(),
         lpszClassName: class,
         ..Default::default()
     };
+    // Another start of this executable finds the window by this title.
+    let title = HSTRING::from(instance::name());
     // SAFETY: the class name is a static NUL-terminated string and the procedure lives for
     // the whole process. A zero result leaves window creation below to fail.
     unsafe { RegisterClassW(&description) };
@@ -146,7 +154,7 @@ pub fn attach(main: isize, wake: impl Fn() + 'static) -> bool {
         CreateWindowExW(
             WS_EX_TOOLWINDOW,
             class,
-            w!("QQQ Monitor"),
+            &title,
             WS_POPUP,
             0,
             0,
@@ -162,9 +170,9 @@ pub fn attach(main: isize, wake: impl Fn() + 'static) -> bool {
     };
     // SAFETY: the message name is a static NUL-terminated string.
     let taskbar_created = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
-    for message in [NOTIFY, taskbar_created, WM_CLIPBOARDUPDATE] {
-        // Explorer and the applications that copy run at medium integrity; an elevated
-        // instance must accept their messages.
+    for message in [NOTIFY, taskbar_created, WM_CLIPBOARDUPDATE, OPEN] {
+        // Explorer, the applications that copy and a second start of this executable run
+        // at medium integrity; an elevated instance must accept their messages.
         // SAFETY: `window` belongs to this thread; no filter information is requested.
         let _ = unsafe { ChangeWindowMessageFilterEx(window, message, MSGFLT_ALLOW, None) };
     }
@@ -228,6 +236,21 @@ pub(crate) fn window() -> Option<HWND> {
 /// Asks the GUI to poll the tray, from the GUI thread.
 pub(crate) fn wake() {
     with(|tray| (tray.wake)());
+}
+
+/// Reads the clipboard again after `delay` milliseconds, replacing a pending wait, or with
+/// `None` cancels it.
+pub(crate) fn clipboard_timer(delay: Option<u32>) {
+    with(|tray| match delay {
+        // SAFETY: the timer belongs to this thread's own window.
+        Some(delay) => unsafe {
+            SetTimer(Some(tray.window), CLIPBOARD_TIMER, delay, None);
+        },
+        // SAFETY: as above; stopping a timer that is not set only fails.
+        None => unsafe {
+            let _ = KillTimer(Some(tray.window), CLIPBOARD_TIMER);
+        },
+    });
 }
 
 /// Shows the icon with a tooltip and the labels of its "open", "screenshot", "note" and
@@ -597,6 +620,12 @@ unsafe extern "system" fn procedure(
             // SAFETY: stops this thread's own one-shot timer.
             let _ = unsafe { KillTimer(Some(window), SCREENSHOT_TIMER) };
             with(Tray::request_screenshot);
+            LRESULT(0)
+        }
+        WM_TIMER if wparam.0 == CLIPBOARD_TIMER => {
+            // SAFETY: stops this thread's own one-shot timer.
+            let _ = unsafe { KillTimer(Some(window), CLIPBOARD_TIMER) };
+            clipboard::retry();
             LRESULT(0)
         }
         WM_CLIPBOARDUPDATE => {
