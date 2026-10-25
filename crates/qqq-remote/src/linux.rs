@@ -388,7 +388,7 @@ pub(crate) fn parse_volumes(text: &str) -> Vec<Volume> {
         return Vec::new();
     };
     let typed = header.split_whitespace().nth(1) == Some("Type");
-    let mut volumes: Vec<Volume> = Vec::new();
+    let mut mounted: Vec<Volume> = Vec::new();
     for line in &lines[1..] {
         let fields: Vec<_> = line.split_whitespace().collect();
         let skip = usize::from(typed);
@@ -434,10 +434,15 @@ pub(crate) fn parse_volumes(text: &str) -> Vec<Volume> {
             used,
             available,
         };
-        if let Some(known) = volumes.iter_mut().find(|v| v.mount == volume.mount) {
+        if let Some(known) = mounted.iter_mut().find(|v| v.mount == volume.mount) {
             *known = volume;
-            continue;
+        } else {
+            mounted.push(volume);
         }
+    }
+    // Only the final file system at each mount point participates in source deduplication.
+    let mut volumes: Vec<Volume> = Vec::new();
+    for volume in mounted {
         match volumes
             .iter_mut()
             .find(|v| v.source == volume.source && volume.source.starts_with('/'))
@@ -855,6 +860,36 @@ C:\\           9p         30000000  10000000  20000000      34% /mnt/c
         assert_eq!(volumes[0].file_system, "ext4");
         assert_eq!(volumes[2].total, 50_000_000 * 1024);
         assert!(parse_volumes("\n").is_empty());
+    }
+
+    #[test]
+    fn df_deduplicates_sources_after_resolving_stacked_mounts() {
+        let text = "Filesystem Type 1024-blocks Used Available Capacity Mounted on
+/dev/sda1 ext4 1000 400 600 40% /a
+/dev/sdb1 ext4 2000 800 1200 40% /b
+/dev/sda1 ext4 1000 400 600 40% /b
+";
+        let volumes = parse_volumes(text);
+        assert_eq!(volumes.len(), 1);
+        assert_eq!(volumes[0].source, "/dev/sda1");
+        assert_eq!(volumes[0].mount, "/a");
+    }
+
+    #[test]
+    fn df_keeps_a_sources_other_mount_when_its_shortest_is_covered() {
+        let text = "Filesystem Type 1024-blocks Used Available Capacity Mounted on
+/dev/sda1 ext4 1000 400 600 40% /a
+/dev/sda1 ext4 1000 400 600 40% /longer
+/dev/sdb1 xfs 2000 800 1200 40% /a
+";
+        let volumes = parse_volumes(text);
+        let mounts: Vec<_> = volumes
+            .iter()
+            .map(|volume| (volume.source.as_str(), volume.mount.as_str()))
+            .collect();
+        assert_eq!(mounts, [("/dev/sdb1", "/a"), ("/dev/sda1", "/longer")]);
+        assert_eq!(volumes[0].total, 2000 * 1024);
+        assert_eq!(volumes[1].total, 1000 * 1024);
     }
 
     #[test]

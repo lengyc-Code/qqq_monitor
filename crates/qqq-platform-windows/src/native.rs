@@ -28,7 +28,7 @@ use windows::{
         UI::{
             HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi},
             Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON},
-            Shell::{SHELLEXECUTEINFOW, ShellExecuteExW},
+            Shell::{SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, ShellExecuteExW},
             WindowsAndMessaging::{
                 ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, MB_ICONERROR, MB_OK,
                 MessageBoxW, SM_CXICON, SM_CXSMICON, SW_SHOWNORMAL, SendMessageW, WM_SETICON,
@@ -247,6 +247,9 @@ fn open_later(target: String, file: HSTRING) {
 fn shell_open(file: &HSTRING) -> Result<(), Reason> {
     let mut info = SHELLEXECUTEINFOW {
         cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        // This worker exits after the call, so the shell must finish its DDE conversation
+        // before returning.
+        fMask: SEE_MASK_NOASYNC,
         lpVerb: w!("open"),
         lpFile: PCWSTR(file.as_ptr()),
         nShow: SW_SHOWNORMAL.0,
