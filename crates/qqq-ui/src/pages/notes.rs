@@ -99,7 +99,7 @@ impl DesktopApp {
         );
         if let Some(error) = &window.notes.error {
             ui.label(
-                RichText::new(i18n::notice(&Notice::NoteFile(error.clone())))
+                RichText::new(i18n::notice(&Notice::NoteFile(error.text().into())))
                     .size(12.0)
                     .color(theme::ERROR),
             );

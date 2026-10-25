@@ -2,7 +2,7 @@ use super::super::{DesktopApp, Page};
 use crate::{components::label_width, i18n, pixel, theme};
 use eframe::egui::{self, RichText, vec2};
 use qqq_domain::{Hotkey, Reason, Shortcut};
-use qqq_engine::Notice;
+use qqq_engine::{AppConfig, Notice};
 use std::time::{Duration, Instant};
 
 /// Tool shown on the tools page.
@@ -53,6 +53,10 @@ pub(in crate::app) struct Hotkeys {
     wanted: Vec<Registration>,
     /// When to try the failed registrations again, and how many earlier tries failed.
     retry: Option<(Instant, u32)>,
+    /// ID of the quick command each number of a system shortcut belongs to. A number stays
+    /// with its command for the whole run, so a press that arrives after quick commands
+    /// were removed never runs another one.
+    commands: Vec<String>,
 }
 
 const RETRY_FIRST: Duration = Duration::from_secs(2);
@@ -62,6 +66,30 @@ const RETRY_LAST: Duration = Duration::from_secs(60);
 type Outcome = (Shortcut, Result<(), Reason>);
 
 impl Hotkeys {
+    /// The shortcut as the system registers it: a quick command's under its own number.
+    fn system(&mut self, shortcut: Shortcut, config: &AppConfig) -> Shortcut {
+        let Shortcut::Command(index) = shortcut else {
+            return shortcut;
+        };
+        let Some(command) = config.quick_commands.get(index) else {
+            return shortcut;
+        };
+        let number = match self.commands.iter().position(|id| *id == command.id) {
+            Some(number) => number,
+            None => {
+                self.commands.push(command.id.clone());
+                self.commands.len() - 1
+            }
+        };
+        Shortcut::Command(number)
+    }
+
+    /// Position in `config` of the quick command whose system shortcut has `number`.
+    pub(in crate::app) fn command(&self, number: usize, config: &AppConfig) -> Option<usize> {
+        let id = self.commands.get(number)?;
+        config.quick_commands.iter().position(|c| c.id == *id)
+    }
+
     /// Registers the shortcuts as `wanted` asks with `set`, unless the registrations
     /// already match it or the failed ones are not due again yet. Returns the outcome of
     /// each registration tried, and the wait before failed ones are tried again.
@@ -112,7 +140,8 @@ impl DesktopApp {
     /// Registers each shortcut as the settings ask. While a new shortcut is being recorded,
     /// no shortcut is registered, so its keys reach the page. Recording ends once the
     /// window can no longer receive the keys: away from the tools page, without keyboard
-    /// focus, in the tray, minimized or docked.
+    /// focus, in the tray, minimized or docked. A quick command's shortcut is registered
+    /// under a number that stays with the command.
     pub(in crate::app) fn hotkey_logic(&mut self, ctx: &egui::Context) {
         let focused = ctx.input(|i| i.viewport().focused) != Some(false);
         if self.page != Page::Tools || !focused || self.asleep(ctx) || self.dock.edge().is_some() {
@@ -122,18 +151,18 @@ impl DesktopApp {
             return;
         }
         let config = &self.active_config;
+        let hotkeys = &mut self.hotkeys;
+        let recording = self.recorder.shortcut.is_some();
         let wanted: Vec<_> = config
             .shortcuts()
             .map(|shortcut| {
                 let keys = config
                     .hotkey(shortcut)
-                    .filter(|_| config.shortcut(shortcut).1 && self.recorder.shortcut.is_none());
-                (shortcut, keys)
+                    .filter(|_| config.shortcut(shortcut).1 && !recording);
+                (hotkeys.system(shortcut, config), keys)
             })
             .collect();
-        let (outcomes, retry) =
-            self.hotkeys
-                .update(wanted, Instant::now(), self.desktop.set_hotkey);
+        let (outcomes, retry) = hotkeys.update(wanted, Instant::now(), self.desktop.set_hotkey);
         for (shortcut, outcome) in outcomes {
             match outcome {
                 Ok(())
@@ -295,8 +324,9 @@ type Registration = (Shortcut, Option<Hotkey>);
 
 /// What brings the registered shortcuts from `applied` to `wanted`: the shortcuts that
 /// release their keys first, then each shortcut whose keys change, with its new keys.
-/// Keys move to another quick command when one before it is removed, so every shortcut
-/// that changes or goes away releases its keys before any takes new ones.
+/// Keys can pass from one shortcut to another in one change, such as from a removed quick
+/// command to an edited one, so every shortcut that changes or goes away releases its keys
+/// before any takes new ones.
 fn hotkey_changes(
     applied: &[Registration],
     wanted: &[Registration],
@@ -336,6 +366,7 @@ pub(in crate::app) fn hotkey_option(shortcut: Shortcut, keys: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use qqq_engine::{CommandSessions, QuickCommand};
 
     fn keys(text: &str) -> Option<Hotkey> {
         Hotkey::parse(text)
@@ -433,6 +464,46 @@ mod tests {
         let (outcomes, retry) = hotkeys.update(second, start, |_, _| Ok(()));
         assert_eq!(outcomes, [(Shortcut::Screenshot, Ok(()))]);
         assert_eq!(retry, None);
+    }
+
+    #[test]
+    fn a_quick_command_keeps_its_shortcut_number_when_another_is_removed() {
+        let command = |id: &str| QuickCommand {
+            id: id.into(),
+            name: id.into(),
+            commands: vec!["Get-Date".into()],
+            sessions: CommandSessions::Shared,
+            window: false,
+            directory: String::new(),
+            hotkey: "F9".into(),
+            hotkey_enabled: true,
+        };
+        let mut config = AppConfig {
+            quick_commands: vec![command("a"), command("b")],
+            ..Default::default()
+        };
+        let mut hotkeys = Hotkeys::default();
+        assert_eq!(
+            hotkeys.system(Shortcut::Command(0), &config),
+            Shortcut::Command(0)
+        );
+        assert_eq!(
+            hotkeys.system(Shortcut::Command(1), &config),
+            Shortcut::Command(1)
+        );
+        // The first quick command goes; the second moves up and keeps its number.
+        config.quick_commands.remove(0);
+        assert_eq!(
+            hotkeys.system(Shortcut::Command(0), &config),
+            Shortcut::Command(1)
+        );
+        // A press under the removed command's number runs nothing.
+        assert_eq!(hotkeys.command(0, &config), None);
+        assert_eq!(hotkeys.command(1, &config), Some(0));
+        assert_eq!(
+            hotkeys.system(Shortcut::Screenshot, &config),
+            Shortcut::Screenshot
+        );
     }
 
     #[test]

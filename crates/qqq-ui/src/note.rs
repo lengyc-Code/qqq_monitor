@@ -10,7 +10,7 @@ use crate::{
     components::{ago, label_width, timestamp},
     dock::Desktop,
     i18n, markdown,
-    notes::{Note, Notes},
+    notes::{Note, NoteError, Notes},
     pixel,
     shots::LocalTime,
     theme,
@@ -338,7 +338,13 @@ impl NoteWindow {
                     ));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let (text, color) = if let Some(error) = &self.notes.error {
-                            ((t.note_save_failed)(error), theme::ERROR)
+                            let text = match error {
+                                NoteError::Save(error) => (t.note_save_failed)(error),
+                                NoteError::Delete(error) => {
+                                    i18n::notice(&qqq_engine::Notice::NoteFile(error.clone()))
+                                }
+                            };
+                            (text, theme::ERROR)
                         } else if let Some(reason) = &self.link_error {
                             (
                                 i18n::notice(&qqq_engine::Notice::OpenFailed(reason.clone())),

@@ -5,7 +5,7 @@ use crate::{
     clips, components, dock, i18n, mascot, minibar, note, notes, pixel, shots, theme, tray,
 };
 use eframe::egui::{self, RichText, pos2, vec2};
-use qqq_domain::{DeviceKind, MetricKey, ShellSession};
+use qqq_domain::{DeviceKind, MetricKey};
 use qqq_engine::{
     AlertState, AppConfig, CommandOutcome, CommandResult, DockEdge, Language, MonitorClient,
     MonitorCommand, MonitorView, Notice, data_directory,
@@ -170,8 +170,8 @@ pub struct DesktopApp {
     /// Shortcuts registered with the system.
     hotkeys: pages::tools::Hotkeys,
     command_page: pages::commands::CommandPage,
-    /// Running PowerShell sessions of the quick commands, each with its command's ID.
-    shell_sessions: Vec<(String, Box<dyn ShellSession>)>,
+    /// Running PowerShell sessions of the quick commands.
+    shell_sessions: Vec<pages::commands::RunningSession>,
     /// The note window, which paints in its own passes.
     note: note::Shared,
     /// How the note window is created, settled on the first frame.

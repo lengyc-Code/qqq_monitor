@@ -102,6 +102,24 @@ enum Done {
         id: u64,
     },
     Failed(String),
+    /// A deleted note's file is still there.
+    DeleteFailed(String),
+}
+
+/// Why the latest write or deletion of a note's file failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NoteError {
+    Save(String),
+    Delete(String),
+}
+
+impl NoteError {
+    /// The system's description of the failure.
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Save(text) | Self::Delete(text) => text,
+        }
+    }
 }
 
 pub struct Notes {
@@ -118,8 +136,8 @@ pub struct Notes {
     next_id: u64,
     /// Writes handed to the worker and not answered yet.
     writing: usize,
-    /// Why the latest write failed, until a write succeeds.
-    pub error: Option<String>,
+    /// Why the latest write or deletion failed, until a write succeeds.
+    pub error: Option<NoteError>,
 }
 
 impl Notes {
@@ -349,8 +367,10 @@ impl Notes {
                 }
                 Done::Failed(error) => {
                     self.writing = self.writing.saturating_sub(1);
-                    self.error = Some(error);
+                    self.error = Some(NoteError::Save(error));
                 }
+                // A deletion is no write, so the writes under way stay counted.
+                Done::DeleteFailed(error) => self.error = Some(NoteError::Delete(error)),
             }
         }
     }
@@ -415,7 +435,7 @@ impl Worker {
                     && let Err(error) = fs::remove_file(&path)
                     && error.kind() != io::ErrorKind::NotFound
                 {
-                    self.send(Done::Failed(error.to_string()));
+                    self.send(Done::DeleteFailed(error.to_string()));
                 }
             }
         }
@@ -547,6 +567,28 @@ mod tests {
         assert_eq!(note.title(), "call back");
         note.text = "> 引用".into();
         assert_eq!(note.title(), "引用");
+    }
+
+    #[test]
+    fn a_failed_deletion_leaves_the_writes_under_way_counted() {
+        let directory =
+            std::env::temp_dir().join(format!("qqq-notes-failed-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let mut notes = Notes::new(directory.clone(), |_| None, || {});
+        let (answers, done) = mpsc::channel();
+        notes.done = done;
+        notes.writing = 1;
+        answers.send(Done::DeleteFailed("denied".into())).unwrap();
+        notes.update();
+        assert_eq!(notes.writing, 1);
+        assert!(!notes.saved());
+        assert_eq!(notes.error, Some(NoteError::Delete("denied".into())));
+        answers.send(Done::Failed("full".into())).unwrap();
+        notes.update();
+        assert_eq!(notes.writing, 0);
+        assert_eq!(notes.error, Some(NoteError::Save("full".into())));
+        notes.finish(Duration::from_secs(5));
+        let _ = fs::remove_dir_all(&directory);
     }
 
     #[test]

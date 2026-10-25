@@ -470,6 +470,9 @@ pub const STRINGS: Strings = Strings {
     command_run: "実行",
     command_stop: "終了",
     command_running: |n| format!("実行中 · セッション {n} 個"),
+    command_delete_ends: |n| {
+        format!("削除すると、バックグラウンドで実行中のセッション {n} 個も終了します")
+    },
     command_sound_option: "クイックコマンドの実行時に効果音を鳴らす",
     command_balloon: |n| format!("{n} 個のセッションで実行を開始しました"),
     command_edit: "編集",

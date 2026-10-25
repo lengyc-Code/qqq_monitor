@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{components::*, i18n, pixel, theme};
 use eframe::egui::{self, RichText, vec2};
-use qqq_domain::{CommandSound, Shortcut};
+use qqq_domain::{CommandSound, ShellSession, Shortcut};
 use qqq_engine::{
     CommandSessions, MAX_COMMAND_BYTES, MAX_COMMAND_LINES, MAX_QUICK_COMMANDS, Notice, QuickCommand,
 };
@@ -21,6 +21,15 @@ const PREVIEW_LINES: usize = 3;
 const LINE_CHARS: usize = 120;
 /// Longest name of a quick command, in characters.
 const NAME_CHARS: usize = 64;
+
+/// A running PowerShell session of a quick command.
+pub(in crate::app) struct RunningSession {
+    /// ID of the quick command.
+    command: String,
+    /// The session shows a window, where the user can end it.
+    window: bool,
+    session: Box<dyn ShellSession>,
+}
 
 /// State of the quick commands tab.
 #[derive(Default)]
@@ -143,13 +152,17 @@ impl DesktopApp {
             self.command_page = CommandPage::default();
         }
         let commands = &self.active_config.quick_commands;
-        self.shell_sessions
-            .retain(|(id, session)| session.running() && commands.iter().any(|c| c.id == *id));
+        self.shell_sessions.retain(|running| {
+            running.session.running() && commands.iter().any(|c| c.id == running.command)
+        });
         if self.capture.is_some() {
             return;
         }
-        for index in (self.desktop.commands_requested)() {
-            self.run_command(index);
+        // Each press names the number its shortcut was registered under.
+        for number in (self.desktop.commands_requested)() {
+            if let Some(index) = self.hotkeys.command(number, &self.active_config) {
+                self.run_command(index);
+            }
         }
     }
 
@@ -169,7 +182,11 @@ impl DesktopApp {
                 command.window,
                 &command.directory,
             ) {
-                Ok(session) => self.shell_sessions.push((command.id.clone(), session)),
+                Ok(session) => self.shell_sessions.push(RunningSession {
+                    command: command.id.clone(),
+                    window: command.window,
+                    session,
+                }),
                 Err(reason) => {
                     started = Err(reason);
                     break;
@@ -198,15 +215,15 @@ impl DesktopApp {
         }
     }
 
-    /// Terminates every running session of the quick command with `id`, showing why when
-    /// one keeps running.
-    fn stop_command(&mut self, id: &str) {
+    /// Terminates the running sessions that `stop` picks, showing why when one keeps
+    /// running.
+    fn stop_sessions(&mut self, stop: impl Fn(&RunningSession) -> bool) {
         let mut failed = None;
-        self.shell_sessions.retain(|(owner, session)| {
-            if owner != id {
+        self.shell_sessions.retain(|running| {
+            if !stop(running) {
                 return true;
             }
-            match session.terminate() {
+            match running.session.terminate() {
                 Ok(()) => false,
                 Err(reason) => {
                     failed.get_or_insert(reason);
@@ -267,15 +284,24 @@ impl DesktopApp {
         let mut action = None;
         for (index, command) in commands.iter().enumerate() {
             let confirm = self.command_page.confirm.as_ref() == Some(&command.id);
-            let running = self
+            let sessions: Vec<_> = self
                 .shell_sessions
                 .iter()
-                .filter(|(id, _)| *id == command.id)
-                .count();
+                .filter(|running| running.command == command.id)
+                .collect();
+            let running = sessions.len();
+            let background = sessions.iter().filter(|running| !running.window).count();
             theme::card().show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 if let Some(chosen) = header(ui, index, command, confirm, running > 0) {
                     action = Some(chosen);
+                }
+                if confirm && background > 0 {
+                    ui.label(
+                        RichText::new((t.command_delete_ends)(background))
+                            .size(12.0)
+                            .color(theme::WARNING),
+                    );
                 }
                 if running > 0 {
                     ui.horizontal(|ui| {
@@ -308,14 +334,18 @@ impl DesktopApp {
         }
         match action {
             Some(Action::Run(index)) => self.run_command(index),
-            Some(Action::Stop(id)) => self.stop_command(&id),
+            Some(Action::Stop(id)) => self.stop_sessions(|running| running.command == id),
             Some(Action::Edit(index)) => {
                 self.command_page.editor = Some(Editor::new(commands.get(index)));
             }
             Some(Action::Delete(index)) => {
                 let mut commands = commands.clone();
-                commands.remove(index);
-                // Shortcuts of the quick commands after it move up one position.
+                let removed = commands.remove(index);
+                // A session in the background has no other way to end; a window stays for
+                // the user to close.
+                self.stop_sessions(|running| running.command == removed.id && !running.window);
+                // The quick commands after it move up one position, which a recording
+                // follows no more.
                 if matches!(self.recorder.shortcut, Some(Shortcut::Command(_))) {
                     self.recorder = Recorder::default();
                 }

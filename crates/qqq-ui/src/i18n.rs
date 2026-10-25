@@ -481,6 +481,9 @@ pub struct Strings {
     pub command_stop: &'static str,
     /// A quick command with this many sessions still running.
     pub command_running: fn(usize) -> String,
+    /// Before deleting a quick command with this many sessions running in the background,
+    /// which the deletion ends.
+    pub command_delete_ends: fn(usize) -> String,
     /// Option that plays a sound whenever a quick command runs.
     pub command_sound_option: &'static str,
     /// Balloon text once a quick command started this many sessions.

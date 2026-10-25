@@ -7,8 +7,9 @@ use std::{collections::HashMap, time::Instant};
 
 /// Sent to `sh -s`. The loop prints `@@ ready` once the whole program is read, then
 /// answers each command line with sections headed `@@ name` and ends with `@@ end`:
-/// `i` describes the host, `s` prints the counters and file systems. Printing the marker
-/// in the loop condition keeps the shell from reading a command as part of the program.
+/// `i` describes the host, `s` prints the counters. Printing the marker in the loop
+/// condition keeps the shell from reading a command as part of the program. Everything it
+/// reads comes from `/proc` and `/sys`, so no file system can hold it up.
 pub(crate) const SCRIPT: &str = r#"export LC_ALL=C
 i() {
   echo "@@ info"
@@ -32,11 +33,6 @@ s() {
   for b in /sys/block/*; do echo "${b##*/}"; done
   echo "@@ physical"
   for n in /sys/class/net/*; do [ -e "$n/device" ] && echo "${n##*/}"; done
-  echo "@@ df"
-  d=$(df -kPTl 2>/dev/null)
-  [ -n "$d" ] || d=$(df -kPT 2>/dev/null)
-  [ -n "$d" ] || d=$(df -kP 2>/dev/null)
-  printf '%s\n' "$d"
 }
 r=ready
 while echo "@@ $r"; r=end; read -r c; do
@@ -51,6 +47,16 @@ done
 /// Line that ends the program's start, and the answer to each command.
 pub(crate) const READY: &str = "@@ ready";
 pub(crate) const END: &str = "@@ end";
+
+/// Sent to `sh -s` on a channel of its own, which ends with the program: prints the file
+/// systems with `df`, the local ones where `df` can tell them apart. A file system that
+/// does not answer, such as an unreachable network share, holds up only this program.
+pub(crate) const VOLUMES: &str = r#"export LC_ALL=C
+d=$(df -kPTl 2>/dev/null)
+[ -n "$d" ] || d=$(df -kPT 2>/dev/null)
+[ -n "$d" ] || d=$(df -kP 2>/dev/null)
+printf '%s\n' "$d"
+"#;
 
 /// Block devices that are not whole physical disks, or that repeat their I/O.
 const VIRTUAL_DISKS: [&str; 8] = ["loop", "ram", "zram", "dm-", "md", "sr", "fd", "nbd"];
@@ -192,7 +198,7 @@ pub(crate) struct Volume {
     pub available: u64,
 }
 
-/// Counters and file systems of one `s` answer.
+/// Counters of one `s` answer.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Raw {
     /// Seconds since boot; the clock for every rate.
@@ -207,7 +213,34 @@ pub(crate) struct Raw {
     pub nets: Vec<Net>,
     /// Sectors of 512 bytes read and written by each whole disk.
     pub disks: Vec<(String, u64, u64)>,
-    pub volumes: Vec<Volume>,
+}
+
+/// File systems as the host's latest `df` listed them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) enum FileSystems {
+    /// No `df` has answered yet.
+    #[default]
+    Unknown,
+    Listed(Vec<Volume>),
+    /// The latest `df` failed or is overdue; the file systems listed before stay, with
+    /// failed readings.
+    Failed(Reason, Vec<Volume>),
+}
+
+impl FileSystems {
+    /// The same file systems, whose readings failed for `reason`.
+    pub fn failed(self, reason: Reason) -> Self {
+        match self {
+            Self::Unknown => Self::Failed(reason, Vec::new()),
+            Self::Listed(volumes) | Self::Failed(_, volumes) => Self::Failed(reason, volumes),
+        }
+    }
+}
+
+/// Numbers from the host are summed without overflowing: a host that reports nonsense
+/// gets nonsense readings, not a crash.
+fn sum(values: impl IntoIterator<Item = u64>) -> u64 {
+    values.into_iter().fold(0, u64::saturating_add)
 }
 
 fn cpu_times(fields: &[&str]) -> Option<CpuTimes> {
@@ -219,12 +252,12 @@ fn cpu_times(fields: &[&str]) -> Option<CpuTimes> {
     };
     // user nice system idle iowait irq softirq steal; guest time is part of user time.
     fields.get(3)?.parse::<u64>().ok()?;
-    let idle = value(3) + value(4);
-    let busy = value(0) + value(1) + value(2) + value(5) + value(6) + value(7);
+    let idle = sum([value(3), value(4)]);
+    let busy = sum([0, 1, 2, 5, 6, 7].map(value));
     Some(CpuTimes {
         busy,
         iowait: value(4),
-        total: busy + idle,
+        total: busy.saturating_add(idle),
     })
 }
 
@@ -272,16 +305,15 @@ pub(crate) fn parse_sample(text: &str) -> Result<Raw, Reason> {
         .filter_map(|line| {
             let (key, value) = line.split_once(':')?;
             let kib: u64 = value.split_whitespace().next()?.parse().ok()?;
-            Some((key, kib * 1024))
+            Some((key, kib.checked_mul(1024)?))
         })
         .collect();
     if let Some(&total) = meminfo.get("MemTotal") {
         // Kernels before 3.14 lack MemAvailable.
         let available = meminfo.get("MemAvailable").copied().unwrap_or_else(|| {
-            ["MemFree", "Buffers", "Cached"]
+            sum(["MemFree", "Buffers", "Cached"]
                 .iter()
-                .filter_map(|key| meminfo.get(key))
-                .sum()
+                .filter_map(|key| meminfo.get(key).copied()))
         });
         let swap = |key| meminfo.get(key).copied().unwrap_or(0);
         raw.memory = Some((
@@ -338,13 +370,16 @@ pub(crate) fn parse_sample(text: &str) -> Result<Raw, Reason> {
             raw.disks.push((name.to_string(), read, written));
         }
     }
-    raw.volumes = volumes(lines("df"));
     Ok(raw)
 }
 
-/// Local file systems from `df -kP`, with or without the type column; each source
-/// device counts once, at its shortest mount point.
-fn volumes(lines: &[&str]) -> Vec<Volume> {
+/// Local file systems from the output of [`VOLUMES`], `df -kP` with or without the type
+/// column; each source device counts once, at its shortest mount point.
+pub(crate) fn parse_volumes(text: &str) -> Vec<Volume> {
+    let lines: Vec<_> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
     let Some(header) = lines.first() else {
         return Vec::new();
     };
@@ -356,7 +391,12 @@ fn volumes(lines: &[&str]) -> Vec<Volume> {
         if fields.len() < 6 + skip {
             continue;
         }
-        let number = |i: usize| fields[i + skip].parse::<u64>().ok().map(|kib| kib * 1024);
+        let number = |i: usize| {
+            fields[i + skip]
+                .parse::<u64>()
+                .ok()
+                .and_then(|kib| kib.checked_mul(1024))
+        };
         let (Some(total), Some(used), Some(available)) = (number(1), number(2), number(3)) else {
             continue;
         };
@@ -417,7 +457,13 @@ impl Sampler {
         }
     }
 
-    pub fn batch(&mut self, raw: Raw, started_at: Instant, at: Instant) -> SampleBatch {
+    pub fn batch(
+        &mut self,
+        raw: Raw,
+        file_systems: &FileSystems,
+        started_at: Instant,
+        at: Instant,
+    ) -> SampleBatch {
         let previous = self.previous.replace(raw.clone());
         let previous = previous.as_ref();
         let elapsed = previous.map_or(0.0, |p| raw.uptime - p.uptime);
@@ -567,9 +613,24 @@ impl Sampler {
                 rate(bytes(*written), before.map(|d| bytes(d.2))),
             );
         }
-        for volume in &raw.volumes {
+        let (volumes, failure) = match file_systems {
+            FileSystems::Unknown => (&[][..], None),
+            FileSystems::Listed(volumes) => (volumes.as_slice(), None),
+            FileSystems::Failed(reason, volumes) => (volumes.as_slice(), Some(reason)),
+        };
+        for volume in volumes {
             let id = format!("volume:{}", volume.mount);
-            let capacity = volume.used + volume.available;
+            if let Some(reason) = failure {
+                for (metric, unit) in [
+                    ("total", Unit::Bytes),
+                    ("available", Unit::Bytes),
+                    ("usage", Unit::Percent),
+                ] {
+                    sample(&id, metric, unit, SampleValue::Failed(reason.clone()));
+                }
+                continue;
+            }
+            let capacity = volume.used.saturating_add(volume.available);
             sample(
                 &id,
                 "total",
@@ -636,7 +697,7 @@ impl Sampler {
                 DeviceKind::Disk,
             ));
         }
-        for volume in &raw.volumes {
+        for volume in volumes {
             let mut device = DeviceDescriptor::new(
                 format!("volume:{}", volume.mount),
                 &volume.mount,
@@ -707,17 +768,19 @@ loop0
 sda
 @@ physical
 eth0
-@@ df
-Filesystem     Type     1024-blocks      Used Available Capacity Mounted on
+"
+        )
+    }
+
+    const DF: &str = "Filesystem     Type     1024-blocks      Used Available Capacity Mounted on
 /dev/sda1      ext4       100000000  40000000  55000000      43% /
 tmpfs          tmpfs        1000000         0   1000000       0% /run
 rootfs         rootfs       1000000         0   1000000       0% /init
 /dev/loop0     iso9660       672000    672000         0     100% /mnt/cdrom
 /dev/sda1      ext4       100000000  40000000  55000000      43% /var/snap/x
 /dev/sdb1      xfs         50000000  10000000  40000000      20% /srv/my data
-"
-        )
-    }
+/dev/sdc1      fuse     99999999999999999999 1 1          1% /mnt/huge
+";
 
     #[test]
     fn info_names_the_host_system_and_processor() {
@@ -747,11 +810,53 @@ rootfs         rootfs       1000000         0   1000000       0% /init
         assert!(raw.nets[0].physical && raw.nets[0].default_route);
         assert!(!raw.nets[1].physical && !raw.nets[1].default_route);
         assert_eq!(raw.disks, [("sda".to_string(), 8, 400)]);
-        let mounts: Vec<_> = raw.volumes.iter().map(|v| v.mount.as_str()).collect();
-        assert_eq!(mounts, ["/", "/srv/my data"]);
-        assert_eq!(raw.volumes[0].file_system, "ext4");
-        assert_eq!(raw.volumes[1].total, 50_000_000 * 1024);
         assert_eq!(parse_sample("@@ uptime\n@@ stat\n"), Err(Reason::NotLinux));
+    }
+
+    #[test]
+    fn df_lists_each_local_file_system_once() {
+        let volumes = parse_volumes(DF);
+        let mounts: Vec<_> = volumes.iter().map(|v| v.mount.as_str()).collect();
+        // A size beyond what bytes can count is left out.
+        assert_eq!(mounts, ["/", "/srv/my data"]);
+        assert_eq!(volumes[0].file_system, "ext4");
+        assert_eq!(volumes[1].total, 50_000_000 * 1024);
+        assert!(parse_volumes("\n").is_empty());
+    }
+
+    #[test]
+    fn numbers_beyond_their_range_do_not_overflow() {
+        let max = u64::MAX;
+        let line = format!("{max} 0 {max} 1 0 0 0 0");
+        let raw = parse_sample(&sample("100.00", &line, 1, 1)).unwrap();
+        assert_eq!(raw.cpu.busy, u64::MAX);
+        assert_eq!(raw.cpu.total, u64::MAX);
+        let text = sample("100.00", "1 0 1 1 0 0 0 0", 1, 1).replace(
+            "MemTotal:        8000000",
+            &format!("MemTotal: {}", u64::MAX),
+        );
+        assert_eq!(parse_sample(&text).unwrap().memory, None);
+    }
+
+    #[test]
+    fn a_failed_df_keeps_the_file_systems_with_failed_readings() {
+        let mut sampler = Sampler::new(parse_info(INFO));
+        let at = Instant::now();
+        let raw = parse_sample(&sample("100.00", "1 0 1 1 0 0 0 0", 1, 1)).unwrap();
+        let listed = FileSystems::Listed(parse_volumes(DF));
+        let failed = listed.failed(Reason::TimedOut);
+        let batch = sampler.batch(raw, &failed, at, at);
+        assert!(batch.devices.iter().any(|d| d.id == "volume:/srv/my data"));
+        let usage = batch
+            .samples
+            .iter()
+            .find(|s| s.descriptor.key == MetricKey::new("volume:/", "usage"))
+            .unwrap();
+        assert!(matches!(usage.value, SampleValue::Failed(Reason::TimedOut)));
+        let unknown = FileSystems::Unknown.failed(Reason::TimedOut);
+        let raw = parse_sample(&sample("101.00", "1 0 1 1 0 0 0 0", 1, 1)).unwrap();
+        let batch = sampler.batch(raw, &unknown, at, at);
+        assert!(!batch.devices.iter().any(|d| d.kind == DeviceKind::Volume));
     }
 
     #[test]
@@ -759,7 +864,8 @@ rootfs         rootfs       1000000         0   1000000       0% /init
         let mut sampler = Sampler::new(parse_info(INFO));
         let at = Instant::now();
         let first = parse_sample(&sample("100.00", "100 0 100 700 100 0 0 0", 1000, 8)).unwrap();
-        let batch = sampler.batch(first, at, at);
+        let file_systems = FileSystems::Listed(parse_volumes(DF));
+        let batch = sampler.batch(first, &file_systems, at, at);
         let value = |batch: &SampleBatch, device: &str, metric: &str| {
             batch
                 .samples
@@ -801,7 +907,7 @@ rootfs         rootfs       1000000         0   1000000       0% /init
         let second =
             parse_sample(&sample("102.00", "400 0 400 900 300 0 0 0", 5000, 4104)).unwrap();
         let later = at + Duration::from_secs(5);
-        let batch = sampler.batch(second, later, later);
+        let batch = sampler.batch(second, &file_systems, later, later);
         assert!(matches!(value(&batch, "cpu", "usage"), Some(SampleValue::Gauge(v)) if v == 60.0));
         assert!(matches!(value(&batch, "cpu", "iowait"), Some(SampleValue::Gauge(v)) if v == 20.0));
         assert!(
@@ -814,7 +920,7 @@ rootfs         rootfs       1000000         0   1000000       0% /init
 
         // A counter that goes back, as after a driver reload, warms up again.
         let third = parse_sample(&sample("103.00", "400 0 400 900 300 0 0 0", 10, 4104)).unwrap();
-        let batch = sampler.batch(third, later, later);
+        let batch = sampler.batch(third, &file_systems, later, later);
         assert!(matches!(
             value(&batch, "net:eth0", "receive"),
             Some(SampleValue::WarmingUp)
