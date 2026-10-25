@@ -8,7 +8,7 @@
 
 use crate::{
     components::{ago, label_width, timestamp},
-    dock::Desktop,
+    desktop::Desktop,
     i18n, markdown,
     notes::{Note, NoteError, Notes},
     pixel,
@@ -22,7 +22,6 @@ use eframe::egui::{
 use qqq_domain::Reason;
 use qqq_engine::{AppConfig, NOTE_MIN_SIZE};
 use std::{
-    hash::{DefaultHasher, Hash, Hasher},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     time::SystemTime,
 };
@@ -67,12 +66,16 @@ pub struct NoteWindow {
     focus: bool,
     /// The delete button waits for confirmation.
     confirm: bool,
-    open_url: fn(&str) -> Result<(), Reason>,
+    open_url: fn(&str),
     local_time: LocalTime,
+    /// The link opened last, until it opens or fails.
+    opening: Option<String>,
     /// Why the latest link did not open.
     link_error: Option<Reason>,
     /// Hash of the highlighted text, its layout job and bold sections.
     highlighted: Option<(u64, LayoutJob, Vec<bool>)>,
+    /// The current note as the read view renders it.
+    document: markdown::Document,
 }
 
 /// The note window as both windows reach it. Both paint on the GUI thread, one at a time.
@@ -92,11 +95,24 @@ impl NoteWindow {
             back: View::Write,
             focus: false,
             confirm: false,
-            open_url: desktop.open_url,
-            local_time: desktop.local_time,
+            open_url: desktop.system.open_url,
+            local_time: desktop.system.local_time,
+            opening: None,
             link_error: None,
             highlighted: None,
+            document: markdown::Document::default(),
         }
+    }
+
+    /// Takes the failure of a file or address that did not open, when it is the link this
+    /// window opened last; returns whether it was.
+    pub fn open_failed(&mut self, target: &str, reason: &Reason) -> bool {
+        if self.opening.as_deref() != Some(target) {
+            return false;
+        }
+        self.opening = None;
+        self.link_error = Some(reason.clone());
+        true
     }
 
     /// Shows the window over the other windows with the keyboard focus, or hides it when it
@@ -396,9 +412,7 @@ impl NoteWindow {
         let mut highlighted = self.highlighted.take();
         let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
             let text = text.as_str();
-            let mut hasher = DefaultHasher::new();
-            text.hash(&mut hasher);
-            let hash = hasher.finish();
+            let hash = markdown::text_hash(text);
             if highlighted.as_ref().is_none_or(|(h, _, _)| *h != hash) {
                 let (job, bold) = markdown::highlight(text);
                 highlighted = Some((hash, job, bold));
@@ -458,7 +472,7 @@ impl NoteWindow {
                 if text.trim().is_empty() {
                     ui.label(RichText::new(t.note_read_empty).color(theme::MUTED));
                 } else {
-                    action = markdown::show(ui, text);
+                    action = self.document.show(ui, text);
                 }
                 // The room below the note starts writing on a double click.
                 let rest = ui.available_size().max(vec2(0.0, 24.0));
@@ -470,7 +484,10 @@ impl NoteWindow {
                 self.notes.edited();
             }
             Some(markdown::Action::Open(url)) => {
-                self.link_error = (self.open_url)(&url).err();
+                // A failure arrives later, as an event the main window hands over.
+                (self.open_url)(&url);
+                self.link_error = None;
+                self.opening = Some(url);
             }
             None => {}
         }
@@ -616,7 +633,7 @@ pub fn builder(
     let position = config.note_position.map(egui::Pos2::from).or_else(|| {
         let ppp = ctx.pixels_per_point();
         let center = ctx.input(|i| i.viewport().outer_rect)?.center() * ppp;
-        let (_, work) = (desktop.monitor_at)([center.x, center.y])?;
+        let (_, work) = (desktop.display.monitor_at)([center.x, center.y])?;
         Some(pos2(
             work[2] / ppp - size.x - MARGIN,
             work[1] / ppp + MARGIN,

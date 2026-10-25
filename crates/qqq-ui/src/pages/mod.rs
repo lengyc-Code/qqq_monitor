@@ -12,5 +12,5 @@ mod overview;
 pub(super) mod processes;
 pub(super) mod remote;
 pub(super) mod screenshots;
-mod settings;
+pub(super) mod settings;
 pub(super) mod tools;

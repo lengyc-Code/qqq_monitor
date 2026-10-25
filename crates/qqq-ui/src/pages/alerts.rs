@@ -3,7 +3,8 @@ use crate::{components::*, i18n, pixel, theme};
 use eframe::egui::{self, Color32, RichText, vec2};
 use qqq_domain::{DeviceDescriptor, DeviceKind, MetricKey, Unit};
 use qqq_engine::{
-    AlertCondition, AlertRule, AlertState, MAX_ALERT_RULES, MonitorView, Notice, alert_device,
+    AlertCondition, AlertRule, AlertState, MAX_ALERT_RULES, MonitorView, Notice, RemoteHost,
+    alert_device,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -126,11 +127,10 @@ struct Choice {
 }
 
 /// Display name of the remote host a device belongs to.
-fn host_label<'a>(view: &'a MonitorView, device: &'a DeviceDescriptor) -> Option<&'a str> {
+fn host_label<'a>(hosts: &'a [RemoteHost], device: &'a DeviceDescriptor) -> Option<&'a str> {
     let host = device.host.as_ref()?;
     Some(
-        view.config
-            .remote_hosts
+        hosts
             .iter()
             .find(|h| h.id == *host)
             .map_or(host.as_str(), |h| h.label()),
@@ -139,7 +139,7 @@ fn host_label<'a>(view: &'a MonitorView, device: &'a DeviceDescriptor) -> Option
 
 /// Devices whose metrics rules can watch: this computer's by kind, then each remote host's.
 /// The foreground application is offered while frame monitoring is off as well.
-fn choices(view: &MonitorView) -> Vec<Choice> {
+fn choices(view: &MonitorView, hosts: &[RemoteHost]) -> Vec<Choice> {
     let rank = |kind| {
         [
             DeviceKind::Cpu,
@@ -168,7 +168,7 @@ fn choices(view: &MonitorView) -> Vec<Choice> {
         .into_iter()
         .map(|device| Choice {
             identity: device.identity().into(),
-            label: alert_device_name(device, host_label(view, device)),
+            label: alert_device_name(device, host_label(hosts, device)),
             metrics: if device.kind == DeviceKind::Frames {
                 FRAME_METRICS.into()
             } else {
@@ -183,10 +183,10 @@ fn choices(view: &MonitorView) -> Vec<Choice> {
 }
 
 /// Name of the device a rule watches, also while it is missing.
-fn rule_device(view: &MonitorView, rule: &AlertRule) -> String {
+fn rule_device(view: &MonitorView, hosts: &[RemoteHost], rule: &AlertRule) -> String {
     let t = i18n::t();
     match alert_device(view, rule) {
-        Some(device) => alert_device_name(device, host_label(view, device)),
+        Some(device) => alert_device_name(device, host_label(hosts, device)),
         None if rule.device == FRAMES => t.foreground_app.into(),
         None => format!("{} · {}", rule.device, t.alert_device_missing),
     }
@@ -216,10 +216,7 @@ fn state_text(view: &MonitorView, rule: &AlertRule) -> (String, Color32) {
 impl DesktopApp {
     /// Saves the rules right away, like the remote hosts.
     fn save_alerts(&mut self, rules: Vec<AlertRule>) {
-        self.config.alerts = rules.clone();
-        let mut config = self.active_config.clone();
-        config.alerts = rules;
-        self.save_config(config, true);
+        self.apply_now(|config| config.alerts = rules);
     }
 
     pub(in crate::app) fn alerts(&mut self, ui: &mut egui::Ui, view: &MonitorView) {
@@ -247,7 +244,7 @@ impl DesktopApp {
                 if theme::pixel_button(ui, t.alert_test, Some(&pixel::ICON_SPARKLE), false, test)
                     .clicked()
                 {
-                    match (self.desktop.notify)(t.alerts_page.title, t.alert_test_body) {
+                    match (self.desktop.system.notify)(t.alerts_page.title, t.alert_test_body) {
                         Ok(()) if matches!(self.message, Some(Notice::NotificationFailed(_))) => {
                             self.message = None
                         }
@@ -287,7 +284,7 @@ impl DesktopApp {
                     let room = (ui.available_width() - edit.x - remove.x - 24.0).max(0.0);
                     let title = format!(
                         "{} · {}",
-                        rule_device(view, rule),
+                        rule_device(view, &self.active_config.remote_hosts, rule),
                         i18n::metric(&rule.metric)
                     );
                     ui.allocate_ui(vec2(room, 30.0), |ui| {
@@ -369,7 +366,7 @@ impl DesktopApp {
             return;
         };
         let t = i18n::t();
-        let choices = choices(view);
+        let choices = choices(view, &self.active_config.remote_hosts);
         let editing = editor.id.is_some();
         let modal = egui::Modal::new(egui::Id::new("alert-editor")).show(ctx, |ui| {
             ui.set_width(DIALOG_WIDTH);

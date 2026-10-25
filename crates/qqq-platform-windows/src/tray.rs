@@ -4,15 +4,20 @@
 //! The icon belongs to a hidden top-level window created on the GUI thread. The message
 //! loop the GUI already runs delivers it the icon's clicks, its menu, the
 //! `TaskbarCreated` broadcast that follows an Explorer restart, the shortcuts and
-//! clipboard changes. All functions act on the state of the calling thread, so only
-//! the GUI thread that called [`attach`] reaches it.
+//! clipboard changes. Most functions act on the state of the calling thread, so only
+//! the GUI thread that called [`attach`] reaches it; [`post`] and [`request_open`] work
+//! from any thread. What the GUI is asked for or told arrives in one queue of
+//! [`DesktopEvent`]s, which [`take_events`] empties.
 
 use crate::{clipboard, instance, native::APP_ICON};
-use qqq_domain::{Hotkey, HotkeyKey, Reason, Shortcut};
+use qqq_domain::{DesktopEvent, Hotkey, HotkeyKey, Reason, Shortcut};
 use std::{
     cell::{Cell, OnceCell, RefCell},
     mem::size_of,
-    sync::atomic::{AtomicIsize, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicIsize, Ordering},
+    },
 };
 use windows::{
     Win32::{
@@ -63,6 +68,8 @@ const REAPPLY: u32 = WM_APP + 2;
 pub(crate) const OPEN: u32 = WM_APP + 3;
 /// Window class of the hidden tray window, whose title is the instance name.
 pub(crate) const CLASS: PCWSTR = w!("QqqMonitorTray");
+/// Message from another thread that posted events.
+const EVENTS: u32 = WM_APP + 4;
 const ICON_ID: u32 = 1;
 /// Enter or Space on the focused icon.
 const KEY_SELECT: u32 = NIN_SELECT | NINF_KEY;
@@ -75,9 +82,6 @@ const COMMAND_HOTKEYS: i32 = 0x100;
 /// Timer that asks for a screenshot once the icon's menu has faded from the screen.
 const SCREENSHOT_TIMER: usize = 1;
 const MENU_FADE_MS: u32 = 250;
-/// Timer that reads a clipboard change again once another application may have closed the
-/// clipboard.
-const CLIPBOARD_TIMER: usize = 2;
 
 /// Icon text: the tooltip and the labels of the "open", "screenshot", "note" and "exit"
 /// menu items.
@@ -100,15 +104,8 @@ struct Tray {
     labels: RefCell<Option<Labels>>,
     /// The application window's taskbar button is removed.
     no_button: Cell<bool>,
-    /// The user asked for the application window since the last [`opened`] call.
-    opened: Cell<bool>,
-    /// The user asked for a screenshot since the last [`screenshot_requested`] call.
-    screenshot: Cell<bool>,
-    /// The user asked for the note window since the last [`note_requested`] call.
-    note: Cell<bool>,
-    /// Quick commands whose shortcut was pressed since the last [`commands_requested`]
-    /// call, by position.
-    commands: RefCell<Vec<usize>>,
+    /// Events of the GUI thread since the last [`take_events`].
+    events: RefCell<Vec<DesktopEvent>>,
     wake: Box<dyn Fn()>,
 }
 
@@ -116,8 +113,10 @@ thread_local! {
     static TRAY: OnceCell<Tray> = const { OnceCell::new() };
 }
 
-/// Hidden tray window, for threads other than the GUI thread to post [`OPEN`] to.
+/// Hidden tray window, for threads other than the GUI thread to post to.
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
+/// Events of other threads since the last [`take_events`].
+static POSTED: Mutex<Vec<DesktopEvent>> = Mutex::new(Vec::new());
 
 /// Runs `f` on the tray of the calling thread, if it has one. Shared access only, so the
 /// window procedure may re-enter while another call waits on the shell.
@@ -126,8 +125,8 @@ fn with<R>(f: impl FnOnce(&Tray) -> R) -> Option<R> {
 }
 
 /// Prepares the tray for the application window `main` on the calling GUI thread. `wake` is
-/// called when the user asks for the window from the icon, so the GUI polls [`opened`].
-/// The icon itself appears with [`show`]. Returns whether the tray is ready.
+/// called whenever events arrive, so the GUI takes them with [`take_events`]. The icon
+/// itself appears with [`show`]. Returns whether the tray is ready.
 pub fn attach(main: isize, wake: impl Fn() + 'static) -> bool {
     if with(|_| ()).is_some() {
         return true;
@@ -170,7 +169,7 @@ pub fn attach(main: isize, wake: impl Fn() + 'static) -> bool {
     };
     // SAFETY: the message name is a static NUL-terminated string.
     let taskbar_created = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
-    for message in [NOTIFY, taskbar_created, WM_CLIPBOARDUPDATE, OPEN] {
+    for message in [NOTIFY, taskbar_created, WM_CLIPBOARDUPDATE, OPEN, EVENTS] {
         // Explorer, the applications that copy and a second start of this executable run
         // at medium integrity; an elevated instance must accept their messages.
         // SAFETY: `window` belongs to this thread; no filter information is requested.
@@ -188,10 +187,7 @@ pub fn attach(main: isize, wake: impl Fn() + 'static) -> bool {
             taskbar_created,
             labels: RefCell::new(None),
             no_button: Cell::new(false),
-            opened: Cell::new(false),
-            screenshot: Cell::new(false),
-            note: Cell::new(false),
-            commands: RefCell::new(Vec::new()),
+            events: RefCell::new(Vec::new()),
             wake: Box::new(wake),
         });
     });
@@ -201,12 +197,53 @@ pub fn attach(main: isize, wake: impl Fn() + 'static) -> bool {
 
 /// Asks for the application window from any thread, as a click on the icon does.
 pub fn request_open() {
+    post_message(OPEN);
+}
+
+/// Posts `message` to the tray window from any thread.
+fn post_message(message: u32) {
     let window = WINDOW.load(Ordering::Acquire);
     if window != 0 {
         // SAFETY: posting to the tray window has no memory preconditions; a window that is
         // gone only fails the call.
-        let _ = unsafe { PostMessageW(Some(HWND(window as *mut _)), OPEN, WPARAM(0), LPARAM(0)) };
+        let _ =
+            unsafe { PostMessageW(Some(HWND(window as *mut _)), message, WPARAM(0), LPARAM(0)) };
     }
+}
+
+/// Hands an event to the GUI from any thread.
+pub(crate) fn post(event: DesktopEvent) {
+    POSTED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(event);
+    post_message(EVENTS);
+}
+
+/// Hands an event to the GUI from the GUI thread.
+pub(crate) fn push(event: DesktopEvent) {
+    with(|tray| {
+        tray.events.borrow_mut().push(event);
+        (tray.wake)();
+    });
+}
+
+/// Events since the last call, in the order they happened on each thread: the GUI
+/// thread's first, then those other threads posted.
+pub fn take_events() -> Vec<DesktopEvent> {
+    let mut events = with(|tray| tray.events.take()).unwrap_or_default();
+    events.append(
+        &mut POSTED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
+    events
+}
+
+/// The tray window, as other threads see it.
+pub(crate) fn window_handle() -> Option<HWND> {
+    let window = WINDOW.load(Ordering::Acquire);
+    (window != 0).then_some(HWND(window as *mut _))
 }
 
 /// The embedded application icon at the size the notification area uses at system DPI.
@@ -233,24 +270,9 @@ pub(crate) fn window() -> Option<HWND> {
     with(|tray| tray.window)
 }
 
-/// Asks the GUI to poll the tray, from the GUI thread.
+/// Asks the GUI for a frame, in which it also takes the events, from the GUI thread.
 pub(crate) fn wake() {
     with(|tray| (tray.wake)());
-}
-
-/// Reads the clipboard again after `delay` milliseconds, replacing a pending wait, or with
-/// `None` cancels it.
-pub(crate) fn clipboard_timer(delay: Option<u32>) {
-    with(|tray| match delay {
-        // SAFETY: the timer belongs to this thread's own window.
-        Some(delay) => unsafe {
-            SetTimer(Some(tray.window), CLIPBOARD_TIMER, delay, None);
-        },
-        // SAFETY: as above; stopping a timer that is not set only fails.
-        None => unsafe {
-            let _ = KillTimer(Some(tray.window), CLIPBOARD_TIMER);
-        },
-    });
 }
 
 /// Shows the icon with a tooltip and the labels of its "open", "screenshot", "note" and
@@ -343,11 +365,6 @@ pub fn cloak(cloaked: bool) {
     });
 }
 
-/// Whether the user asked for the application window from the icon since the last call.
-pub fn opened() -> bool {
-    with(|tray| tray.opened.take()).unwrap_or(false)
-}
-
 /// Identity of a shortcut among the tray window's shortcuts.
 fn hotkey_id(shortcut: Shortcut) -> i32 {
     match shortcut {
@@ -394,24 +411,6 @@ pub fn set_hotkey(shortcut: Shortcut, hotkey: Option<Hotkey>) -> Result<(), Reas
         api: "RegisterHotKey",
         code: ERROR_INVALID_WINDOW_HANDLE.0,
     }))
-}
-
-/// Whether the user asked for a screenshot with the shortcut or from the icon's menu since
-/// the last call.
-pub fn screenshot_requested() -> bool {
-    with(|tray| tray.screenshot.take()).unwrap_or(false)
-}
-
-/// Whether the user asked for the note window with the shortcut or from the icon's menu
-/// since the last call.
-pub fn note_requested() -> bool {
-    with(|tray| tray.note.take()).unwrap_or(false)
-}
-
-/// Positions of the quick commands whose shortcut was pressed since the last call, in the
-/// order they were pressed.
-pub fn commands_requested() -> Vec<usize> {
-    with(|tray| tray.commands.take()).unwrap_or_default()
 }
 
 /// Virtual-key code of a shortcut key.
@@ -486,26 +485,6 @@ impl Tray {
             self.apply_button();
         }
     }
-
-    fn open(&self) {
-        self.opened.set(true);
-        (self.wake)();
-    }
-
-    fn request_screenshot(&self) {
-        self.screenshot.set(true);
-        (self.wake)();
-    }
-
-    fn request_note(&self) {
-        self.note.set(true);
-        (self.wake)();
-    }
-
-    fn request_command(&self, index: usize) {
-        self.commands.borrow_mut().push(index);
-        (self.wake)();
-    }
 }
 
 /// Shows the icon's menu at a screen point and acts on the chosen item.
@@ -552,17 +531,13 @@ fn menu(window: HWND, x: i32, y: i32) {
         command.0 as usize
     };
     match command {
-        MENU_OPEN => {
-            with(Tray::open);
-        }
+        MENU_OPEN => push(DesktopEvent::Open),
         // The screen is captured once the menu has left it.
         // SAFETY: the timer belongs to this thread's own window.
         MENU_SCREENSHOT => unsafe {
             SetTimer(Some(window), SCREENSHOT_TIMER, MENU_FADE_MS, None);
         },
-        MENU_NOTE => {
-            with(Tray::request_note);
-        }
+        MENU_NOTE => push(DesktopEvent::Note),
         // Closing goes through the window's own close path, which saves the configuration.
         // SAFETY: posting to a window handle has no memory preconditions.
         MENU_EXIT => unsafe {
@@ -584,9 +559,7 @@ unsafe extern "system" fn procedure(
             // NOTIFYICON_VERSION_4 puts the event in the low word of `lparam` and the anchor
             // point, in screen coordinates, in `wparam`.
             match lparam.0 as u32 & 0xFFFF {
-                NIN_SELECT | KEY_SELECT | NIN_BALLOONUSERCLICK => {
-                    with(Tray::open);
-                }
+                NIN_SELECT | KEY_SELECT | NIN_BALLOONUSERCLICK => push(DesktopEvent::Open),
                 WM_CONTEXTMENU => {
                     let x = wparam.0 as u16 as i16 as i32;
                     let y = (wparam.0 >> 16) as u16 as i16 as i32;
@@ -601,31 +574,29 @@ unsafe extern "system" fn procedure(
             LRESULT(0)
         }
         OPEN => {
-            with(Tray::open);
+            push(DesktopEvent::Open);
+            LRESULT(0)
+        }
+        EVENTS => {
+            wake();
             LRESULT(0)
         }
         WM_HOTKEY if wparam.0 == hotkey_id(Shortcut::Screenshot) as usize => {
-            with(Tray::request_screenshot);
+            push(DesktopEvent::Screenshot);
             LRESULT(0)
         }
         WM_HOTKEY if wparam.0 == hotkey_id(Shortcut::Note) as usize => {
-            with(Tray::request_note);
+            push(DesktopEvent::Note);
             LRESULT(0)
         }
         WM_HOTKEY if wparam.0 >= COMMAND_HOTKEYS as usize => {
-            with(|tray| tray.request_command(wparam.0 - COMMAND_HOTKEYS as usize));
+            push(DesktopEvent::Command(wparam.0 - COMMAND_HOTKEYS as usize));
             LRESULT(0)
         }
         WM_TIMER if wparam.0 == SCREENSHOT_TIMER => {
             // SAFETY: stops this thread's own one-shot timer.
             let _ = unsafe { KillTimer(Some(window), SCREENSHOT_TIMER) };
-            with(Tray::request_screenshot);
-            LRESULT(0)
-        }
-        WM_TIMER if wparam.0 == CLIPBOARD_TIMER => {
-            // SAFETY: stops this thread's own one-shot timer.
-            let _ = unsafe { KillTimer(Some(window), CLIPBOARD_TIMER) };
-            clipboard::retry();
+            push(DesktopEvent::Screenshot);
             LRESULT(0)
         }
         WM_CLIPBOARDUPDATE => {

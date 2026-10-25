@@ -1,4 +1,8 @@
-use std::time::{Duration, Instant};
+use std::{
+    borrow::Borrow,
+    cmp::Ordering,
+    time::{Duration, Instant},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MetricKey {
@@ -14,6 +18,59 @@ impl MetricKey {
         }
     }
 }
+
+/// A device and a metric name, owned as in [`MetricKey`] or borrowed as a pair of `&str`.
+/// Maps keyed by [`MetricKey`] find entries by borrowed names, without allocating a key:
+/// `map.get(&("cpu", "usage") as &dyn MetricKeyView)`.
+pub trait MetricKeyView {
+    fn device(&self) -> &str;
+    fn metric(&self) -> &str;
+}
+
+impl MetricKeyView for MetricKey {
+    fn device(&self) -> &str {
+        &self.device
+    }
+    fn metric(&self) -> &str {
+        &self.metric
+    }
+}
+
+impl MetricKeyView for (&str, &str) {
+    fn device(&self) -> &str {
+        self.0
+    }
+    fn metric(&self) -> &str {
+        self.1
+    }
+}
+
+impl<'a> Borrow<dyn MetricKeyView + 'a> for MetricKey {
+    fn borrow(&self) -> &(dyn MetricKeyView + 'a) {
+        self
+    }
+}
+
+// Ordered like the derived order of `MetricKey`: by device, then by metric.
+impl Ord for dyn MetricKeyView + '_ {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (self.device(), self.metric()).cmp(&(other.device(), other.metric()))
+    }
+}
+
+impl PartialOrd for dyn MetricKeyView + '_ {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for dyn MetricKeyView + '_ {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for dyn MetricKeyView + '_ {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unit {
@@ -174,5 +231,25 @@ impl MetricReading {
         } else {
             self.state
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn readings_are_found_by_borrowed_names() {
+        let keys = [("cpu", "usage"), ("core:1", "usage"), ("cpu", "iowait")];
+        let map: BTreeMap<MetricKey, usize> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, (device, metric))| (MetricKey::new(*device, *metric), i))
+            .collect();
+        for (i, key) in keys.iter().enumerate() {
+            assert_eq!(map.get(key as &dyn MetricKeyView), Some(&i));
+        }
+        assert_eq!(map.get(&("cpu", "missing") as &dyn MetricKeyView), None);
     }
 }

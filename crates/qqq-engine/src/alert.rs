@@ -4,7 +4,7 @@
 //! and offline readings never count as values. A fired alert reaches the user as a system
 //! notification, shown on a thread of its own.
 
-use crate::{MonitorView, Notice, RemoteHost, runtime::Control};
+use crate::{AppConfig, MonitorView, Notice, RemoteHost, runtime::Control};
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 use qqq_domain::*;
 use serde::{Deserialize, Serialize};
@@ -234,9 +234,8 @@ impl Alerts {
 
     /// Weighs the current readings against the configured rules, hands fired alerts to
     /// the notification thread and updates the view's alert states.
-    pub(crate) fn evaluate(&mut self, view: &mut MonitorView) {
-        let rules: Vec<_> = view
-            .config
+    pub(crate) fn evaluate(&mut self, view: &mut MonitorView, config: &AppConfig) {
+        let rules: Vec<_> = config
             .alerts
             .iter()
             .filter(|r| r.enabled)
@@ -263,7 +262,7 @@ impl Alerts {
                     if tracker.weigh(value, at) {
                         fired.push(AlertEvent {
                             host: device.host.as_ref().and_then(|host| {
-                                view.config
+                                config
                                     .remote_hosts
                                     .iter()
                                     .find(|h| h.id == *host)

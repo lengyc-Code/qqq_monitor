@@ -10,7 +10,10 @@ use std::{
     collections::VecDeque,
     mem::ManuallyDrop,
     path::PathBuf,
-    sync::{Mutex, OnceLock},
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use windows::{
     Data::Xml::Dom::XmlDocument,
@@ -117,6 +120,17 @@ pub fn prepare() {
             tracing::warn!(?reason, "无法创建通知所需的开始菜单快捷方式");
         }
     });
+}
+
+/// Writes the toasts' Start menu shortcut ahead of the first toast like [`prepare`], on a
+/// thread of its own, so that the GUI does not wait for the shell.
+pub fn prepare_soon() {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if !STARTED.swap(true, Ordering::Relaxed) {
+        let _ = std::thread::Builder::new()
+            .name("notify-prepare".into())
+            .spawn(prepare);
+    }
 }
 
 /// `text` with the characters XML reserves escaped.

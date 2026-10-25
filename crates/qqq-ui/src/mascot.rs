@@ -1,5 +1,5 @@
 //! MINT 酱, the mascot: a teal-haired cat girl whose pixel sprites `build.rs` generates
-//! from the illustrations in `docs/images/assets`, one per mood. Her expression and
+//! from the illustrations in `assets/mascot`, one per mood. Her expression and
 //! speech bubble summarise the current CPU and memory load, so the sidebar doubles as a
 //! health indicator.
 
@@ -275,16 +275,28 @@ mod tests {
     /// the bubble's 2-point border and 8-point padding on both sides.
     const TEXT_WIDTH: f32 = 172.0 - 30.0 - 2.0 * (2.0 + 8.0);
 
+    /// The Japanese interface font the platform layer prefers, where the system has it.
+    fn system_font(language: Language) -> Option<(Vec<u8>, u32)> {
+        let root = std::env::var_os("SystemRoot")?;
+        let path = std::path::Path::new(&root)
+            .join("Fonts")
+            .join("YuGothM.ttc");
+        (language == Language::Japanese)
+            .then(|| std::fs::read(path).ok())
+            .flatten()
+            .map(|bytes| (bytes, 1))
+    }
+
     #[test]
     fn every_speech_line_fits_the_bubble() {
-        let ctx = egui::Context::default();
-        theme::install_fonts(&ctx);
-        // Fonts load on the first pass; its texture upload has no renderer to go to.
-        ctx.run_ui(egui::RawInput::default(), |_| {})
-            .textures_delta
-            .clear();
         let mut overflowing = Vec::new();
         for language in Language::ALL {
+            let ctx = egui::Context::default();
+            theme::install_fonts(&ctx, system_font(language));
+            // Fonts load on the first pass; its texture upload has no renderer to go to.
+            ctx.run_ui(egui::RawInput::default(), |_| {})
+                .textures_delta
+                .clear();
             let t = i18n::strings(language);
             // The widest readings each mood can show, given the thresholds in `assess`.
             let speeches = [

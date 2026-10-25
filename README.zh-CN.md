@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/logo.png" alt="QQQ Monitor 标志：捧着监控面板的 MINT 酱" width="260">
+  <img src="crates/qqq-ui/assets/logo.png" alt="QQQ Monitor 标志：捧着监控面板的 MINT 酱" width="260">
 </p>
 
 <h1 align="center">QQQ Monitor</h1>
@@ -168,7 +168,7 @@ MINT 酱是一位青色长发、粉色挑染、白绒猫耳的少女，发箍上
 | 下排中 | 采集异常 | `mint-2` | 有采集源报告错误 |
 | 下排右 | 等待 | `mint-6` | 启动后等待首批 CPU 与内存读数 |
 
-侧栏的半身像由构建脚本 `crates/qqq-ui/build.rs` 从 [`docs/images/assets`](docs/images/assets) 中的 `mint-1` 至 `mint-6` 插画生成：与图片边缘相连的白色背景变为透明，每 10 × 10 个源像素合成一个精灵像素；绘制时每个精灵像素对齐整数个物理像素，边缘保持清晰。替换插画后重新构建即可更新看板娘。`mint-0` 是项目标志。设置页面显示与本文开头相同的项目标志 `docs/images/logo.png`。
+侧栏的半身像由构建脚本 `crates/qqq-ui/build.rs` 从 [`crates/qqq-ui/assets/mascot`](crates/qqq-ui/assets/mascot) 中的 `mint-1` 至 `mint-6` 插画生成：与图片边缘相连的白色背景变为透明，每 10 × 10 个源像素合成一个精灵像素；绘制时每个精灵像素对齐整数个物理像素，边缘保持清晰。替换插画后重新构建即可更新看板娘。`mint-0` 是项目标志。设置页面显示与本文开头相同的项目标志 `docs/images/logo.png`。
 
 开启界面动效时，MINT 酱每秒轻轻晃动；动效由定时重绘驱动，空闲时保持低刷新。
 
@@ -184,7 +184,7 @@ MINT 酱是一位青色长发、粉色挑染、白绒猫耳的少女，发箍上
 
 界面提供简体中文、English 和日本語。默认跟随系统：启动时按 Windows 显示语言的偏好顺序取第一个受支持的语言，中文各地区变体使用简体中文，都不受支持时使用英语。设置页面的「界面语言」可选择「跟随系统」或指定语言，点击后整个界面与窗口标题立即切换，并写入配置。
 
-页面、卡片、图表、状态与异常提示、设备名称与详情、看板娘台词和启动失败提示都跟随界面语言；页面顶部的像素英文小标题、数值与单位在各语言中保持一致。三种语言共用内嵌的 Noto Sans CJK SC 字体。
+页面、卡片、图表、状态与异常提示、设备名称与详情、看板娘台词和启动失败提示都跟随界面语言；页面顶部的像素英文小标题、数值与单位在各语言中保持一致。简体中文与英语使用内嵌的 Noto Sans CJK SC 字体；日语使用系统的 Yu Gothic UI（其次 Meiryo UI、MS UI Gothic），日文汉字显示为日文字形，系统字体缺少的字符由 Noto Sans CJK SC 补上。
 
 ### 配置
 
@@ -213,7 +213,7 @@ MINT 酱是一位青色长发、粉色挑染、白绒猫耳的少女，发箍上
 cargo run --release
 ```
 
-构建产物位于 `target\release\qqq_monitor.exe`，可直接运行。帧率监控需要以管理员身份运行，或把账户加入 Performance Log Users 组；其余采集用普通账户即可完成。
+构建产物位于 `target\release\qqq_monitor.exe`，可直接运行。Release 构建启用 thin LTO 与单个代码生成单元；debug 构建以优化方式编译依赖，`cargo run` 运行流畅，项目自身的 crate 仍保留调试断言。帧率监控需要以管理员身份运行，或把账户加入 Performance Log Users 组；其余采集用普通账户即可完成。
 
 ### 命令行参数
 

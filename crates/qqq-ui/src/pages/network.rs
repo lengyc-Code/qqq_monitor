@@ -15,13 +15,11 @@ impl DesktopApp {
             DeviceKind::Network,
             (&pixel::ICON_NETWORK, t.adapter, theme::NETWORK),
         ) {
-            self.config.selected_network = view
+            let selected = view
                 .devices
                 .get(&self.network)
                 .and_then(|d| d.persistent_id.clone());
-            let mut config = self.active_config.clone();
-            config.selected_network = self.config.selected_network.clone();
-            self.save_config(config, true);
+            self.apply_now(|config| config.selected_network = selected);
         }
         let receive = MetricKey::new(&self.network, "receive");
         let send = MetricKey::new(&self.network, "send");

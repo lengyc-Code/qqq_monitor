@@ -557,7 +557,7 @@ pub fn history_chart(
                         ui.spacing_mut().item_spacing.x = 5.0;
                         ui.label(
                             RichText::new(format_value(
-                                view.metrics.get(key).and_then(|r| r.value),
+                                view.metrics.get(*key).and_then(|r| r.value),
                                 unit,
                             ))
                             .size(12.0)

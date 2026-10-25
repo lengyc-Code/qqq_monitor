@@ -3,6 +3,7 @@ mod capture;
 mod clipboard;
 mod cpu_memory;
 mod disk_io;
+mod fonts;
 mod frames;
 mod fullscreen;
 mod gpu;
@@ -24,10 +25,12 @@ use std::{sync::Arc, time::Duration};
 /// Whether the executable starts at sign-in, switching that on or off, and the argument the
 /// executable receives when started that way.
 pub use autostart::{ARGUMENT as AUTOSTART_ARGUMENT, enabled as autostart, set as set_autostart};
-/// Screen capture with region selection.
-pub use capture::{start as start_capture, take as take_capture};
-/// Following, reading and setting the clipboard.
-pub use clipboard::{set as set_clipboard, take as take_clipboard, watch as watch_clipboard};
+/// Screen capture with region selection; the outcome arrives as an event.
+pub use capture::start as start_capture;
+/// Following the clipboard, whose changes arrive as events, and setting it.
+pub use clipboard::{set as set_clipboard, watch as watch_clipboard};
+/// System fonts for interface languages the embedded font draws in other shapes.
+pub use fonts::ui_font;
 /// Full-screen applications in the foreground, for letting clicks through the docked bar.
 pub use fullscreen::{at as fullscreen_at, watch as watch_foreground};
 /// One instance of each executable: claiming it, showing the running instance's window, and
@@ -44,20 +47,20 @@ pub use native::set_window_icon;
 pub use native::ui_languages;
 /// Screen geometry and pointer state for docking the window, in physical pixels.
 pub use native::{covers_point, monitor_at, mouse_button_held};
-/// Opening a file, folder or web address with its default program, and the local time.
+/// Opening a file, folder or web address with its default program, whose failures arrive as
+/// events, and the local time.
 pub use native::{local_time, open_path, open_url};
 /// Toast notifications with the application's name and icon.
-pub use notify::{notify, prepare as prepare_notifications};
+pub use notify::{notify, prepare_soon as prepare_notifications};
 /// PowerShell sessions that quick commands start.
 pub use powershell::start as start_powershell;
 /// Sounds that report how a quick command ran.
 pub use sound::play as play_sound;
-/// Notification-area icon with its balloons, taskbar button of the application window, and
-/// the screenshot, note and quick command shortcuts.
+/// Notification-area icon with its balloons, taskbar button of the application window, the
+/// screenshot, note and quick command shortcuts, and the events the desktop reports.
 pub use tray::{
-    attach as attach_tray, balloon as show_balloon, cloak as cloak_window, commands_requested,
-    hide as hide_tray, note_requested, opened as tray_opened, screenshot_requested, set_hotkey,
-    set_taskbar_button, show as show_tray,
+    attach as attach_tray, balloon as show_balloon, cloak as cloak_window, hide as hide_tray,
+    set_hotkey, set_taskbar_button, show as show_tray, take_events,
 };
 
 struct BuiltinFactory {

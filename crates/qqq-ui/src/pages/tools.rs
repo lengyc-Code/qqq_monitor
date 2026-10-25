@@ -162,7 +162,8 @@ impl DesktopApp {
                 (hotkeys.system(shortcut, config), keys)
             })
             .collect();
-        let (outcomes, retry) = hotkeys.update(wanted, Instant::now(), self.desktop.set_hotkey);
+        let (outcomes, retry) =
+            hotkeys.update(wanted, Instant::now(), self.desktop.input.set_hotkey);
         for (shortcut, outcome) in outcomes {
             match outcome {
                 Ok(())

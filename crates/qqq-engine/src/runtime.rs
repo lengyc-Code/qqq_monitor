@@ -26,6 +26,9 @@ const REMOTE_SOURCE: &str = "ssh:";
 /// Longest time between two views, so that data ages and alert states move on while no
 /// reading arrives.
 const IDLE_PUBLISH: Duration = Duration::from_secs(1);
+/// Changes that arrive this soon after the first one not yet shown reach the GUI in one
+/// view, such as the batches the collectors take in one sampling round.
+const COALESCE: Duration = Duration::from_millis(40);
 
 #[derive(Debug)]
 pub enum MonitorCommand {
@@ -98,6 +101,8 @@ pub(crate) struct Control {
     pub(crate) process_watch: Mutex<Option<ProcessHost>>,
     /// Bumped to poll the watched host at once.
     pub(crate) process_refresh: AtomicU64,
+    /// Bumped to list the process hosts at once.
+    pub(crate) hosts_refresh: AtomicU64,
     /// Number of changes the workers have been told about; waiting workers wake when it
     /// grows.
     changes: Mutex<u64>,
@@ -276,15 +281,14 @@ impl MonitorRuntime {
             refresh: AtomicU64::new(0),
             process_watch: Mutex::new(None),
             process_refresh: AtomicU64::new(0),
+            hosts_refresh: AtomicU64::new(0),
             changes: Mutex::new(0),
             signal: Condvar::new(),
             bell,
             rings,
             wake: Mutex::new(None),
         });
-        let latest = Arc::new(Mutex::new(Arc::new(MonitorView::empty(
-            loaded.config.clone(),
-        ))));
+        let latest = Arc::new(Mutex::new(Arc::new(MonitorView::empty())));
         let client = MonitorClient {
             latest,
             requests: requests_tx,
@@ -337,6 +341,15 @@ impl MonitorRuntime {
                 .map_err(|e| Notice::System(e.to_string()))?,
         );
         let (process_tx, process_rx) = bounded(8);
+        let hosts_platform = Arc::clone(&processes);
+        let hosts_tx = process_tx.clone();
+        let hosts_control = Arc::clone(&control);
+        runtime.threads.push(
+            thread::Builder::new()
+                .name("process-hosts".into())
+                .spawn(move || process::hosts_worker(hosts_platform, hosts_tx, hosts_control))
+                .map_err(|e| Notice::System(e.to_string()))?,
+        );
         let poll_platform = Arc::clone(&processes);
         let poll_control = Arc::clone(&control);
         runtime.threads.push(
@@ -567,6 +580,8 @@ fn config_worker(
 
 struct EngineState {
     view: MonitorView,
+    /// Configuration in effect.
+    config: AppConfig,
     history: History,
     normalizer: Normalizer,
     metric_sources: BTreeMap<MetricKey, Arc<str>>,
@@ -644,11 +659,13 @@ impl EngineState {
     /// Matches the remote workers to the configured hosts and drops the devices, readings
     /// and history that no longer apply.
     fn apply_remote_hosts(&mut self) {
-        let hosts = &self.view.config.remote_hosts;
+        let hosts = &self.config.remote_hosts;
         for id in self.remotes.apply(hosts) {
             let prefix = remote_prefix(&id);
             let ours = |device: &str| device.starts_with(&prefix);
-            self.view.devices.retain(|id, _| !ours(id));
+            if self.view.devices.keys().any(|id| ours(id)) {
+                Arc::make_mut(&mut self.view.devices).retain(|id, _| !ours(id));
+            }
             self.device_sources.retain(|id, _| !ours(id));
             self.view.metrics.retain(|key, _| !ours(&key.device));
             self.metric_sources.retain(|key, _| !ours(&key.device));
@@ -657,7 +674,7 @@ impl EngineState {
             self.dropped.remove(format!("{REMOTE_SOURCE}{id}").as_str());
             self.view.remote.hosts.remove(&id);
         }
-        let hosts = &self.view.config.remote_hosts;
+        let hosts = &self.config.remote_hosts;
         self.view
             .remote
             .hosts
@@ -755,18 +772,33 @@ impl EngineState {
                 if batch.complete_inventory {
                     let present: BTreeSet<_> =
                         batch.devices.iter().map(|d| d.id.as_str()).collect();
-                    for (id, device) in &mut self.view.devices {
-                        if self.device_sources.get(id) == Some(&event.source)
-                            && !present.contains(id.as_str())
-                        {
-                            device.online = false;
+                    let absent: Vec<_> = self
+                        .view
+                        .devices
+                        .iter()
+                        .filter(|(id, device)| {
+                            device.online
+                                && self.device_sources.get(*id) == Some(&event.source)
+                                && !present.contains(id.as_str())
+                        })
+                        .map(|(id, _)| id.clone())
+                        .collect();
+                    if !absent.is_empty() {
+                        let devices = Arc::make_mut(&mut self.view.devices);
+                        for id in absent {
+                            if let Some(device) = devices.get_mut(&id) {
+                                device.online = false;
+                            }
                         }
                     }
                 }
                 for device in batch.devices {
                     self.device_sources
                         .insert(device.id.clone(), Arc::clone(&event.source));
-                    self.view.devices.insert(device.id.clone(), device);
+                    // The map is copied only for a change, so views keep sharing it.
+                    if self.view.devices.get(&device.id) != Some(&device) {
+                        Arc::make_mut(&mut self.view.devices).insert(device.id.clone(), device);
+                    }
                 }
                 for sample in batch.samples {
                     let key = sample.descriptor.key.clone();
@@ -866,12 +898,12 @@ impl EngineState {
             .map(|(id, _)| id.clone())
             .collect();
         for id in obsolete {
-            self.view.devices.remove(&id);
+            Arc::make_mut(&mut self.view.devices).remove(&id);
             self.device_sources.remove(&id);
             self.view.metrics.retain(|k, _| k.device != id);
             self.metric_sources.retain(|k, _| k.device != id);
         }
-        self.alerts.evaluate(&mut self.view);
+        self.alerts.evaluate(&mut self.view, &self.config);
         let snapshot = Arc::new(self.view.clone());
         *client.latest.lock().unwrap() = snapshot;
         client.control.notify_ui();
@@ -894,10 +926,11 @@ fn engine_worker(
     warning: Option<Notice>,
 ) {
     let range = config.history_secs;
-    let mut view = MonitorView::empty(config);
+    let mut view = MonitorView::empty();
     view.save_status = warning.map_or(SaveStatus::Loaded, SaveStatus::Recovered);
     let mut state = EngineState {
         view,
+        config,
         history: History::default(),
         normalizer: Normalizer::default(),
         metric_sources: BTreeMap::new(),
@@ -914,6 +947,8 @@ fn engine_worker(
     state.view.remote.presets = Arc::new(state.remotes.platform.presets());
     state.apply_remote_hosts();
     let mut last_publish = Instant::now();
+    // When the oldest change that no view shows yet arrived.
+    let mut unpublished: Option<Instant> = None;
     while !client.control.stop.load(Ordering::Acquire) || !requests.is_empty() {
         let mut dirty = false;
         for input in &inputs {
@@ -1004,7 +1039,7 @@ fn engine_worker(
                             .frames
                             .store(config.frame_monitoring, Ordering::Release);
                         client.control.changed();
-                        state.view.config = config.clone();
+                        state.config = config.clone();
                         state.apply_remote_hosts();
                         state.latest_save = Some(request.id);
                         state.view.save_status = SaveStatus::Saving;
@@ -1034,9 +1069,15 @@ fn engine_worker(
             });
             dirty = true;
         }
-        if dirty || last_publish.elapsed() >= IDLE_PUBLISH {
+        if dirty {
+            unpublished.get_or_insert_with(Instant::now);
+        }
+        if unpublished.is_some_and(|at| at.elapsed() >= COALESCE)
+            || last_publish.elapsed() >= IDLE_PUBLISH
+        {
             state.publish(&client);
             last_publish = Instant::now();
+            unpublished = None;
         }
         // What one round left behind is taken at once; anything arriving later rings.
         let waiting = !requests.is_empty()
@@ -1044,10 +1085,11 @@ fn engine_worker(
             || inputs.iter().any(|input| !input.is_empty())
             || state.remotes.waiting();
         if !waiting {
+            let next = unpublished.map_or(last_publish + IDLE_PUBLISH, |at| at + COALESCE);
             let _ = client
                 .control
                 .rings
-                .recv_timeout(IDLE_PUBLISH.saturating_sub(last_publish.elapsed()));
+                .recv_timeout(next.saturating_duration_since(Instant::now()));
         }
     }
     state.remotes.stop();

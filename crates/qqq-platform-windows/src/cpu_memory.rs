@@ -5,12 +5,15 @@ use sysinfo::System;
 pub struct CpuMemory {
     system: System,
     previous: Option<Instant>,
+    /// Name and version of Windows, read from the registry once.
+    os: String,
 }
 impl CpuMemory {
     pub fn new() -> Self {
         Self {
             system: System::new(),
             previous: None,
+            os: System::long_os_version().unwrap_or_else(|| "Windows".into()),
         }
     }
 }
@@ -37,12 +40,9 @@ impl Collector for CpuMemory {
         batch
             .devices
             .push(DeviceDescriptor::new("memory", "", DeviceKind::Memory));
-        batch.devices.push(
-            DeviceDescriptor::new("system", "", DeviceKind::System).detail(
-                "os",
-                System::long_os_version().unwrap_or_else(|| "Windows".into()),
-            ),
-        );
+        batch
+            .devices
+            .push(DeviceDescriptor::new("system", "", DeviceKind::System).detail("os", &self.os));
         let usage = |value| {
             if warmed {
                 SampleValue::Gauge(value)

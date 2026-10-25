@@ -1,6 +1,6 @@
-use crate::{AlertView, AppConfig, ProcessView, RemoteView, SaveStatus, history::HistoryPoint};
+use crate::{AlertView, ProcessView, RemoteView, SaveStatus, history::HistoryPoint};
 use qqq_domain::*;
-use std::{collections::BTreeMap, time::Instant};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
 #[derive(Clone, Debug, Default)]
 pub struct Diagnostics {
@@ -15,10 +15,10 @@ pub struct MonitorView {
     pub sequence: u64,
     pub now: Instant,
     pub elapsed: f64,
-    pub devices: BTreeMap<String, DeviceDescriptor>,
+    /// Devices by ID; successive views share the map until a device changes.
+    pub devices: Arc<BTreeMap<String, DeviceDescriptor>>,
     pub metrics: BTreeMap<MetricKey, MetricReading>,
     pub history: BTreeMap<MetricKey, Vec<HistoryPoint>>,
-    pub config: AppConfig,
     pub save_status: SaveStatus,
     pub diagnostics: Diagnostics,
     pub processes: ProcessView,
@@ -27,15 +27,14 @@ pub struct MonitorView {
 }
 
 impl MonitorView {
-    pub fn empty(config: AppConfig) -> Self {
+    pub fn empty() -> Self {
         Self {
             sequence: 0,
             now: Instant::now(),
             elapsed: 0.0,
-            devices: BTreeMap::new(),
+            devices: Arc::default(),
             metrics: BTreeMap::new(),
             history: BTreeMap::new(),
-            config,
             save_status: SaveStatus::Loaded,
             diagnostics: Diagnostics::default(),
             processes: ProcessView::default(),
@@ -44,7 +43,7 @@ impl MonitorView {
         }
     }
     pub fn reading(&self, device: &str, metric: &str) -> Option<&MetricReading> {
-        self.metrics.get(&MetricKey::new(device, metric))
+        self.metrics.get(&(device, metric) as &dyn MetricKeyView)
     }
     pub fn value(&self, device: &str, metric: &str) -> Option<f64> {
         self.reading(device, metric).and_then(|v| v.value)

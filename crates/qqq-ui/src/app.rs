@@ -2,10 +2,11 @@
 mod pages;
 
 use crate::{
-    clips, components, dock, i18n, mascot, minibar, note, notes, pixel, shots, theme, tray,
+    clips, components, desktop::Desktop, dock, i18n, mascot, minibar, note, notes, pixel, shots,
+    theme, tray,
 };
 use eframe::egui::{self, RichText, pos2, vec2};
-use qqq_domain::{DeviceKind, MetricKey};
+use qqq_domain::{DesktopEvent, DeviceKind, MetricKey};
 use qqq_engine::{
     AlertState, AppConfig, CommandOutcome, CommandResult, DockEdge, Language, MonitorClient,
     MonitorCommand, MonitorView, Notice, data_directory,
@@ -132,7 +133,9 @@ pub struct DesktopApp {
     client: MonitorClient,
     view: Arc<MonitorView>,
     page: Page,
-    config: AppConfig,
+    /// Settings the settings page changes until they are applied.
+    draft: pages::settings::SettingsDraft,
+    /// The settings in effect, which the GUI reads and saves.
     active_config: AppConfig,
     network: String,
     disk: String,
@@ -150,7 +153,7 @@ pub struct DesktopApp {
     started: Instant,
     closing: bool,
     dock: dock::Dock,
-    desktop: dock::Desktop,
+    desktop: Desktop,
     tray: tray::Tray,
     process: pages::processes::ProcessPage,
     remote: pages::remote::RemotePage,
@@ -196,12 +199,13 @@ impl DesktopApp {
         config: AppConfig,
         page: Option<Page>,
         capture: Option<CaptureOptions>,
-        desktop: dock::Desktop,
+        desktop: Desktop,
         system_language: Language,
         start_in_tray: bool,
     ) -> Self {
-        i18n::set(config.language.unwrap_or(system_language));
-        theme::install_fonts(&cc.egui_ctx);
+        let language = config.language.unwrap_or(system_language);
+        i18n::set(language);
+        theme::install_fonts(&cc.egui_ctx, (desktop.system.ui_font)(language.tag()));
         theme::apply(&cc.egui_ctx, config.animations);
         let context = cc.egui_ctx.clone();
         let asleep = Arc::new(AtomicBool::new(false));
@@ -213,7 +217,7 @@ impl DesktopApp {
         }));
         let view = client
             .try_latest_view()
-            .unwrap_or_else(|| Arc::new(MonitorView::empty(config.clone())));
+            .unwrap_or_else(|| Arc::new(MonitorView::empty()));
         let page = capture
             .as_ref()
             .map(|v| v.page)
@@ -224,7 +228,7 @@ impl DesktopApp {
         let awake = Arc::clone(&asleep);
         let notes = notes::Notes::new(
             data_directory().join("notes"),
-            desktop.local_time,
+            desktop.system.local_time,
             move || {
                 context.request_repaint_of(note::id());
                 if !awake.load(Ordering::Relaxed) {
@@ -238,7 +242,7 @@ impl DesktopApp {
                 &cc.egui_ctx,
                 data_directory().join("screenshots"),
                 config.screenshot_history,
-                desktop.local_time,
+                desktop.system.local_time,
             ),
             shots_kept: config.screenshot_history,
             tool: Default::default(),
@@ -268,8 +272,8 @@ impl DesktopApp {
             system_language,
             autostart: None,
             range: config.history_secs,
-            active_config: config.clone(),
-            config,
+            draft: pages::settings::SettingsDraft::of(&config),
+            active_config: config,
             client,
             view,
             page,
@@ -309,13 +313,23 @@ impl DesktopApp {
             Err(error) => self.answers.save_failed(error, &mut self.message),
         }
     }
-    /// Applies a change to both the draft and the accepted settings and saves it at once,
-    /// like the language choice.
-    fn apply_now(&mut self, change: impl Fn(&mut AppConfig)) {
-        change(&mut self.config);
+    /// Applies a change to the settings in effect and saves it at once, like the language
+    /// choice.
+    fn apply_now(&mut self, change: impl FnOnce(&mut AppConfig)) {
         let mut config = self.active_config.clone();
         change(&mut config);
         self.save_config(config, true);
+    }
+    /// Drops the settings page's changes that were not applied, with the preview of the
+    /// animations.
+    fn discard_draft(&mut self, ctx: &egui::Context) {
+        let accepted = pages::settings::SettingsDraft::of(&self.active_config);
+        if self.draft != accepted {
+            if self.draft.animations != accepted.animations {
+                theme::apply(ctx, accepted.animations);
+            }
+            self.draft = accepted;
+        }
     }
     /// Keeps the note window, which starts hidden. eframe creates it at the end of the first
     /// frame and keeps it while every frame asks for it.
@@ -338,11 +352,15 @@ impl DesktopApp {
         // Devices of this computer; remote hosts have their own page.
         let local = || self.view.devices.values().filter(|d| d.host.is_none());
         if self.network.is_empty() {
-            let preferred = self.config.selected_network.as_ref().and_then(|guid| {
-                local().find(|d| {
-                    d.kind == DeviceKind::Network && d.persistent_id.as_ref() == Some(guid)
-                })
-            });
+            let preferred = self
+                .active_config
+                .selected_network
+                .as_ref()
+                .and_then(|guid| {
+                    local().find(|d| {
+                        d.kind == DeviceKind::Network && d.persistent_id.as_ref() == Some(guid)
+                    })
+                });
             let selected = preferred
                 .or_else(|| {
                     local().find(|d| {
@@ -496,7 +514,7 @@ impl DesktopApp {
                         self.page = page;
                     }
                 }
-                mascot::show(ui, view, self.config.animations);
+                mascot::show(ui, view, self.draft.animations);
             });
         let rect = panel.response.rect;
         let border = pixel::unit(ui.ctx(), 2.0);
@@ -597,6 +615,42 @@ fn backdrop(ui: &egui::Ui) {
     ui.painter().extend(shapes);
 }
 
+impl DesktopApp {
+    /// Acts on what the desktop reported since the last frame.
+    fn desktop_events(&mut self, ctx: &egui::Context) {
+        for event in (self.desktop.take_events)() {
+            match event {
+                DesktopEvent::Open => {
+                    self.tray.reopen(ctx);
+                    if self.dock.edge().is_some() {
+                        self.dock.restore(ctx, &self.desktop, None);
+                    }
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+                DesktopEvent::Screenshot => self.start_screenshot(false),
+                DesktopEvent::Note => note::lock(&self.note).toggle(ctx),
+                DesktopEvent::Command(number) => {
+                    if let Some(index) = self.hotkeys.command(number, &self.active_config) {
+                        self.run_command(index);
+                    }
+                }
+                DesktopEvent::Capture(end) => self.capture_ended(ctx, end),
+                DesktopEvent::Clipboard(clip) => {
+                    let keep = self.active_config.clipboard_history;
+                    self.clips.record(ctx, clip, keep);
+                }
+                DesktopEvent::OpenFailed { target, reason } => {
+                    if note::lock(&self.note).open_failed(&target, &reason) {
+                        ctx.request_repaint_of(note::id());
+                    } else {
+                        self.message = Some(Notice::OpenFailed(reason));
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl eframe::App for DesktopApp {
     fn on_exit(&mut self) {
         // A screenshot taken or a note typed just before exiting is still written.
@@ -617,24 +671,26 @@ impl eframe::App for DesktopApp {
         let language = self.active_config.language.unwrap_or(self.system_language);
         if language != i18n::language() {
             i18n::set(language);
+            theme::install_fonts(ctx, (self.desktop.system.ui_font)(language.tag()));
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(i18n::t().window_title.into()));
         }
         if self.page != Page::Settings {
             // Task Manager can switch starting at sign-in while the page is closed.
             self.autostart = None;
+            self.discard_draft(ctx);
         }
         self.select_initial_devices();
         self.query();
         self.watch_processes(ctx);
         self.hotkey_logic(ctx);
         self.screenshot_logic(ctx);
-        self.clipboard_logic(ctx);
-        self.note_logic(ctx);
+        self.clipboard_logic();
+        self.note_logic();
         self.command_logic();
         if self.page == Page::Alerts {
             // Windows notices a new notification identity with a delay, so it is set up
             // before the first alert.
-            (self.desktop.prepare_notifications)();
+            (self.desktop.system.prepare_notifications)();
         }
         if self.capture.is_none() {
             self.tray.update(
@@ -643,12 +699,8 @@ impl eframe::App for DesktopApp {
                 self.dock.edge().is_some(),
                 self.active_config.minimize_to_tray,
             );
-            if self.tray.opened(ctx, &self.desktop) {
-                if self.dock.edge().is_some() {
-                    self.dock.restore(ctx, &self.desktop, None);
-                }
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            }
+            // After the tray's update, so that a window shown again stays shown.
+            self.desktop_events(ctx);
         }
         // The window comes back through its own events, which repaint it with the latest
         // view.
@@ -710,7 +762,13 @@ impl eframe::App for DesktopApp {
         let t = i18n::t();
         let view = Arc::clone(&self.view);
         if let Some(edge) = self.dock.edge() {
-            if minibar::show(ui, &view, edge, &self.gpu, view.config.frame_monitoring) {
+            if minibar::show(
+                ui,
+                &view,
+                edge,
+                &self.gpu,
+                self.active_config.frame_monitoring,
+            ) {
                 self.dock.restore(ui.ctx(), &self.desktop, None);
             }
             return;
@@ -741,7 +799,7 @@ impl eframe::App for DesktopApp {
                     ui.add_space(8.0);
                     ui.label(
                         RichText::new((t.timing)(
-                            view.config.sampling_ms as f64 / 1000.0,
+                            self.active_config.sampling_ms as f64 / 1000.0,
                             view.elapsed,
                         ))
                         .size(12.0)

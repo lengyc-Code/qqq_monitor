@@ -11,7 +11,10 @@ use eframe::egui::{
     vec2,
 };
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
-use std::ops::Range;
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    ops::Range,
+};
 
 /// Color of the Markdown marks in the editor, such as `#`, `**` and list bullets.
 const MARK: Color32 = Color32::from_rgb(28, 132, 152);
@@ -538,16 +541,39 @@ pub fn toggle(text: &mut String, at: usize) {
     }
 }
 
-/// Renders `text` and returns what the user clicked.
-pub fn show(ui: &mut egui::Ui, text: &str) -> Option<Action> {
-    let mut render = Render {
-        action: None,
-        tables: 0,
-        depth: 0,
-    };
-    ui.spacing_mut().item_spacing.y = 0.0;
-    render.blocks(ui, &parse(text), Style::default());
-    render.action
+/// Hash of a source text, which tells whether it changed since it was parsed.
+pub fn text_hash(text: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// A rendered text, parsed once and kept while the text stays the same.
+#[derive(Default)]
+pub struct Document {
+    /// Hash of the text the blocks come from.
+    source: Option<u64>,
+    blocks: Vec<Block>,
+}
+
+impl Document {
+    /// Renders `text`, parsing it again only after it changed, and returns what the user
+    /// clicked.
+    pub fn show(&mut self, ui: &mut egui::Ui, text: &str) -> Option<Action> {
+        let hash = text_hash(text);
+        if self.source != Some(hash) {
+            self.blocks = parse(text);
+            self.source = Some(hash);
+        }
+        let mut render = Render {
+            action: None,
+            tables: 0,
+            depth: 0,
+        };
+        ui.spacing_mut().item_spacing.y = 0.0;
+        render.blocks(ui, &self.blocks, Style::default());
+        render.action
+    }
 }
 
 struct Render {

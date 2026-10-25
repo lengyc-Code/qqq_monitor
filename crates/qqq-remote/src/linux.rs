@@ -1,15 +1,16 @@
 //! The shell program a session keeps running on the host, and the devices and readings
-//! read from its output. The program uses only POSIX shell, `uname`, `getconf`, `cat`
-//! and `df`, so busybox-based systems run it as well.
+//! read from its output. The program uses only POSIX shell, `uname`, `getconf`, `cat`,
+//! `head` and `df`, so busybox-based systems run it as well.
 
 use qqq_domain::*;
 use std::{collections::HashMap, time::Instant};
 
 /// Sent to `sh -s`. The loop prints `@@ ready` once the whole program is read, then
 /// answers each command line with sections headed `@@ name` and ends with `@@ end`:
-/// `i` describes the host, `s` prints the counters. Printing the marker in the loop
-/// condition keeps the shell from reading a command as part of the program. Everything it
-/// reads comes from `/proc` and `/sys`, so no file system can hold it up.
+/// `i` describes the host, `s` prints the counters, the `/proc` files with one `head`
+/// that heads each with `==> /proc/name <==`. Printing the marker in the loop condition
+/// keeps the shell from reading a command as part of the program. Everything it reads
+/// comes from `/proc` and `/sys`, so no file system can hold it up.
 pub(crate) const SCRIPT: &str = r#"export LC_ALL=C
 i() {
   echo "@@ info"
@@ -25,10 +26,8 @@ i() {
   done < /proc/cpuinfo
 }
 s() {
-  for f in uptime loadavg stat meminfo net/dev net/route diskstats; do
-    echo "@@ $f"
-    cat "/proc/$f" 2>/dev/null
-  done
+  head -n 1000000 /proc/uptime /proc/loadavg /proc/stat /proc/meminfo /proc/net/dev \
+    /proc/net/route /proc/diskstats 2>/dev/null
   echo "@@ block"
   for b in /sys/block/*; do echo "${b##*/}"; done
   echo "@@ physical"
@@ -102,12 +101,16 @@ const SYSTEM_MOUNTS: [&str; 7] = [
     "/var/lib/kubelet",
 ];
 
-/// Lines of each `@@ name` section.
+/// Lines of each section, headed `@@ name`, or `==> /proc/name <==` by `head`.
 fn sections(text: &str) -> HashMap<&str, Vec<&str>> {
     let mut map: HashMap<&str, Vec<&str>> = HashMap::new();
     let mut current = None;
     for line in text.lines() {
-        if let Some(name) = line.strip_prefix("@@ ") {
+        let header = line.strip_prefix("@@ ").or_else(|| {
+            line.strip_prefix("==> /proc/")
+                .and_then(|name| name.strip_suffix(" <=="))
+        });
+        if let Some(name) = header {
             let name = name.trim();
             map.entry(name).or_default();
             current = Some(name);
@@ -374,7 +377,8 @@ pub(crate) fn parse_sample(text: &str) -> Result<Raw, Reason> {
 }
 
 /// Local file systems from the output of [`VOLUMES`], `df -kP` with or without the type
-/// column; each source device counts once, at its shortest mount point.
+/// column; each source device counts once, at its shortest mount point, and each mount
+/// point once, as the last of the file systems mounted over one another there.
 pub(crate) fn parse_volumes(text: &str) -> Vec<Volume> {
     let lines: Vec<_> = text
         .lines()
@@ -430,6 +434,10 @@ pub(crate) fn parse_volumes(text: &str) -> Vec<Volume> {
             used,
             available,
         };
+        if let Some(known) = volumes.iter_mut().find(|v| v.mount == volume.mount) {
+            *known = volume;
+            continue;
+        }
         match volumes
             .iter_mut()
             .find(|v| v.source == volume.source && volume.source.starts_with('/'))
@@ -780,6 +788,8 @@ rootfs         rootfs       1000000         0   1000000       0% /init
 /dev/sda1      ext4       100000000  40000000  55000000      43% /var/snap/x
 /dev/sdb1      xfs         50000000  10000000  40000000      20% /srv/my data
 /dev/sdc1      fuse     99999999999999999999 1 1          1% /mnt/huge
+C:\\           9p         20000000  10000000  10000000      50% /mnt/c
+C:\\           9p         30000000  10000000  20000000      34% /mnt/c
 ";
 
     #[test]
@@ -814,13 +824,36 @@ rootfs         rootfs       1000000         0   1000000       0% /init
     }
 
     #[test]
+    fn head_sections_read_like_marked_ones() {
+        let marked = sample("100.00", "100 0 100 700 100 0 0 0", 1000, 8);
+        let mut headed = marked.clone();
+        for name in [
+            "uptime",
+            "loadavg",
+            "stat",
+            "meminfo",
+            "net/dev",
+            "net/route",
+            "diskstats",
+        ] {
+            headed = headed.replace(&format!("@@ {name}\n"), &format!("==> /proc/{name} <==\n"));
+        }
+        // `head` also leaves a blank line before each header but the first.
+        let headed = headed.replace("\n==> ", "\n\n==> ");
+        assert_ne!(headed, marked);
+        assert_eq!(parse_sample(&headed), parse_sample(&marked));
+    }
+
+    #[test]
     fn df_lists_each_local_file_system_once() {
         let volumes = parse_volumes(DF);
         let mounts: Vec<_> = volumes.iter().map(|v| v.mount.as_str()).collect();
         // A size beyond what bytes can count is left out.
-        assert_eq!(mounts, ["/", "/srv/my data"]);
+        assert_eq!(mounts, ["/", "/mnt/c", "/srv/my data"]);
+        // The file system mounted last over a mount point is the one in use there.
+        assert_eq!(volumes[1].total, 30_000_000 * 1024);
         assert_eq!(volumes[0].file_system, "ext4");
-        assert_eq!(volumes[1].total, 50_000_000 * 1024);
+        assert_eq!(volumes[2].total, 50_000_000 * 1024);
         assert!(parse_volumes("\n").is_empty());
     }
 

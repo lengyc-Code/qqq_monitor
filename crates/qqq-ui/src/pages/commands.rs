@@ -144,9 +144,8 @@ enum Action {
 }
 
 impl DesktopApp {
-    /// Runs the quick commands whose shortcut was pressed, and stops following the sessions
-    /// that ended or whose quick command was removed. Runs every frame, whichever page is
-    /// shown.
+    /// Stops following the sessions that ended or whose quick command was removed. Runs
+    /// every frame, whichever page is shown.
     pub(in crate::app) fn command_logic(&mut self) {
         if self.page != Page::Tools || self.tool != Tool::Commands {
             self.command_page = CommandPage::default();
@@ -155,28 +154,19 @@ impl DesktopApp {
         self.shell_sessions.retain(|running| {
             running.session.running() && commands.iter().any(|c| c.id == running.command)
         });
-        if self.capture.is_some() {
-            return;
-        }
-        // Each press names the number its shortcut was registered under.
-        for number in (self.desktop.commands_requested)() {
-            if let Some(index) = self.hotkeys.command(number, &self.active_config) {
-                self.run_command(index);
-            }
-        }
     }
 
     /// Starts the sessions of the quick command at `index` and follows them, showing why
     /// when one fails to start. The run plays a sound when the settings ask for one, and
     /// shows a balloon while the window has only its tray icon or is docked.
-    fn run_command(&mut self, index: usize) {
+    pub(in crate::app) fn run_command(&mut self, index: usize) {
         let Some(command) = self.active_config.quick_commands.get(index) else {
             return;
         };
         let sessions = command.sessions();
         let mut started = Ok(());
         for session in &sessions {
-            match (self.desktop.start_powershell)(
+            match (self.desktop.system.start_powershell)(
                 &session.script,
                 &session.title,
                 command.window,
@@ -199,14 +189,14 @@ impl DesktopApp {
             Err(_) => CommandSound::Failed,
         };
         if self.active_config.command_sound {
-            (self.desktop.play_sound)(sound);
+            (self.desktop.system.play_sound)(sound);
         }
         if self.tray.has_icon() {
             let text = match &started {
                 Ok(()) => (i18n::t().command_balloon)(sessions.len()),
                 Err(reason) => i18n::notice(&Notice::CommandFailed(reason.clone())),
             };
-            (self.desktop.show_balloon)(&name, &text, started.is_err());
+            (self.desktop.shell.balloon)(&name, &text, started.is_err());
         }
         match started {
             Ok(()) if matches!(self.message, Some(Notice::CommandFailed(_))) => self.message = None,
@@ -242,10 +232,7 @@ impl DesktopApp {
 
     /// Saves the quick commands right away, like the alert rules.
     fn save_commands(&mut self, commands: Vec<QuickCommand>) {
-        self.config.quick_commands = commands.clone();
-        let mut config = self.active_config.clone();
-        config.quick_commands = commands;
-        self.save_config(config, true);
+        self.apply_now(|config| config.quick_commands = commands);
     }
 
     pub(in crate::app) fn commands(&mut self, ui: &mut egui::Ui) {

@@ -20,16 +20,17 @@ enum Action {
 }
 
 impl DesktopApp {
-    /// Follows the clipboard while the clipboard manager is on and records each change.
-    /// Runs every frame, whichever page is shown.
-    pub(in crate::app) fn clipboard_logic(&mut self, ctx: &egui::Context) {
+    /// Follows the clipboard while the clipboard manager is on, whose changes arrive as
+    /// events, and keeps the history within its size. Runs every frame, whichever page is
+    /// shown.
+    pub(in crate::app) fn clipboard_logic(&mut self) {
         if self.capture.is_some() {
             return;
         }
         let on = self.active_config.clipboard_manager;
         if self.watching != Some(on) {
             self.watching = Some(on);
-            match (self.desktop.watch_clipboard)(on) {
+            match (self.desktop.input.watch_clipboard)(on) {
                 Ok(()) if matches!(self.message, Some(Notice::ClipboardFailed(_))) => {
                     self.message = None
                 }
@@ -38,9 +39,6 @@ impl DesktopApp {
             }
         }
         let keep = self.active_config.clipboard_history;
-        if let Some(clip) = (self.desktop.take_clipboard)() {
-            self.clips.record(ctx, clip, keep);
-        }
         if self.clips_kept != keep {
             self.clips_kept = keep;
             self.clips.trim(keep);
@@ -104,9 +102,8 @@ impl DesktopApp {
             Some(Action::Copy(id)) => {
                 if let Some(entry) = self.clips.entries.iter().find(|e| e.id == id) {
                     let clip = entry.clip.clone();
-                    self.put_on_clipboard(&clip);
-                    // Followed changes move the entry to the top; without following, it
-                    // moves here.
+                    self.put_on_clipboard(ui.ctx(), &clip);
+                    // Without following, the entry moves to the top here as well.
                     if !on {
                         let keep = self.active_config.clipboard_history;
                         self.clips.record(ui.ctx(), clip, keep);
@@ -120,10 +117,10 @@ impl DesktopApp {
 }
 
 /// Kind and size of an entry's content.
-fn kind(clip: &Clip) -> (&'static pixel::Icon, String) {
+fn kind(entry: &ClipEntry) -> (&'static pixel::Icon, String) {
     let t = i18n::t();
-    match clip {
-        Clip::Text(text) => (&pixel::ICON_PROCESS, (t.clip_text)(text.chars().count())),
+    match &entry.clip {
+        Clip::Text(_) => (&pixel::ICON_PROCESS, (t.clip_text)(entry.chars)),
         Clip::Picture(picture) => (
             &pixel::ICON_CAMERA,
             (t.clip_picture)(picture.width, picture.height),
@@ -163,7 +160,7 @@ fn entry_card(ui: &mut egui::Ui, entry: &ClipEntry) -> Option<Action> {
         ui.spacing_mut().item_spacing.y = 6.0;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            let (icon, label) = kind(&entry.clip);
+            let (icon, label) = kind(entry);
             pixel::icon(ui, icon, 1.5, theme::INK, theme::GOLD);
             ui.label(RichText::new(label).size(13.0).strong());
             ui.label(

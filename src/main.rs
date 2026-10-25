@@ -8,7 +8,7 @@ use qqq_domain::{DeviceKind, ProcessHost, SampleState};
 use qqq_engine::{
     AlertEvent, ConfigStore, DockEdge, Language, MonitorCommand, MonitorRuntime, Services,
 };
-use qqq_ui::{CaptureOptions, Desktop, DesktopApp, Page, i18n};
+use qqq_ui::{CaptureOptions, Desktop, DesktopApp, Display, Input, Page, Shell, System, i18n};
 use std::{
     path::PathBuf,
     sync::Arc,
@@ -152,36 +152,40 @@ fn run() -> Result<(), String> {
     options.wgpu_options.wgpu_setup = eframe::egui_wgpu::WgpuSetup::CreateNew(setup);
     let client = runtime.client();
     let desktop = Desktop {
-        monitor_at: qqq_platform_windows::monitor_at,
-        covers: qqq_platform_windows::covers_point,
-        button_held: qqq_platform_windows::mouse_button_held,
-        fullscreen_at: qqq_platform_windows::fullscreen_at,
-        watch_foreground: qqq_platform_windows::watch_foreground,
-        show_tray: qqq_platform_windows::show_tray,
-        hide_tray: qqq_platform_windows::hide_tray,
-        tray_opened: qqq_platform_windows::tray_opened,
-        taskbar_button: qqq_platform_windows::set_taskbar_button,
-        cloak: qqq_platform_windows::cloak_window,
-        autostart: qqq_platform_windows::autostart,
-        set_autostart: qqq_platform_windows::set_autostart,
-        notify: qqq_platform_windows::notify,
-        prepare_notifications: qqq_platform_windows::prepare_notifications,
-        restart_elevated: qqq_platform_windows::restart_elevated,
-        set_hotkey: qqq_platform_windows::set_hotkey,
-        screenshot_requested: qqq_platform_windows::screenshot_requested,
-        note_requested: qqq_platform_windows::note_requested,
-        commands_requested: qqq_platform_windows::commands_requested,
-        start_powershell: qqq_platform_windows::start_powershell,
-        play_sound: qqq_platform_windows::play_sound,
-        show_balloon: qqq_platform_windows::show_balloon,
-        start_capture: qqq_platform_windows::start_capture,
-        take_capture: qqq_platform_windows::take_capture,
-        watch_clipboard: qqq_platform_windows::watch_clipboard,
-        take_clipboard: qqq_platform_windows::take_clipboard,
-        set_clipboard: qqq_platform_windows::set_clipboard,
-        open_path: qqq_platform_windows::open_path,
-        open_url: qqq_platform_windows::open_url,
-        local_time: qqq_platform_windows::local_time,
+        display: Display {
+            monitor_at: qqq_platform_windows::monitor_at,
+            covers: qqq_platform_windows::covers_point,
+            button_held: qqq_platform_windows::mouse_button_held,
+            fullscreen_at: qqq_platform_windows::fullscreen_at,
+            watch_foreground: qqq_platform_windows::watch_foreground,
+        },
+        shell: Shell {
+            show_icon: qqq_platform_windows::show_tray,
+            hide_icon: qqq_platform_windows::hide_tray,
+            balloon: qqq_platform_windows::show_balloon,
+            taskbar_button: qqq_platform_windows::set_taskbar_button,
+            cloak: qqq_platform_windows::cloak_window,
+        },
+        input: Input {
+            set_hotkey: qqq_platform_windows::set_hotkey,
+            start_capture: qqq_platform_windows::start_capture,
+            watch_clipboard: qqq_platform_windows::watch_clipboard,
+            set_clipboard: qqq_platform_windows::set_clipboard,
+        },
+        system: System {
+            autostart: qqq_platform_windows::autostart,
+            set_autostart: qqq_platform_windows::set_autostart,
+            notify: qqq_platform_windows::notify,
+            prepare_notifications: qqq_platform_windows::prepare_notifications,
+            restart_elevated: qqq_platform_windows::restart_elevated,
+            start_powershell: qqq_platform_windows::start_powershell,
+            play_sound: qqq_platform_windows::play_sound,
+            open_path: qqq_platform_windows::open_path,
+            open_url: qqq_platform_windows::open_url,
+            local_time: qqq_platform_windows::local_time,
+            ui_font: qqq_platform_windows::ui_font,
+        },
+        take_events: qqq_platform_windows::take_events,
     };
     let result = eframe::run_native(
         "QQQ Monitor",

@@ -1,4 +1,4 @@
-//! Generates MINT's pixel sprites from the illustrations `docs/images/assets/mint-1.png`
+//! Generates MINT's pixel sprites from the illustrations `assets/mascot/mint-1.png`
 //! to `mint-6.png`: the white background connected to the border becomes transparent,
 //! and each 10 × 10 block of source pixels becomes one sprite pixel.
 
@@ -18,7 +18,7 @@ const DARK_SHARE: f32 = 0.7;
 
 fn main() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let assets = root.join("../../docs/images/assets");
+    let assets = root.join("assets/mascot");
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     println!("cargo:rerun-if-changed=build.rs");
     let mut code = String::new();

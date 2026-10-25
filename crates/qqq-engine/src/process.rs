@@ -1,6 +1,7 @@
 //! Process lists of the host the GUI watches, and the actions it takes on processes.
-//! Polling runs only while a host is watched. Actions run on their own thread, so a slow
-//! `wsl.exe` delays neither the list nor the engine.
+//! Polling and listing the hosts run only while a host is watched, each on a thread of its
+//! own, as do the actions, so a slow `wsl.exe` delays neither the other lists nor the
+//! engine.
 
 use crate::{CommandOutcome, CommandResult, Notice, runtime::Control};
 use crossbeam_channel::{Receiver, Sender};
@@ -117,14 +118,48 @@ fn guarded<T>(f: impl FnOnce() -> Result<T, Reason>) -> Result<T, Reason> {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(Err(Reason::Panicked))
 }
 
-/// Polls the watched host and lists the hosts while any host is watched.
+/// Lists the hosts every [`HOSTS_PERIOD`] while any host is watched, and at once when
+/// asked. Listing WSL distributions starts a `wsl.exe`, which may take seconds.
+pub(crate) fn hosts_worker(
+    platform: Arc<dyn ProcessPlatform>,
+    events: Sender<ProcessEvent>,
+    control: Arc<Control>,
+) {
+    let mut next = Instant::now();
+    let mut refresh = control.hosts_refresh.load(Ordering::Acquire);
+    while !control.stop.load(Ordering::Acquire) {
+        let seen = control.changes();
+        if control.process_watch.lock().unwrap().is_none() {
+            // The next watch lists the hosts at once.
+            next = Instant::now();
+            control.wait(seen, Duration::MAX);
+            continue;
+        }
+        let latest = control.hosts_refresh.load(Ordering::Acquire);
+        if latest != refresh {
+            refresh = latest;
+            next = Instant::now();
+        }
+        let now = Instant::now();
+        if now < next {
+            control.wait(seen, next - now);
+            continue;
+        }
+        let hosts = guarded(|| Ok(platform.hosts())).unwrap_or_default();
+        if events.try_send(ProcessEvent::Hosts(hosts)).is_ok() {
+            control.wake_engine();
+        }
+        next = Instant::now() + HOSTS_PERIOD;
+    }
+}
+
+/// Polls the watched host while a host is watched.
 pub(crate) fn poll_worker(
     platform: Arc<dyn ProcessPlatform>,
     events: Sender<ProcessEvent>,
     control: Arc<Control>,
 ) {
     let mut source: Option<(ProcessHost, Box<dyn ProcessSource>, CpuTracker)> = None;
-    let mut hosts_at: Option<Instant> = None;
     let mut next = Instant::now();
     let mut refresh = control.process_refresh.load(Ordering::Acquire);
     while !control.stop.load(Ordering::Acquire) {
@@ -132,18 +167,10 @@ pub(crate) fn poll_worker(
         let watched = control.process_watch.lock().unwrap().clone();
         let Some(host) = watched else {
             source = None;
-            hosts_at = None;
             control.wait(seen, Duration::MAX);
             continue;
         };
         let now = Instant::now();
-        if hosts_at.is_none_or(|at| now >= at + HOSTS_PERIOD) {
-            hosts_at = Some(now);
-            let hosts = guarded(|| Ok(platform.hosts())).unwrap_or_default();
-            if events.try_send(ProcessEvent::Hosts(hosts)).is_ok() {
-                control.wake_engine();
-            }
-        }
         let latest = control.process_refresh.load(Ordering::Acquire);
         if latest != refresh {
             refresh = latest;
@@ -167,7 +194,8 @@ pub(crate) fn poll_worker(
             // The next poll starts over with a new source and CPU baseline.
             source = None;
             if *reason == Reason::HostStopped {
-                hosts_at = None;
+                control.hosts_refresh.fetch_add(1, Ordering::Release);
+                control.changed();
             }
         }
         if events

@@ -33,34 +33,19 @@ enum Action {
 }
 
 impl DesktopApp {
-    /// Starts requested screenshots and handles finished ones. Runs every frame, whichever
-    /// page is shown.
+    /// Starts a screenshot once the window is off the screen, and handles the library's
+    /// results. Runs every frame, whichever page is shown.
     pub(in crate::app) fn screenshot_logic(&mut self, ctx: &egui::Context) {
-        if self.capture.is_none() && (self.desktop.screenshot_requested)() {
-            self.start_screenshot(false);
-        }
         if let Snip::Hiding(since) = self.snip {
             match HIDE_DELAY.checked_sub(since.elapsed()) {
                 Some(left) => ctx.request_repaint_after(left),
                 None => self.begin_capture(true),
             }
         }
-        if let Some(end) = (self.desktop.take_capture)() {
-            if self.snip == (Snip::Selecting { cloaked: true }) {
-                (self.desktop.cloak)(false);
-            }
-            self.snip = Snip::Idle;
-            if let CaptureEnd::Taken(picture) = end {
-                let picture = Arc::new(picture);
-                self.put_on_clipboard(&Clip::Picture(Arc::clone(&picture)));
-                self.shots
-                    .save(picture, self.active_config.screenshot_history);
-            }
-        }
         for event in self.shots.update(ctx) {
             match event {
                 shots::Event::Loaded(picture) => {
-                    self.put_on_clipboard(&Clip::Picture(Arc::new(picture)))
+                    self.put_on_clipboard(ctx, &Clip::Picture(Arc::new(picture)))
                 }
                 shots::Event::Failed(error) => self.message = Some(Notice::ScreenshotFile(error)),
             }
@@ -72,14 +57,29 @@ impl DesktopApp {
         }
     }
 
+    /// Takes a region selection that ended: a picture goes on the clipboard and into the
+    /// library.
+    pub(in crate::app) fn capture_ended(&mut self, ctx: &egui::Context, end: CaptureEnd) {
+        if self.snip == (Snip::Selecting { cloaked: true }) {
+            (self.desktop.shell.cloak)(false);
+        }
+        self.snip = Snip::Idle;
+        if let CaptureEnd::Taken(picture) = end {
+            let picture = Arc::new(picture);
+            self.put_on_clipboard(ctx, &Clip::Picture(Arc::clone(&picture)));
+            self.shots
+                .save(picture, self.active_config.screenshot_history);
+        }
+    }
+
     /// Starts a screenshot unless one is under way; `hide` takes the main window off the
     /// screen first.
-    fn start_screenshot(&mut self, hide: bool) {
+    pub(in crate::app) fn start_screenshot(&mut self, hide: bool) {
         if self.snip != Snip::Idle {
             return;
         }
         if hide {
-            (self.desktop.cloak)(true);
+            (self.desktop.shell.cloak)(true);
             self.snip = Snip::Hiding(Instant::now());
         } else {
             self.begin_capture(false);
@@ -87,11 +87,11 @@ impl DesktopApp {
     }
 
     fn begin_capture(&mut self, cloaked: bool) {
-        match (self.desktop.start_capture)(i18n::t().shot_hint) {
+        match (self.desktop.input.start_capture)(i18n::t().shot_hint) {
             Ok(()) => self.snip = Snip::Selecting { cloaked },
             Err(reason) => {
                 if cloaked {
-                    (self.desktop.cloak)(false);
+                    (self.desktop.shell.cloak)(false);
                 }
                 self.snip = Snip::Idle;
                 self.message = Some(Notice::ScreenshotFailed(reason));
@@ -99,26 +99,32 @@ impl DesktopApp {
         }
     }
 
-    /// Puts content on the clipboard, showing why when it fails.
-    pub(in crate::app) fn put_on_clipboard(&mut self, clip: &Clip) {
-        match (self.desktop.set_clipboard)(clip) {
-            Ok(()) if matches!(self.message, Some(Notice::ClipboardFailed(_))) => {
-                self.message = None
+    /// Puts content on the clipboard, showing why when it fails. While the clipboard is
+    /// followed, the content enters its history here: the desktop reports only what other
+    /// applications put there.
+    pub(in crate::app) fn put_on_clipboard(&mut self, ctx: &egui::Context, clip: &Clip) {
+        match (self.desktop.input.set_clipboard)(clip) {
+            Ok(()) => {
+                if matches!(self.message, Some(Notice::ClipboardFailed(_))) {
+                    self.message = None;
+                }
+                if self.active_config.clipboard_manager {
+                    let keep = self.active_config.clipboard_history;
+                    self.clips.record(ctx, clip.clone(), keep);
+                }
             }
-            Ok(()) => {}
             Err(reason) => self.message = Some(Notice::ClipboardFailed(reason)),
         }
     }
 
-    /// Opens a file or folder with its default program, showing why when it fails.
+    /// Opens a file or folder with its default program; a failure arrives as an event.
     pub(in crate::app) fn open(&mut self, path: &std::path::Path) {
-        if let Err(reason) = (self.desktop.open_path)(path) {
-            self.message = Some(Notice::OpenFailed(reason));
-        }
+        (self.desktop.system.open_path)(path);
     }
 
     pub(in crate::app) fn screenshots(&mut self, ui: &mut egui::Ui) {
         let t = i18n::t();
+        self.shots.show_thumbnails();
         theme::card().show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 10.0;
             let size =
@@ -187,7 +193,7 @@ impl DesktopApp {
         for row in self.shots.entries.chunks(columns) {
             ui.columns(columns, |uis| {
                 for (ui, shot) in uis.iter_mut().zip(row) {
-                    if let Some(chosen) = tile(ui, shot, self.desktop.local_time) {
+                    if let Some(chosen) = tile(ui, shot, self.desktop.system.local_time) {
                         action = Some(chosen);
                     }
                 }
