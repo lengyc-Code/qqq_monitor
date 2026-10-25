@@ -150,7 +150,10 @@ pub fn apply(ctx: &egui::Context, animations: bool) {
     ctx.set_style_of(egui::Theme::Light, style);
 }
 
-pub fn install_fonts(ctx: &egui::Context) {
+/// Installs the embedded Noto Sans CJK SC, led by `system`, the system's interface font
+/// for the current language when it has one, such as a Japanese font whose kanji take
+/// Japanese shapes. `system` holds the font file's bytes and the index of the face.
+pub fn install_fonts(ctx: &egui::Context, system: Option<(Vec<u8>, u32)>) {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
         "NotoSC".into(),
@@ -158,16 +161,24 @@ pub fn install_fonts(ctx: &egui::Context) {
             "../assets/fonts/NotoSansCJKsc-Regular.otf"
         ))),
     );
-    fonts
-        .families
-        .entry(FontFamily::Proportional)
-        .or_default()
-        .insert(0, "NotoSC".into());
+    let mut names = vec!["NotoSC".to_owned()];
+    if let Some((bytes, index)) = system {
+        fonts.font_data.insert(
+            "System".into(),
+            Arc::new(FontData {
+                index,
+                ..FontData::from_owned(bytes)
+            }),
+        );
+        names.insert(0, "System".into());
+    }
+    let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
+    proportional.splice(0..0, names.iter().cloned());
     fonts
         .families
         .entry(FontFamily::Monospace)
         .or_default()
-        .push("NotoSC".into());
+        .extend(names);
     ctx.set_fonts(fonts);
 }
 

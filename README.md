@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/logo.png" alt="QQQ Monitor logo: MINT holding a monitoring panel" width="260">
+  <img src="crates/qqq-ui/assets/logo.png" alt="QQQ Monitor logo: MINT holding a monitoring panel" width="260">
 </p>
 
 <h1 align="center">QQQ Monitor</h1>
@@ -94,7 +94,7 @@ Drag the window to the top, left or right screen edge and release it: the window
 
 - On the Remote page, Add host asks for the address, port and user, and a sign-in method: a password, a key file (Ed25519, ECDSA or RSA keys in OpenSSH or PuTTY format, with the passphrase of an encrypted key), or the SSH agent (keys loaded in the Windows OpenSSH Authentication Agent service or Pageant). Import from SSH config lists the hosts of `~/.ssh/config` and fills in the address, port, user and key file.
 - The first connection shows the SHA-256 fingerprint of the host key; Trust and connect accepts it once you have checked it. Hosts already in `~/.ssh/known_hosts` connect at once. A host that offers a key other than the trusted one is not connected, and the page warns about it; you can trust the new key once you are sure.
-- Each host keeps one SSH connection with one POSIX shell on it, which reads `/proc` and `df` at the sampling interval, at least once a second. The host needs only basic commands such as `sh`, `cat` and `df`, busybox systems included; nothing is installed on it.
+- Each host keeps one SSH connection with one POSIX shell on it, which reads `/proc` at the sampling interval, at least once a second. File systems come from `df` every 30 seconds on a second channel, so a file system that stops answering, such as an unreachable network share, holds up only the file system readings. The host needs only basic commands such as `sh`, `cat` and `df`, busybox systems included; nothing is installed on it.
 - Rates follow the host's own clock. The adapter of the default route is selected by default; disks are whole physical disks; file systems are the local ones, with usage as `df` reports it.
 - A dropped, refused or timed-out connection reconnects by itself, waiting from 2 up to 60 seconds. A rejected user name, password or key and an untrusted host key wait for you to change the settings or click Reconnect, so repeated failed sign-ins never trip the server's ban rules.
 - Remote history spans 15 minutes like that of this computer and keeps recording on every page; removing a host also removes its data and its saved password.
@@ -168,7 +168,7 @@ MINT is a girl with long teal hair, a pink streak and fluffy white cat ears. A b
 | Bottom middle | Trouble | `mint-2` | A collector reports an error |
 | Bottom right | Waiting | `mint-6` | Waiting for the first CPU and memory readings after start |
 
-The build script `crates/qqq-ui/build.rs` generates the bust in the sidebar from the illustrations `mint-1` to `mint-6` in [`docs/images/assets`](docs/images/assets): the white background connected to the image border becomes transparent, and every 10 × 10 block of source pixels becomes one sprite pixel. Each sprite pixel is drawn on a whole number of physical pixels, so the edges stay crisp. Replace the illustrations and rebuild to update the mascot. `mint-0` is the project logo. The Settings page shows the same logo as the top of this file, `docs/images/logo.png`.
+The build script `crates/qqq-ui/build.rs` generates the bust in the sidebar from the illustrations `mint-1` to `mint-6` in [`crates/qqq-ui/assets/mascot`](crates/qqq-ui/assets/mascot): the white background connected to the image border becomes transparent, and every 10 × 10 block of source pixels becomes one sprite pixel. Each sprite pixel is drawn on a whole number of physical pixels, so the edges stay crisp. Replace the illustrations and rebuild to update the mascot. `mint-0` is the project logo. The Settings page shows the same logo as the top of this file, `docs/images/logo.png`.
 
 With animations on, MINT bobs gently once a second. The animation runs on scheduled repaints, so the app redraws rarely while idle.
 
@@ -184,7 +184,7 @@ The application icon is a pixel monitor with MINT's cat ears: a pink pulse runs 
 
 The interface is available in English, 简体中文 (Simplified Chinese) and 日本語 (Japanese). By default it follows the system: at startup it picks the first supported language from the Windows display language preferences, uses Simplified Chinese for every Chinese variant, and falls back to English. The Language row on the Settings page offers System default or a specific language; a click switches the whole interface and the window title at once and saves the choice.
 
-Pages, cards, charts, status and error messages, device names and details, MINT's lines and the startup failure dialog all follow the interface language; the pixel-font captions at the top of each page, numbers and units look the same in every language. All three languages use the embedded Noto Sans CJK SC font.
+Pages, cards, charts, status and error messages, device names and details, MINT's lines and the startup failure dialog all follow the interface language; the pixel-font captions at the top of each page, numbers and units look the same in every language. Simplified Chinese and English use the embedded Noto Sans CJK SC font; Japanese uses the system's Yu Gothic UI (or Meiryo UI, MS UI Gothic), so kanji take their Japanese shapes, with Noto Sans CJK SC for any character the system font lacks.
 
 ### Configuration
 
@@ -213,9 +213,11 @@ The Settings page applies changes with Apply & save: the sampling interval (0.5,
 cargo run --release
 ```
 
-The executable is `target\release\qqq_monitor.exe` and runs as is. Frame monitoring needs administrator rights or membership in the Performance Log Users group; a standard user account collects every other metric.
+The executable is `target\release\qqq_monitor.exe` and runs as is. Release builds use thin link-time optimization with a single code generation unit; debug builds compile the dependencies with optimizations, so `cargo run` stays responsive while the project's own crates keep debug assertions. Frame monitoring needs administrator rights or membership in the Performance Log Users group; a standard user account collects every other metric.
 
 ### Command-line options
+
+Each executable runs one instance at a time: starting it again shows the running instance's window, and a start at sign-in leaves the running instance as it is. `--smoke-test` and `--capture` run alongside it.
 
 | Option | Effect |
 | --- | --- |
@@ -225,6 +227,7 @@ The executable is `target\release\qqq_monitor.exe` and runs as is. Frame monitor
 | `--dock EDGE` | Starts as the mini bar: `top`, `left`, `right`; with `--capture` it captures the mini bar |
 | `--lang LANG` | Starts in an interface language, like choosing it on the Settings page: `zh-CN`, `en`, `ja`; with `--capture` it captures pages in that language |
 | `--autostart` | The argument of the autostart entry; with Start hidden in the notification area on, only the icon appears |
+| `--replace` | Waits for the running instance of the same executable to exit, then starts; the restart with administrator rights uses it |
 | `--help` | Lists the options (in Simplified Chinese) |
 
 ```powershell

@@ -8,7 +8,7 @@ use qqq_domain::{DeviceKind, ProcessHost, SampleState};
 use qqq_engine::{
     AlertEvent, ConfigStore, DockEdge, Language, MonitorCommand, MonitorRuntime, Services,
 };
-use qqq_ui::{CaptureOptions, Desktop, DesktopApp, Page, i18n};
+use qqq_ui::{CaptureOptions, Desktop, DesktopApp, Display, Input, Page, Shell, System, i18n};
 use std::{
     path::PathBuf,
     sync::Arc,
@@ -32,10 +32,33 @@ fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|s| s == "--help") {
         println!(
-            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           打开或截图的页面：overview/cpu/memory/gpu/frames/disk/network/processes/remote/alerts/tools/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja\n  --autostart           以开机自动启动的方式启动：开启“开机启动时直接收进托盘”时只显示托盘图标"
+            "QQQ Monitor\n  --smoke-test          检查四类真实性能采集\n  --capture PATH        启动 GUI，8 秒后截图并退出\n  --page PAGE           打开或截图的页面：overview/cpu/memory/gpu/frames/disk/network/processes/remote/alerts/tools/settings\n  --dock EDGE           以迷你状态栏吸附在屏幕边缘启动：top/left/right\n  --lang LANG           以指定界面语言启动：zh-CN/en/ja\n  --autostart           以开机自动启动的方式启动：开启“开机启动时直接收进托盘”时只显示托盘图标\n  --replace             等同一个可执行文件正在运行的实例退出后再启动"
         );
         return Ok(());
     }
+    // The checks run beside the program; every other start keeps one instance of this
+    // executable, which reads the configuration the previous instance saved.
+    let checking = args.iter().any(|s| s == "--smoke-test" || s == "--capture");
+    let _instance = if checking {
+        None
+    } else {
+        let replace = args
+            .iter()
+            .any(|s| s == qqq_platform_windows::REPLACE_ARGUMENT);
+        match qqq_platform_windows::claim_instance(replace) {
+            Some(lock) => Some(lock),
+            None => {
+                // Started at sign-in, the running instance already is what the user wants.
+                if !args
+                    .iter()
+                    .any(|s| s == qqq_platform_windows::AUTOSTART_ARGUMENT)
+                {
+                    qqq_platform_windows::activate_instance();
+                }
+                return Ok(());
+            }
+        }
+    };
     let loaded = ConfigStore::load_default();
     let mut config = loaded.config.clone();
     if let Some(index) = args.iter().position(|s| s == "--dock") {
@@ -129,36 +152,40 @@ fn run() -> Result<(), String> {
     options.wgpu_options.wgpu_setup = eframe::egui_wgpu::WgpuSetup::CreateNew(setup);
     let client = runtime.client();
     let desktop = Desktop {
-        monitor_at: qqq_platform_windows::monitor_at,
-        covers: qqq_platform_windows::covers_point,
-        button_held: qqq_platform_windows::mouse_button_held,
-        fullscreen_at: qqq_platform_windows::fullscreen_at,
-        watch_foreground: qqq_platform_windows::watch_foreground,
-        show_tray: qqq_platform_windows::show_tray,
-        hide_tray: qqq_platform_windows::hide_tray,
-        tray_opened: qqq_platform_windows::tray_opened,
-        taskbar_button: qqq_platform_windows::set_taskbar_button,
-        cloak: qqq_platform_windows::cloak_window,
-        autostart: qqq_platform_windows::autostart,
-        set_autostart: qqq_platform_windows::set_autostart,
-        notify: qqq_platform_windows::notify,
-        prepare_notifications: qqq_platform_windows::prepare_notifications,
-        restart_elevated: qqq_platform_windows::restart_elevated,
-        set_hotkey: qqq_platform_windows::set_hotkey,
-        screenshot_requested: qqq_platform_windows::screenshot_requested,
-        note_requested: qqq_platform_windows::note_requested,
-        commands_requested: qqq_platform_windows::commands_requested,
-        start_powershell: qqq_platform_windows::start_powershell,
-        play_sound: qqq_platform_windows::play_sound,
-        show_balloon: qqq_platform_windows::show_balloon,
-        start_capture: qqq_platform_windows::start_capture,
-        take_capture: qqq_platform_windows::take_capture,
-        watch_clipboard: qqq_platform_windows::watch_clipboard,
-        take_clipboard: qqq_platform_windows::take_clipboard,
-        set_clipboard: qqq_platform_windows::set_clipboard,
-        open_path: qqq_platform_windows::open_path,
-        open_url: qqq_platform_windows::open_url,
-        local_time: qqq_platform_windows::local_time,
+        display: Display {
+            monitor_at: qqq_platform_windows::monitor_at,
+            covers: qqq_platform_windows::covers_point,
+            button_held: qqq_platform_windows::mouse_button_held,
+            fullscreen_at: qqq_platform_windows::fullscreen_at,
+            watch_foreground: qqq_platform_windows::watch_foreground,
+        },
+        shell: Shell {
+            show_icon: qqq_platform_windows::show_tray,
+            hide_icon: qqq_platform_windows::hide_tray,
+            balloon: qqq_platform_windows::show_balloon,
+            taskbar_button: qqq_platform_windows::set_taskbar_button,
+            cloak: qqq_platform_windows::cloak_window,
+        },
+        input: Input {
+            set_hotkey: qqq_platform_windows::set_hotkey,
+            start_capture: qqq_platform_windows::start_capture,
+            watch_clipboard: qqq_platform_windows::watch_clipboard,
+            set_clipboard: qqq_platform_windows::set_clipboard,
+        },
+        system: System {
+            autostart: qqq_platform_windows::autostart,
+            set_autostart: qqq_platform_windows::set_autostart,
+            notify: qqq_platform_windows::notify,
+            prepare_notifications: qqq_platform_windows::prepare_notifications,
+            restart_elevated: qqq_platform_windows::restart_elevated,
+            start_powershell: qqq_platform_windows::start_powershell,
+            play_sound: qqq_platform_windows::play_sound,
+            open_path: qqq_platform_windows::open_path,
+            open_url: qqq_platform_windows::open_url,
+            local_time: qqq_platform_windows::local_time,
+            ui_font: qqq_platform_windows::ui_font,
+        },
+        take_events: qqq_platform_windows::take_events,
     };
     let result = eframe::run_native(
         "QQQ Monitor",

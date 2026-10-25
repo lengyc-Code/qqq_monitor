@@ -11,9 +11,11 @@
 //! bar lets the mouse through: a game that steers with the mouse can leave the
 //! hidden pointer over the bar, and its clicks stay with the game.
 
-use crate::i18n;
+use crate::{
+    desktop::{Desktop, Display},
+    i18n,
+};
 use eframe::egui::{self, Pos2, Rect, Vec2, ViewportCommand, pos2, vec2};
-use qqq_domain::{CaptureEnd, Clip, CommandSound, Hotkey, Reason, ShellSession, Shortcut};
 use qqq_engine::{AppConfig, DockEdge};
 use std::time::Duration;
 
@@ -43,89 +45,6 @@ pub fn bar_size(edge: DockEdge, frames: bool) -> Vec2 {
     }
 }
 
-/// Rectangle edges as `[left, top, right, bottom]`.
-pub type Edges = [f32; 4];
-
-/// Starts a PowerShell session with a script, a window title, whether it shows a window, and
-/// a working directory, empty for the user's profile folder.
-pub type StartPowerShell = fn(&str, &str, bool, &str) -> Result<Box<dyn ShellSession>, Reason>;
-
-/// Monitor queries and shell integration answered by the host platform; points are in
-/// physical pixels of the virtual screen.
-#[derive(Clone, Copy)]
-pub struct Desktop {
-    /// Bounds and work area of the monitor nearest to a point.
-    pub monitor_at: fn([f32; 2]) -> Option<(Edges, Edges)>,
-    /// Whether a point lies on any monitor.
-    pub covers: fn([f32; 2]) -> bool,
-    /// Whether a mouse button is held, including while the system moves the window.
-    pub button_held: fn() -> bool,
-    /// Whether a full-screen window of another process is in the foreground on the monitor
-    /// that holds a point.
-    pub fullscreen_at: fn([f32; 2]) -> bool,
-    /// Starts or stops waking the GUI whenever another application comes to the foreground.
-    pub watch_foreground: fn(bool),
-    /// Shows the notification-area icon with a tooltip and the labels of its "open",
-    /// "screenshot", "note" and "exit" menu items, or updates the text of the shown icon.
-    pub show_tray: fn(&str, &str, &str, &str, &str),
-    /// Removes the notification-area icon.
-    pub hide_tray: fn(),
-    /// Whether the user asked for the window from the icon since the last call.
-    pub tray_opened: fn() -> bool,
-    /// Shows or removes the taskbar button of the visible window; `false` while the window
-    /// has not appeared yet.
-    pub taskbar_button: fn(bool) -> bool,
-    /// Cloaks or reveals the application window: the compositor draws nothing of a cloaked
-    /// window, whose visibility stays as it is.
-    pub cloak: fn(bool),
-    /// Whether the program starts when the user signs in.
-    pub autostart: fn() -> bool,
-    /// Switches starting at sign-in on or off.
-    pub set_autostart: fn(bool) -> Result<(), Reason>,
-    /// Shows a system notification with a title and a text.
-    pub notify: fn(&str, &str) -> Result<(), Reason>,
-    /// Gets the system ready to show the application's notifications.
-    pub prepare_notifications: fn(),
-    /// Starts the application again with administrator rights and these arguments.
-    pub restart_elevated: fn(&str) -> Result<(), Reason>,
-    /// Registers a shortcut in place of its previous keys, or with `None` removes it.
-    pub set_hotkey: fn(Shortcut, Option<Hotkey>) -> Result<(), Reason>,
-    /// Whether the user asked for a screenshot with the shortcut or from the icon's menu
-    /// since the last call.
-    pub screenshot_requested: fn() -> bool,
-    /// Whether the user asked for the note window with the shortcut or from the icon's menu
-    /// since the last call.
-    pub note_requested: fn() -> bool,
-    /// Positions of the quick commands whose shortcut was pressed since the last call, in
-    /// the order they were pressed.
-    pub commands_requested: fn() -> Vec<usize>,
-    /// Starts a PowerShell session and returns it to follow and terminate. A shown window
-    /// stays open after the script ends; a hidden session ends with it.
-    pub start_powershell: StartPowerShell,
-    /// Plays a short sound without waiting for it.
-    pub play_sound: fn(CommandSound),
-    /// Shows a silent balloon from the notification-area icon with a title and a text,
-    /// marked as a warning when the flag is set; nothing while the icon is hidden.
-    pub show_balloon: fn(&str, &str, bool),
-    /// Freezes the screen for the user to select a region, showing this hint.
-    pub start_capture: fn(&str) -> Result<(), Reason>,
-    /// How the latest region selection ended, once.
-    pub take_capture: fn() -> Option<CaptureEnd>,
-    /// Starts or stops following the clipboard; starting counts the current content as a
-    /// change.
-    pub watch_clipboard: fn(bool) -> Result<(), Reason>,
-    /// Text, picture or files put on the clipboard since the last call.
-    pub take_clipboard: fn() -> Option<Clip>,
-    /// Puts content on the clipboard.
-    pub set_clipboard: fn(&Clip) -> Result<(), Reason>,
-    /// Opens a file with its default program, or a folder.
-    pub open_path: fn(&std::path::Path) -> Result<(), Reason>,
-    /// Opens a web address in the default browser.
-    pub open_url: fn(&str) -> Result<(), Reason>,
-    /// Local date and time as year, month, day, hour, minute, second and millisecond.
-    pub local_time: fn(std::time::SystemTime) -> Option<[u16; 7]>,
-}
-
 /// Work area of the monitor around a window, in points, and which of its
 /// dockable edges border no other monitor.
 struct Screen {
@@ -135,7 +54,7 @@ struct Screen {
     right: bool,
 }
 
-impl Desktop {
+impl Display {
     fn screen(&self, ppp: f32, around: Rect) -> Option<Screen> {
         let center = around.center() * ppp;
         let (bounds, work) = (self.monitor_at)([center.x, center.y])?;
@@ -308,13 +227,13 @@ impl Dock {
         if self.moved_from.is_none() && !self.commanded {
             return;
         }
-        if window.now - self.changed_at < SETTLE || (desktop.button_held)() {
+        if window.now - self.changed_at < SETTLE || (desktop.display.button_held)() {
             ctx.request_repaint_after(Duration::from_secs_f64(SETTLE / 2.0));
             return;
         }
         let commanded = std::mem::take(&mut self.commanded);
         let moved_from = self.moved_from.take();
-        let screen = desktop.screen(ctx.pixels_per_point(), window.outer);
+        let screen = desktop.display.screen(ctx.pixels_per_point(), window.outer);
         if let (Some(from), Some(screen)) = (moved_from.filter(|_| !commanded), screen) {
             match self.edge {
                 Some(_) => {
@@ -362,6 +281,7 @@ impl Dock {
         let current = window(ctx).map(|w| w.outer.min);
         let position = at.or(position).or(current).map(|at| {
             desktop
+                .display
                 .screen(
                     ctx.pixels_per_point(),
                     Rect::from_min_size(at, size + frame),
@@ -408,9 +328,9 @@ impl Dock {
     /// the foreground, following foreground changes while docked.
     fn follow_fullscreen(&mut self, ctx: &egui::Context, desktop: &Desktop, outer: Rect) {
         let docked = self.edge.is_some();
-        (desktop.watch_foreground)(docked);
+        (desktop.display.watch_foreground)(docked);
         let center = outer.center() * ctx.pixels_per_point();
-        let passthrough = docked && (desktop.fullscreen_at)([center.x, center.y]);
+        let passthrough = docked && (desktop.display.fullscreen_at)([center.x, center.y]);
         if passthrough != self.passthrough {
             self.passthrough = passthrough;
             ctx.send_viewport_cmd(ViewportCommand::MousePassthrough(passthrough));
@@ -428,7 +348,7 @@ impl Dock {
 
     /// Turns the window into the bar on `edge`, centred along it on `around`.
     fn dock(&mut self, ctx: &egui::Context, desktop: &Desktop, edge: DockEdge, around: Rect) {
-        let Some(screen) = desktop.screen(ctx.pixels_per_point(), around) else {
+        let Some(screen) = desktop.display.screen(ctx.pixels_per_point(), around) else {
             return;
         };
         let size = bar_size(edge, self.frames);

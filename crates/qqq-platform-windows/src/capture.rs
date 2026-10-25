@@ -7,7 +7,7 @@
 //! window works in physical pixels of the virtual screen.
 
 use crate::tray;
-use qqq_domain::{CaptureEnd, Picture, Reason};
+use qqq_domain::{CaptureEnd, DesktopEvent, Picture, Reason};
 use std::{cell::RefCell, mem::size_of};
 use windows::{
     Win32::{
@@ -15,13 +15,12 @@ use windows::{
         Graphics::Gdi::{
             AC_SRC_OVER, AlphaBlend, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
             BeginPaint, BitBlt, CAPTUREBLT, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
-            CreateCompatibleBitmap, CreateCompatibleDC, CreateDIBSection, CreateFontW,
-            CreateSolidBrush, DEFAULT_CHARSET, DIB_RGB_COLORS, DRAW_TEXT_FORMAT, DT_CALCRECT,
-            DT_CENTER, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW,
-            EndPaint, FW_NORMAL, FillRect, GdiFlush, GetDC, GetMonitorInfoW, HBITMAP, HDC, HFONT,
-            HGDIOBJ, InvalidateRect, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
-            OUT_DEFAULT_PRECIS, PAINTSTRUCT, ReleaseDC, SRCCOPY, SelectObject, SetBkMode,
-            SetTextColor, SetViewportOrgEx, TRANSPARENT,
+            CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET,
+            DIB_RGB_COLORS, DRAW_TEXT_FORMAT, DT_CALCRECT, DT_CENTER, DT_NOPREFIX, DT_SINGLELINE,
+            DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, EndPaint, FW_NORMAL, FillRect, GdiFlush,
+            GetDC, GetMonitorInfoW, HBITMAP, HDC, HFONT, HGDIOBJ, InvalidateRect,
+            MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, OUT_DEFAULT_PRECIS,
+            PAINTSTRUCT, ReleaseDC, SRCCOPY, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
         },
         System::LibraryLoader::GetModuleHandleW,
         UI::{
@@ -59,7 +58,6 @@ const fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
 
 thread_local! {
     static OVERLAY: RefCell<Option<Overlay>> = const { RefCell::new(None) };
-    static ENDED: RefCell<Option<CaptureEnd>> = const { RefCell::new(None) };
 }
 
 fn failed(api: &'static str, code: u32) -> Reason {
@@ -68,12 +66,11 @@ fn failed(api: &'static str, code: u32) -> Reason {
 
 /// Copies the screen and shows it for the user to select a region, with `hint` near the top
 /// of the monitor under the pointer. Does nothing while a selection is under way. The
-/// outcome arrives through [`take`], and the GUI is woken for it like for the tray.
+/// outcome arrives as a [`DesktopEvent::Capture`].
 pub fn start(hint: &str) -> Result<(), Reason> {
     if OVERLAY.with(|overlay| overlay.borrow().is_some()) {
         return Ok(());
     }
-    ENDED.with(|ended| ended.borrow_mut().take());
     // The window and the copy use physical pixels, whatever awareness the thread has.
     // SAFETY: plain value argument; the previous context is restored below.
     let previous =
@@ -84,11 +81,6 @@ pub fn start(hint: &str) -> Result<(), Reason> {
         unsafe { SetThreadDpiAwarenessContext(previous) };
     }
     result
-}
-
-/// How the latest selection ended, once since it ended.
-pub fn take() -> Option<CaptureEnd> {
-    ENDED.with(|ended| ended.borrow_mut().take())
 }
 
 /// A memory device context with a top-down 32-bit DIB section selected into it.
@@ -163,6 +155,9 @@ impl Drop for Surface {
 struct Overlay {
     window: HWND,
     shot: Surface,
+    /// Off-screen copy of the window where each repaint composes its area, kept for the
+    /// whole capture so that dragging allocates nothing.
+    back: Surface,
     /// One black pixel, stretched over the unselected screen.
     shade: Surface,
     font: HFONT,
@@ -216,6 +211,7 @@ fn open(hint: &str) -> Result<(), Reason> {
         ReleaseDC(None, screen);
         copied.map_err(|error| failed("BitBlt", error.code().0 as u32))?;
     }
+    let back = Surface::new(width, height)?;
     let shade = Surface::new(1, 1)?;
     let class = w!("QqqMonitorCapture");
     // SAFETY: a null module name returns the running executable, which outlives the window;
@@ -274,6 +270,7 @@ fn open(hint: &str) -> Result<(), Reason> {
     let mut overlay = Overlay {
         window,
         shot,
+        back,
         shade,
         font,
         scale,
@@ -313,7 +310,6 @@ fn finish(selection: Option<RECT>) {
     let end = selection
         .and_then(|region| overlay.crop(region))
         .map_or(CaptureEnd::Cancelled, CaptureEnd::Taken);
-    ENDED.with(|ended| *ended.borrow_mut() = Some(end));
     // The state is taken out first, so the messages that destruction sends find none.
     // SAFETY: the window belongs to this thread.
     unsafe {
@@ -321,7 +317,7 @@ fn finish(selection: Option<RECT>) {
         let _ = DestroyWindow(overlay.window);
     }
     drop(overlay);
-    tray::wake();
+    tray::push(DesktopEvent::Capture(end));
 }
 
 impl Overlay {
@@ -436,20 +432,17 @@ impl Overlay {
         }
     }
 
-    /// Paints the window's `area` through an off-screen buffer.
+    /// Paints the window's `area` through the off-screen buffer, which has the window's
+    /// coordinates.
     fn paint(&self, target: HDC, area: RECT) {
         let (width, height) = (area.right - area.left, area.bottom - area.top);
         if width <= 0 || height <= 0 {
             return;
         }
-        // SAFETY: the buffer DC and bitmap are created, used and deleted here; the surfaces
-        // outlive the calls that read them.
+        let back = self.back.dc;
+        // SAFETY: the surfaces belong to the overlay and outlive the calls; the font is
+        // selected into the buffer only during the drawing below.
         unsafe {
-            let back = CreateCompatibleDC(Some(target));
-            let bitmap = CreateCompatibleBitmap(target, width, height);
-            let previous = SelectObject(back, bitmap.into());
-            // Window coordinates land in the buffer shifted by the area's corner.
-            let _ = SetViewportOrgEx(back, -area.left, -area.top, None);
             let _ = BitBlt(
                 back,
                 area.left,
@@ -507,7 +500,6 @@ impl Overlay {
                 }
             }
             SelectObject(back, font);
-            let _ = SetViewportOrgEx(back, 0, 0, None);
             let _ = BitBlt(
                 target,
                 area.left,
@@ -515,13 +507,10 @@ impl Overlay {
                 width,
                 height,
                 Some(back),
-                0,
-                0,
+                area.left,
+                area.top,
                 SRCCOPY,
             );
-            SelectObject(back, previous);
-            let _ = DeleteObject(bitmap.into());
-            let _ = DeleteDC(back);
         }
     }
 

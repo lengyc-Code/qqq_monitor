@@ -14,7 +14,8 @@ use std::{
 };
 
 /// Prints a header line `H ticks-per-second page-size processors uptime shell-pid`,
-/// `N uid name` per account, and per process `P uid stat-line` and `C pid command-line`.
+/// `N uid name` per account, and per process `P uid stat-line` and `C pid command-line`
+/// with the arguments joined by spaces on one line.
 const LIST: &str = r#"cd /proc || exit 1
 read -r up _ < uptime
 echo "H $(getconf CLK_TCK 2>/dev/null || echo 100) $(getconf PAGESIZE 2>/dev/null || echo 4096) $(nproc 2>/dev/null || echo 1) $up $$"
@@ -24,7 +25,7 @@ for p in [0-9]*; do
   u=
   while read -r k v _; do [ "$k" = Uid: ] && { u=$v; break; }; done < "$p/status"
   echo "P $u $s"
-  printf 'C %s ' "$p"; tr '\0' ' ' < "$p/cmdline"; echo
+  printf 'C %s ' "$p"; tr '\0\n' '  ' < "$p/cmdline"; echo
 done
 "#;
 /// Arguments: PID, start time in clock ticks, then `TERM`, `KILL` or a nice value. Exits
@@ -189,7 +190,8 @@ fn parse(distro: &str, output: &str) -> Option<ProcessSnapshot> {
             continue;
         };
         match tag {
-            "H" => header = Some(rest.split_whitespace().collect::<Vec<_>>()),
+            // The script prints its header first; a later one is not the script's own.
+            "H" if header.is_none() => header = Some(rest.split_whitespace().collect::<Vec<_>>()),
             "N" => {
                 if let Some((uid, name)) = rest.split_once(' ') {
                     users.entry(uid).or_insert(name);
@@ -334,6 +336,16 @@ C 40953 sh -s
         let init = &snapshot.processes[2];
         assert_eq!(init.name, "init-systemd(Ub");
         assert_eq!(init.parent, Some(1));
+    }
+
+    #[test]
+    fn only_the_first_header_counts() {
+        let output = format!("{OUTPUT}H 1 1 1 1 1\n");
+        let snapshot = parse("Ubuntu", &output).unwrap();
+        assert_eq!(snapshot.processors, 32);
+        assert_eq!(snapshot.clock, 19952.56);
+        let pids: Vec<_> = snapshot.processes.iter().map(|p| p.id.pid).collect();
+        assert_eq!(pids, [1, 996, 2]);
     }
 
     /// Needs a running WSL distribution: `cargo test -- --ignored`.

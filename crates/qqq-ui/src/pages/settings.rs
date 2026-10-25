@@ -2,20 +2,53 @@ use super::{super::DesktopApp, tools::hotkey_option};
 use crate::{components::*, i18n, pixel, theme};
 use eframe::egui::{self, RichText, vec2};
 use qqq_domain::Shortcut;
-use qqq_engine::{Language, MonitorCommand, MonitorView, Notice};
+use qqq_engine::{AppConfig, Language, MonitorCommand, MonitorView, Notice};
 
 /// History budget shown in diagnostics; matches the engine's allocation limit.
 const HISTORY_BUDGET: f64 = 16.0 * 1024.0 * 1024.0;
 /// Widest history usage bar, in points.
 const BAR_WIDTH: f32 = 520.0;
 /// The logo shown in the README, with MINT holding a monitor panel.
-const LOGO: &[u8] = include_bytes!("../../../../docs/images/logo.png");
+const LOGO: &[u8] = include_bytes!("../../assets/logo.png");
 /// Width of the logo on the page, in points.
 const LOGO_WIDTH: f32 = 200.0;
 /// The project's home on GitHub.
 const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 /// Language, toolkit, platform and license, as under the README title.
 const STACK: &str = "Rust 2024 · egui / wgpu (DX12) · Windows x64 · MIT";
+
+/// The settings that take effect with "Apply & save"; every other setting applies at once.
+/// Leaving the page drops the changes not applied.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) struct SettingsDraft {
+    pub sampling_ms: u64,
+    pub history_secs: u64,
+    pub animations: bool,
+    pub edge_docking: bool,
+    pub minimize_to_tray: bool,
+}
+
+impl SettingsDraft {
+    /// The settings as `config` has them.
+    pub fn of(config: &AppConfig) -> Self {
+        Self {
+            sampling_ms: config.sampling_ms,
+            history_secs: config.history_secs,
+            animations: config.animations,
+            edge_docking: config.edge_docking,
+            minimize_to_tray: config.minimize_to_tray,
+        }
+    }
+
+    /// Writes the drafted settings into `config`.
+    pub fn apply(self, config: &mut AppConfig) {
+        config.sampling_ms = self.sampling_ms;
+        config.history_secs = self.history_secs;
+        config.animations = self.animations;
+        config.edge_docking = self.edge_docking;
+        config.minimize_to_tray = self.minimize_to_tray;
+    }
+}
 
 impl DesktopApp {
     pub(in crate::app) fn settings(&mut self, ui: &mut egui::Ui, view: &MonitorView) {
@@ -70,14 +103,12 @@ impl DesktopApp {
                             .into_iter()
                             .chain(Language::ALL.map(|l| (Some(l), i18n::native_name(l))));
                         for (language, label) in choices {
-                            if theme::chip(ui, label, self.config.language == language).clicked()
+                            if theme::chip(ui, label, self.active_config.language == language)
+                                .clicked()
                                 && self.active_config.language != language
                             {
                                 // Applied and saved at once, like the network adapter choice.
-                                self.config.language = language;
-                                let mut config = self.active_config.clone();
-                                config.language = language;
-                                self.save_config(config, true);
+                                self.apply_now(|config| config.language = language);
                             }
                         }
                     });
@@ -88,8 +119,8 @@ impl DesktopApp {
                     ui.horizontal_wrapped(|ui| {
                         for ms in [500, 1000, 2000] {
                             let label = (t.seconds)(ms as f64 / 1000.0);
-                            if theme::chip(ui, &label, self.config.sampling_ms == ms).clicked() {
-                                self.config.sampling_ms = ms;
+                            if theme::chip(ui, &label, self.draft.sampling_ms == ms).clicked() {
+                                self.draft.sampling_ms = ms;
                             }
                         }
                     });
@@ -103,8 +134,8 @@ impl DesktopApp {
                             (300, (t.minutes)(5)),
                             (900, (t.minutes)(15)),
                         ] {
-                            if theme::chip(ui, &label, self.config.history_secs == secs).clicked() {
-                                self.config.history_secs = secs;
+                            if theme::chip(ui, &label, self.draft.history_secs == secs).clicked() {
+                                self.draft.history_secs = secs;
                             }
                         }
                     });
@@ -113,21 +144,22 @@ impl DesktopApp {
                     row_label(ui, t.animations);
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                     if ui
-                        .checkbox(&mut self.config.animations, t.animations_option)
+                        .checkbox(&mut self.draft.animations, t.animations_option)
                         .changed()
                     {
-                        theme::apply(ui.ctx(), self.config.animations);
+                        // A preview until the draft is applied or dropped.
+                        theme::apply(ui.ctx(), self.draft.animations);
                     }
                 });
                 ui.horizontal(|ui| {
                     row_label(ui, t.edge_docking);
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                    ui.checkbox(&mut self.config.edge_docking, t.edge_docking_option);
+                    ui.checkbox(&mut self.draft.edge_docking, t.edge_docking_option);
                 });
                 ui.horizontal(|ui| {
                     row_label(ui, t.minimize_to_tray);
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                    ui.checkbox(&mut self.config.minimize_to_tray, t.minimize_to_tray_option);
+                    ui.checkbox(&mut self.draft.minimize_to_tray, t.minimize_to_tray_option);
                 });
                 ui.horizontal(|ui| {
                     row_label(ui, t.frame_monitoring);
@@ -179,10 +211,11 @@ impl DesktopApp {
                     ui.vertical(|ui| {
                         // A system setting rather than a preference: it changes at once, and
                         // so does the choice beneath it.
-                        let mut enabled =
-                            *self.autostart.get_or_insert_with(self.desktop.autostart);
+                        let mut enabled = *self
+                            .autostart
+                            .get_or_insert_with(self.desktop.system.autostart);
                         if ui.checkbox(&mut enabled, t.autostart_option).changed() {
-                            match (self.desktop.set_autostart)(enabled) {
+                            match (self.desktop.system.set_autostart)(enabled) {
                                 Ok(())
                                     if matches!(
                                         self.message,
@@ -198,7 +231,7 @@ impl DesktopApp {
                             }
                             self.autostart = None;
                         }
-                        let mut to_tray = self.config.autostart_to_tray;
+                        let mut to_tray = self.active_config.autostart_to_tray;
                         if ui
                             .add_enabled(
                                 enabled,
@@ -206,10 +239,7 @@ impl DesktopApp {
                             )
                             .changed()
                         {
-                            self.config.autostart_to_tray = to_tray;
-                            let mut config = self.active_config.clone();
-                            config.autostart_to_tray = to_tray;
-                            self.save_config(config, true);
+                            self.apply_now(|config| config.autostart_to_tray = to_tray);
                         }
                     });
                 });
@@ -224,8 +254,10 @@ impl DesktopApp {
                     )
                     .clicked()
                     {
-                        self.range = self.config.history_secs;
-                        self.save_config(self.config.clone(), true);
+                        let mut config = self.active_config.clone();
+                        self.draft.apply(&mut config);
+                        self.range = config.history_secs;
+                        self.save_config(config, true);
                     }
                     ui.label(
                         RichText::new(i18n::save_status(&self.view.save_status))
@@ -288,13 +320,11 @@ impl DesktopApp {
                     .on_hover_text(REPOSITORY)
                     .clicked()
                 {
-                    match (self.desktop.open_url)(REPOSITORY) {
-                        Ok(()) if matches!(self.message, Some(Notice::OpenFailed(_))) => {
-                            self.message = None
-                        }
-                        Ok(()) => {}
-                        Err(reason) => self.message = Some(Notice::OpenFailed(reason)),
+                    // A failure arrives later, as an event.
+                    if matches!(self.message, Some(Notice::OpenFailed(_))) {
+                        self.message = None;
                     }
+                    (self.desktop.system.open_url)(REPOSITORY);
                 }
             });
             let height = ui.min_rect().bottom().min(ui.cursor().top()) - top;
@@ -377,4 +407,26 @@ fn logo(ctx: &egui::Context) -> Option<egui::TextureHandle> {
     );
     ctx.data_mut(|d| d.insert_temp(id, texture.clone()));
     Some(texture)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_draft_carries_only_its_own_settings() {
+        let mut draft = SettingsDraft::of(&AppConfig::default());
+        draft.sampling_ms = 2000;
+        draft.animations = false;
+        let mut config = AppConfig {
+            language: Some(Language::Japanese),
+            frame_monitoring: true,
+            ..AppConfig::default()
+        };
+        draft.apply(&mut config);
+        assert_eq!((config.sampling_ms, config.animations), (2000, false));
+        assert_eq!(config.language, Some(Language::Japanese));
+        assert!(config.frame_monitoring);
+        assert!(SettingsDraft::of(&config) == draft);
+    }
 }

@@ -455,6 +455,7 @@ pub const STRINGS: Strings = Strings {
     command_run: "运行",
     command_stop: "终止",
     command_running: |n| format!("运行中 · {n} 个会话"),
+    command_delete_ends: |n| format!("删除会同时结束它在后台运行的 {n} 个会话"),
     command_sound_option: "运行快捷指令时播放提示音",
     command_balloon: |n| format!("已开始运行，共 {n} 个会话"),
     command_edit: "编辑",

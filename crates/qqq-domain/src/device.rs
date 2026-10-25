@@ -12,7 +12,7 @@ pub enum DeviceKind {
     Frames,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceDescriptor {
     pub id: String,
     /// Optional identity safe to save across application sessions, e.g. an interface GUID.

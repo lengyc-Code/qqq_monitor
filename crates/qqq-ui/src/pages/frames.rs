@@ -10,10 +10,7 @@ const FRAMES: &str = "frames";
 impl DesktopApp {
     /// Switches frame monitoring on or off, applied and saved at once.
     pub(in crate::app) fn set_frame_monitoring(&mut self, enabled: bool) {
-        self.config.frame_monitoring = enabled;
-        let mut config = self.active_config.clone();
-        config.frame_monitoring = enabled;
-        self.save_config(config, true);
+        self.apply_now(|config| config.frame_monitoring = enabled);
     }
 
     pub(in crate::app) fn frames(&mut self, ui: &mut egui::Ui, view: &MonitorView) {
@@ -58,7 +55,7 @@ impl DesktopApp {
                     {
                         // The new instance opens this page; this one closes the usual way,
                         // which saves the window.
-                        match (self.desktop.restart_elevated)("--page frames") {
+                        match (self.desktop.system.restart_elevated)("--page frames") {
                             Ok(()) => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
                             Err(reason) => self.message = Some(Notice::ElevationFailed(reason)),
                         }

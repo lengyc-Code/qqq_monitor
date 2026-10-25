@@ -18,6 +18,8 @@ pub struct ClipEntry {
     pub at: Instant,
     /// Preview of a picture.
     pub thumbnail: Option<egui::TextureHandle>,
+    /// Characters of a text, counted once.
+    pub chars: usize,
 }
 
 #[derive(Default)]
@@ -42,11 +44,16 @@ impl Clips {
                 _ => None,
             },
         };
+        let chars = match &clip {
+            Clip::Text(text) => text.chars().count(),
+            _ => 0,
+        };
         self.entries.push_front(ClipEntry {
             id: self.next,
             clip,
             at: Instant::now(),
             thumbnail,
+            chars,
         });
         self.trim(keep);
     }

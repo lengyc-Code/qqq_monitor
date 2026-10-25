@@ -2,7 +2,7 @@
 //! docked as the mini bar, hidden after being minimized, or started in the tray. Clicking
 //! the icon or choosing its "open" item brings the full window back.
 
-use crate::{dock::Desktop, i18n};
+use crate::{desktop::Desktop, i18n};
 use eframe::egui::{self, ViewportCommand};
 use qqq_engine::Language;
 
@@ -35,7 +35,7 @@ impl Tray {
     /// A tray whose window starts hidden, leaving only the icon. Cloaks the window, which
     /// has not appeared yet.
     pub fn hidden(desktop: &Desktop) -> Self {
-        (desktop.cloak)(true);
+        (desktop.shell.cloak)(true);
         Self {
             hidden: true,
             start: Start::Hide,
@@ -61,7 +61,7 @@ impl Tray {
                 self.start = Start::Reveal;
             }
             Start::Reveal => {
-                (desktop.cloak)(false);
+                (desktop.shell.cloak)(false);
                 self.start = Start::Done;
             }
             Start::Done => {}
@@ -78,18 +78,18 @@ impl Tray {
         if icon != self.icon {
             let t = i18n::t();
             match icon {
-                Some(_) => (desktop.show_tray)(
+                Some(_) => (desktop.shell.show_icon)(
                     t.window_title,
                     t.tray_open,
                     t.tray_screenshot,
                     t.tray_note,
                     t.tray_exit,
                 ),
-                None => (desktop.hide_tray)(),
+                None => (desktop.shell.hide_icon)(),
             }
             self.icon = icon;
         }
-        if docked != self.no_button && (desktop.taskbar_button)(!docked) {
+        if docked != self.no_button && (desktop.shell.taskbar_button)(!docked) {
             self.no_button = docked;
         }
     }
@@ -104,15 +104,10 @@ impl Tray {
         self.icon.is_some()
     }
 
-    /// Whether the user asked for the window from the icon; shows a hidden or minimized
-    /// window again.
-    pub fn opened(&mut self, ctx: &egui::Context, desktop: &Desktop) -> bool {
-        if !(desktop.tray_opened)() {
-            return false;
-        }
+    /// Shows a hidden or minimized window again, as the user asked from the icon.
+    pub fn reopen(&mut self, ctx: &egui::Context) {
         ctx.send_viewport_cmd(ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
         self.hidden = false;
-        true
     }
 }

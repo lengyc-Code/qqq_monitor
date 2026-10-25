@@ -376,6 +376,48 @@ impl ProcessPlatform for FakeProcesses {
     }
 }
 
+/// Processes whose host list takes as long as a `wsl.exe` that hangs.
+struct SlowHosts;
+impl ProcessPlatform for SlowHosts {
+    fn hosts(&self) -> Vec<ProcessHost> {
+        std::thread::sleep(Duration::from_secs(3));
+        vec![ProcessHost::Windows]
+    }
+    fn source(&self, _: &ProcessHost) -> Box<dyn ProcessSource> {
+        Box::new(FakeSource { clock: 0.0 })
+    }
+    fn act(&self, _: &ProcessId, _: ProcessAction) -> Result<(), Reason> {
+        Err(Reason::HostStopped)
+    }
+}
+
+#[test]
+fn a_slow_host_list_holds_up_no_process_table() {
+    let scratch = Scratch::new();
+    let mut runtime = MonitorRuntime::start_with_processes(
+        Vec::new(),
+        Arc::new(SlowHosts),
+        ConfigStore::load(scratch.config()),
+    )
+    .unwrap();
+    let client = runtime.client();
+    let started = Instant::now();
+    client
+        .try_command(MonitorCommand::WatchProcesses(Some(ProcessHost::Windows)))
+        .unwrap();
+    // Two polls a second apart give the CPU usage while the hosts are still being listed.
+    let view = wait_for(|| {
+        let view = client.try_latest_view()?;
+        view.processes.table.as_ref()?.rows[0]
+            .cpu
+            .is_some()
+            .then_some(view)
+    });
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(view.processes.hosts.is_empty());
+    runtime.shutdown();
+}
+
 fn wait_for<T>(mut probe: impl FnMut() -> Option<T>) -> T {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -575,7 +617,7 @@ fn remote_hosts_wait_for_the_user_and_leave_no_trace_once_removed() {
     assert_eq!(cpu.host.as_deref(), Some("web"));
     assert_eq!(cpu.kind, DeviceKind::Cpu);
 
-    let mut config = view.config.clone();
+    let mut config = loaded.config.clone();
     config.remote_hosts.clear();
     client
         .try_command(MonitorCommand::SaveConfig {
@@ -702,6 +744,7 @@ fn frames_run_only_while_switched_on_and_alerts_notify_once() {
         threshold: 30.0,
         hold_secs: 0,
     }];
+    let initial = loaded.config.clone();
     let live = Arc::new(AtomicU64::new(0));
     let (notified_tx, notified_rx) = bounded(8);
     let mut runtime = MonitorRuntime::start_with_services(
@@ -725,7 +768,7 @@ fn frames_run_only_while_switched_on_and_alerts_notify_once() {
     assert_eq!(live.load(Ordering::Relaxed), 0);
     assert_eq!(view.alerts.states["low-fps"], AlertState::NoData);
 
-    let mut config = view.config.clone();
+    let mut config = initial;
     config.frame_monitoring = true;
     client
         .try_command(MonitorCommand::SaveConfig {

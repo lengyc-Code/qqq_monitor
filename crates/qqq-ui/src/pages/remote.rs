@@ -217,10 +217,7 @@ impl DesktopApp {
 
     /// Saves the host list right away, like the network adapter choice.
     fn save_remote_hosts(&mut self, hosts: Vec<RemoteHost>) {
-        self.config.remote_hosts = hosts.clone();
-        let mut config = self.active_config.clone();
-        config.remote_hosts = hosts;
-        self.save_config(config, true);
+        self.apply_now(|config| config.remote_hosts = hosts);
     }
 
     pub(in crate::app) fn remote(&mut self, ui: &mut egui::Ui, view: &MonitorView) {

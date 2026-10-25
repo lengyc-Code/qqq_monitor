@@ -2,14 +2,17 @@
 //! putting them back.
 //!
 //! The hidden tray window listens to clipboard changes and owns what this module puts on the
-//! clipboard, so these functions act on the GUI thread that attached the tray.
+//! clipboard, so [`watch`] and [`set`] act on the GUI thread that attached the tray. A reader
+//! thread copies each change off the clipboard and decodes it, so the GUI waits neither for
+//! an application that keeps the clipboard open nor for a large picture.
 
 use crate::tray;
-use qqq_domain::{Clip, Picture, Reason};
+use qqq_domain::{Clip, DesktopEvent, Picture, Reason};
 use std::{
     sync::{
-        Arc,
+        Arc, Mutex, PoisonError,
         atomic::{AtomicBool, Ordering},
+        mpsc::{self, Sender},
     },
     thread,
     time::Duration,
@@ -20,8 +23,8 @@ use windows::{
         System::{
             DataExchange::{
                 AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData,
-                IsClipboardFormatAvailable, OpenClipboard, RegisterClipboardFormatW,
-                RemoveClipboardFormatListener, SetClipboardData,
+                GetClipboardOwner, IsClipboardFormatAvailable, OpenClipboard,
+                RegisterClipboardFormatW, RemoveClipboardFormatListener, SetClipboardData,
             },
             Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
             Ole::{CF_DIB, CF_DIBV5, CF_HDROP, CF_UNICODETEXT, DROPEFFECT_COPY},
@@ -34,16 +37,53 @@ use windows::{
 /// Largest content read from the clipboard, in bytes; a 7680 × 4320 picture fits.
 pub const MAX_BYTES: usize = 128 * 1024 * 1024;
 
+/// Wait before trying again while another application keeps the clipboard open, in
+/// milliseconds; each further attempt waits twice as long.
+const RETRY_MS: u64 = 25;
+/// Further attempts to read a change, about 6 seconds altogether.
+const RETRIES: u32 = 8;
+
 /// The tray window listens to clipboard changes.
 static WATCHING: AtomicBool = AtomicBool::new(false);
-/// The clipboard changed since the last [`take`].
-static CHANGED: AtomicBool = AtomicBool::new(false);
+/// Tells the reader thread that the clipboard changed; present once the thread runs.
+static READER: Mutex<Option<Sender<()>>> = Mutex::new(None);
 
 /// Called by the tray window when the clipboard changes.
 pub(crate) fn changed() {
     if WATCHING.load(Ordering::Relaxed) {
-        CHANGED.store(true, Ordering::Relaxed);
-        tray::wake();
+        read_later();
+    }
+}
+
+/// Has the reader thread read the clipboard, starting the thread on first use. The content
+/// it reads reaches the GUI as a [`DesktopEvent::Clipboard`].
+fn read_later() {
+    let mut reader = READER.lock().unwrap_or_else(PoisonError::into_inner);
+    if reader.is_none() {
+        let (changes, inbox) = mpsc::channel::<()>();
+        let spawned = thread::Builder::new()
+            .name("clipboard".into())
+            .spawn(move || {
+                while inbox.recv().is_ok() {
+                    // Changes in a burst make one read of the latest content.
+                    while inbox.try_recv().is_ok() {}
+                    if let Some(clip) = read()
+                        && WATCHING.load(Ordering::Relaxed)
+                    {
+                        tray::post(DesktopEvent::Clipboard(clip));
+                    }
+                }
+            });
+        match spawned {
+            Ok(_) => *reader = Some(changes),
+            Err(error) => {
+                tracing::warn!(%error, "无法启动剪贴板读取线程");
+                return;
+            }
+        }
+    }
+    if let Some(reader) = reader.as_ref() {
+        let _ = reader.send(());
     }
 }
 
@@ -67,25 +107,42 @@ pub fn watch(on: bool) -> Result<(), Reason> {
         }
     }
     WATCHING.store(on, Ordering::Relaxed);
-    CHANGED.store(on, Ordering::Relaxed);
+    if on {
+        // The content already on the clipboard counts as the first change.
+        read_later();
+    }
     Ok(())
 }
 
-/// Content put on the clipboard since the last call: its files, otherwise its text,
-/// otherwise its picture. `None` when nothing changed, when the content is none of these
-/// or larger than [`MAX_BYTES`], or when its source asked clipboard monitors to skip it,
-/// as password managers do.
-pub fn take() -> Option<Clip> {
-    if !CHANGED.swap(false, Ordering::Relaxed) {
-        return None;
+/// The clipboard's content, on the reader thread: its files, otherwise its text,
+/// otherwise its picture. `None` when the content is none of these or larger than
+/// [`MAX_BYTES`], when its source asked clipboard monitors to skip it, as password
+/// managers do, when this program put it there, or when another application keeps the
+/// clipboard open through every attempt.
+fn read() -> Option<Clip> {
+    for attempt in 0..=RETRIES {
+        if let Some(_open) = Open::once(None) {
+            if own() || private() {
+                return None;
+            }
+            return files()
+                .or_else(text)
+                .or_else(|| picture(CF_DIBV5.0).or_else(|| picture(CF_DIB.0)));
+        }
+        if attempt < RETRIES {
+            thread::sleep(Duration::from_millis(RETRY_MS << attempt));
+        }
     }
-    let _open = Open::new(tray::window()?).ok()?;
-    if private() {
-        return None;
-    }
-    files()
-        .or_else(text)
-        .or_else(|| picture(CF_DIBV5.0).or_else(|| picture(CF_DIB.0)))
+    tracing::warn!("剪贴板持续被其他程序占用，跳过本次变化");
+    None
+}
+
+/// Whether this program put the content on the open clipboard; the GUI records what it
+/// puts there itself.
+fn own() -> bool {
+    // SAFETY: reads the owner of the clipboard, which this thread has open.
+    let owner = unsafe { GetClipboardOwner() };
+    owner.is_ok_and(|owner| Some(owner) == tray::window_handle())
 }
 
 /// Puts content on the clipboard in place of what it holds.
@@ -120,13 +177,20 @@ pub fn set(clip: &Clip) -> Result<(), Reason> {
 struct Open;
 
 impl Open {
+    /// Opens the clipboard for `window`, or for the calling thread without one; `None`
+    /// while another application has it open.
+    fn once(window: Option<HWND>) -> Option<Self> {
+        // SAFETY: a window belongs to this thread; a successful open is closed on drop by
+        // the same thread.
+        unsafe { OpenClipboard(window) }.is_ok().then_some(Self)
+    }
+
     /// Opens the clipboard for `window`, waiting briefly while another application has it
     /// open.
     fn new(window: HWND) -> Result<Self, Reason> {
         for _ in 0..10 {
-            // SAFETY: the window belongs to this thread; a successful open is closed on drop.
-            if unsafe { OpenClipboard(Some(window)) }.is_ok() {
-                return Ok(Self);
+            if let Some(open) = Self::once(Some(window)) {
+                return Ok(open);
             }
             thread::sleep(Duration::from_millis(10));
         }

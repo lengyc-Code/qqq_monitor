@@ -28,18 +28,13 @@ enum Action {
 }
 
 impl DesktopApp {
-    /// Shows or hides the note window when asked from the shortcut or the tray menu, and
-    /// applies the answers of the note files' worker. Runs every frame, whichever page is
+    /// Applies the answers of the note files' worker. Runs every frame, whichever page is
     /// shown.
-    pub(in crate::app) fn note_logic(&mut self, ctx: &egui::Context) {
+    pub(in crate::app) fn note_logic(&mut self) {
         if self.page != Page::Tools || self.tool != Tool::Notes {
             self.note_page = NotePage::default();
         }
-        let mut window = note::lock(&self.note);
-        window.notes.update();
-        if self.capture.is_none() && (self.desktop.note_requested)() {
-            window.toggle(ctx);
-        }
+        note::lock(&self.note).notes.update();
     }
 
     pub(in crate::app) fn notes(&mut self, ui: &mut egui::Ui) {
@@ -99,7 +94,7 @@ impl DesktopApp {
         );
         if let Some(error) = &window.notes.error {
             ui.label(
-                RichText::new(i18n::notice(&Notice::NoteFile(error.clone())))
+                RichText::new(i18n::notice(&Notice::NoteFile(error.text().into())))
                     .size(12.0)
                     .color(theme::ERROR),
             );
@@ -116,7 +111,7 @@ impl DesktopApp {
         let mut action = None;
         for note in notes {
             let confirm = self.note_page.confirm == Some(note.id);
-            if let Some(chosen) = card(ui, note, confirm, self.desktop.local_time) {
+            if let Some(chosen) = card(ui, note, confirm, self.desktop.system.local_time) {
                 action = Some(chosen);
             }
         }

@@ -500,6 +500,10 @@ pub const STRINGS: Strings = Strings {
         1 => "Running · 1 session".into(),
         _ => format!("Running · {n} sessions"),
     },
+    command_delete_ends: |n| match n {
+        1 => "Deleting also ends its session running in the background".into(),
+        _ => format!("Deleting also ends its {n} sessions running in the background"),
+    },
     command_sound_option: "Play a sound when a quick command runs",
     command_balloon: |n| match n {
         1 => "Started in 1 session".into(),

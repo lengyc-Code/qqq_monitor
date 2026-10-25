@@ -39,8 +39,10 @@ pub struct Shot {
 }
 
 enum Job {
-    /// Lists the folder, keeping the newest `usize`, and reads their thumbnails.
+    /// Lists the folder, keeping the newest `usize`.
     List(usize),
+    /// Reads the thumbnails of these screenshots.
+    Thumbnails(Vec<PathBuf>),
     /// Saves a screenshot, keeping the newest `usize`.
     Save(Arc<Picture>, usize),
     /// Keeps the newest `usize`.
@@ -76,6 +78,8 @@ pub struct Shots {
     pub entries: Vec<Shot>,
     /// The folder has been listed.
     pub listed: bool,
+    /// The page has shown the screenshots, so listed ones get their thumbnails.
+    shown: bool,
 }
 
 impl Shots {
@@ -109,6 +113,7 @@ impl Shots {
             directory,
             entries: Vec::new(),
             listed: false,
+            shown: false,
         };
         shots.send(Job::List(keep));
         shots
@@ -134,6 +139,27 @@ impl Shots {
         self.send(Job::Delete(path.into()));
     }
 
+    /// Reads the thumbnails of the listed screenshots, once the page first shows them;
+    /// screenshots taken meanwhile have theirs already.
+    pub fn show_thumbnails(&mut self) {
+        if !self.shown {
+            self.shown = true;
+            self.read_thumbnails();
+        }
+    }
+
+    fn read_thumbnails(&self) {
+        let paths: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|shot| shot.thumbnail.is_none())
+            .map(|shot| shot.file.path.clone())
+            .collect();
+        if !paths.is_empty() {
+            self.send(Job::Thumbnails(paths));
+        }
+    }
+
     /// Reads a whole screenshot; it arrives as [`Event::Loaded`].
     pub fn load(&self, path: &Path) {
         self.send(Job::Load(path.into()));
@@ -153,6 +179,9 @@ impl Shots {
                         })
                         .collect();
                     self.listed = true;
+                    if self.shown {
+                        self.read_thumbnails();
+                    }
                 }
                 Done::Added(file) => {
                     self.entries.retain(|shot| shot.file.path != file.path);
@@ -210,10 +239,12 @@ impl Worker {
             Job::List(keep) => {
                 let mut files = self.files();
                 self.remove(files.split_off(keep.min(files.len())));
-                self.send(Done::Listed(files.clone()));
-                for file in files {
-                    if let Some(image) = read(&file.path) {
-                        self.send(Done::Thumbnail(file.path, thumbnail(&image, THUMBNAIL)));
+                self.send(Done::Listed(files));
+            }
+            Job::Thumbnails(paths) => {
+                for path in paths {
+                    if let Some(image) = read(&path) {
+                        self.send(Done::Thumbnail(path, thumbnail(&image, THUMBNAIL)));
                     }
                 }
             }
@@ -379,6 +410,31 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         assert!(until(shots));
+    }
+
+    #[test]
+    fn listed_screenshots_get_thumbnails_once_shown() {
+        let directory = std::env::temp_dir().join(format!("qqq-shots-lazy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let ctx = egui::Context::default();
+        let local = |_| Some([2026, 10, 16, 9, 0, 0, 0]);
+        // A screenshot an earlier run saved.
+        let mut earlier = Shots::new(&ctx, directory.clone(), 5, local);
+        wait(&mut earlier, &ctx, |s| s.listed);
+        earlier.save(Arc::new(picture(6, 4)), 5);
+        wait(&mut earlier, &ctx, |s| !s.entries.is_empty());
+        earlier.finish(Duration::from_secs(5));
+
+        let mut shots = Shots::new(&ctx, directory.clone(), 5, local);
+        wait(&mut shots, &ctx, |s| s.listed && s.entries.len() == 1);
+        thread::sleep(Duration::from_millis(200));
+        shots.update(&ctx);
+        assert!(shots.entries[0].thumbnail.is_none());
+        shots.show_thumbnails();
+        wait(&mut shots, &ctx, |s| s.entries[0].thumbnail.is_some());
+        shots.finish(Duration::from_secs(5));
+        let _ = fs::remove_dir_all(&directory);
     }
 
     #[test]

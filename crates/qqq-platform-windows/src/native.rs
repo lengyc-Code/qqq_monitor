@@ -1,5 +1,6 @@
-use qqq_domain::{CollectorError, Reason};
-use std::{collections::BTreeMap, mem::size_of, ptr};
+use crate::tray;
+use qqq_domain::{CollectorError, DesktopEvent, Reason};
+use std::{cell::RefCell, collections::BTreeMap, mem::size_of, ptr};
 use windows::{
     Win32::{
         Foundation::{
@@ -19,6 +20,7 @@ use windows::{
         NetworkManagement::{IpHelper::*, Ndis::IfOperStatusUp},
         Storage::FileSystem::{GetDriveTypeW, GetVolumeNameForVolumeMountPointW},
         System::{
+            Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize},
             LibraryLoader::GetModuleHandleW,
             Performance::*,
             Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime},
@@ -26,7 +28,7 @@ use windows::{
         UI::{
             HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi},
             Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON},
-            Shell::{SHELLEXECUTEINFOW, ShellExecuteExW},
+            Shell::{SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, ShellExecuteExW},
             WindowsAndMessaging::{
                 ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, MB_ICONERROR, MB_OK,
                 MessageBoxW, SM_CXICON, SM_CXSMICON, SW_SHOWNORMAL, SendMessageW, WM_SETICON,
@@ -140,14 +142,15 @@ pub fn local_volume_id(mount: &str) -> Option<String> {
 }
 
 /// Starts this executable again with administrator rights and `arguments`, once the user
-/// confirms the system's prompt; declining it fails with [`Reason::Declined`].
+/// confirms the system's prompt; declining it fails with [`Reason::Declined`]. The new
+/// instance waits for this one to exit.
 pub fn restart_elevated(arguments: &str) -> Result<(), Reason> {
     let path = std::env::current_exe().map_err(|error| Reason::CallFailed {
         api: "GetModuleFileNameW",
         code: error.raw_os_error().unwrap_or_default() as u32,
     })?;
     let file = HSTRING::from(path.as_os_str());
-    let arguments = HSTRING::from(arguments);
+    let arguments = HSTRING::from(format!("{arguments} {}", crate::instance::ARGUMENT));
     let mut info = SHELLEXECUTEINFOW {
         cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
         lpVerb: w!("runas"),
@@ -196,20 +199,57 @@ pub fn local_time(at: std::time::SystemTime) -> Option<[u16; 7]> {
     ])
 }
 
-/// Opens a file with its default program, or a folder in File Explorer.
-pub fn open_path(path: &std::path::Path) -> Result<(), Reason> {
-    shell_open(&HSTRING::from(path.as_os_str()))
+/// Opens a file with its default program, or a folder. The shell runs on a thread of its
+/// own; a failure arrives as a [`DesktopEvent::OpenFailed`].
+pub fn open_path(path: &std::path::Path) {
+    open_later(
+        path.to_string_lossy().into_owned(),
+        HSTRING::from(path.as_os_str()),
+    );
 }
 
-/// Opens a web address in the default browser.
-pub fn open_url(url: &str) -> Result<(), Reason> {
-    shell_open(&HSTRING::from(url))
+/// Opens a web address in the default browser, like [`open_path`].
+pub fn open_url(url: &str) {
+    open_later(url.to_owned(), HSTRING::from(url));
+}
+
+/// Runs the shell's "open" verb on a thread of its own: reaching a network folder or
+/// starting the program can take seconds.
+fn open_later(target: String, file: HSTRING) {
+    let failed_target = target.clone();
+    let spawned = std::thread::Builder::new()
+        .name("shell-open".into())
+        .spawn(move || {
+            // The shell may hand the file to extensions that need COM on this thread.
+            // SAFETY: no reserved pointer; the initialization ends with the thread's work.
+            let com = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+            let result = shell_open(&file);
+            if com.is_ok() {
+                // SAFETY: balances the successful initialization above on the same thread.
+                unsafe { CoUninitialize() };
+            }
+            if let Err(reason) = result {
+                tray::post(DesktopEvent::OpenFailed { target, reason });
+            }
+        });
+    if let Err(error) = spawned {
+        tray::post(DesktopEvent::OpenFailed {
+            target: failed_target,
+            reason: Reason::CallFailed {
+                api: "CreateThread",
+                code: error.raw_os_error().unwrap_or_default() as u32,
+            },
+        });
+    }
 }
 
 /// Runs the shell's "open" verb on a file, folder or web address.
 fn shell_open(file: &HSTRING) -> Result<(), Reason> {
     let mut info = SHELLEXECUTEINFOW {
         cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        // This worker exits after the call, so the shell must finish its DDE conversation
+        // before returning.
+        fMask: SEE_MASK_NOASYNC,
         lpVerb: w!("open"),
         lpFile: PCWSTR(file.as_ptr()),
         nShow: SW_SHOWNORMAL.0,
@@ -272,6 +312,9 @@ pub fn ui_languages() -> Vec<String> {
 pub struct CounterQuery {
     handle: PDH_HQUERY,
     counters: Vec<PDH_HCOUNTER>,
+    /// Storage for the formatted counter arrays, kept between reads. PDH formats a whole
+    /// array to tell its size, so a buffer that is already large enough saves that pass.
+    buffer: RefCell<Vec<u64>>,
 }
 impl Drop for CounterQuery {
     fn drop(&mut self) {
@@ -293,6 +336,7 @@ impl CounterQuery {
         let mut query = Self {
             handle,
             counters: Vec::with_capacity(paths.len()),
+            buffer: RefCell::new(Vec::new()),
         };
         for path in paths {
             let mut counter = PDH_HCOUNTER::default();
@@ -321,42 +365,38 @@ impl CounterQuery {
         self.array(self.counters[index])
     }
     fn array(&self, counter: PDH_HCOUNTER) -> Result<Values, CollectorError> {
-        let mut bytes = 0_u32;
-        let mut count = 0_u32;
-        // SAFETY: first call only discovers the required buffer size.
-        let status = unsafe {
-            PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &mut bytes, &mut count, None)
-        };
-        if status != PDH_MORE_DATA && status != 0 {
-            return Err(error("PdhGetFormattedCounterArrayW", status));
-        }
-        if bytes == 0 {
-            return Ok(BTreeMap::new());
-        }
+        // u64 provides at least the alignment required by the PDH item structure.
+        let mut buffer = self.buffer.borrow_mut();
         for _ in 0..3 {
-            // GPU engine counters list one instance per process and engine.
-            if bytes as usize > 4 * 1024 * 1024 {
-                return Err(bad_data("PdhGetFormattedCounterArrayW"));
-            }
-            // u64 provides at least the alignment required by the PDH item structure.
-            let mut buffer = vec![0_u64; (bytes as usize).div_ceil(size_of::<u64>())];
             let capacity = buffer.len() * size_of::<u64>();
-            bytes = capacity as u32;
-            // SAFETY: allocated, aligned writable storage covers bytes and stays alive during parsing.
+            let mut bytes = capacity as u32;
+            let mut count = 0_u32;
+            // SAFETY: the buffer is aligned writable storage of `bytes` bytes, or absent while
+            // empty, which only asks for the size; it stays alive and borrowed during parsing.
             let status = unsafe {
                 PdhGetFormattedCounterArrayW(
                     counter,
                     PDH_FMT_DOUBLE,
                     &mut bytes,
                     &mut count,
-                    Some(buffer.as_mut_ptr().cast()),
+                    (capacity > 0).then(|| buffer.as_mut_ptr().cast()),
                 )
             };
             if status == PDH_MORE_DATA {
+                // GPU engine counters list one instance per process and engine.
+                if bytes as usize > 4 * 1024 * 1024 {
+                    return Err(bad_data("PdhGetFormattedCounterArrayW"));
+                }
+                // Room for a few more instances, which come and go with processes.
+                let words = (bytes as usize + bytes as usize / 4).div_ceil(size_of::<u64>());
+                buffer.resize(words, 0);
                 continue;
             }
             if status != 0 {
                 return Err(error("PdhGetFormattedCounterArrayW", status));
+            }
+            if capacity == 0 {
+                return Ok(BTreeMap::new());
             }
             if count as usize > capacity / size_of::<PDH_FMT_COUNTERVALUE_ITEM_W>() {
                 return Err(bad_data("PdhGetFormattedCounterArrayW"));
