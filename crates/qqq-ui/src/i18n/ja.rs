@@ -389,11 +389,12 @@ pub const STRINGS: Strings = Strings {
     tools_page: PageText {
         nav: "ツール",
         title: "ツール",
-        hint: "スクリーンショット、クリップボード履歴、付箋などの便利な機能",
+        hint: "スクリーンショット、クリップボード履歴、付箋、クイックコマンドなどの便利な機能",
     },
     tool_screenshots: "キャプチャ",
     tool_clipboard: "クリップボード",
     tool_notes: "付箋",
+    tool_commands: "クイックコマンド",
     tray_screenshot: "スクリーンショット",
     hours_ago: |v| format!("{v} 時間前"),
     shot_take: "キャプチャ開始",
@@ -433,7 +434,9 @@ pub const STRINGS: Strings = Strings {
     tray_note: "付箋",
     note_title: "QQQ 付箋",
     note_hotkey_option: |key| format!("{key} で付箋を表示・非表示"),
-    hotkey_taken: "このキーの組み合わせはもう一方のショートカットで使用中です",
+    hotkey_taken: "このキーの組み合わせはほかのショートカットで使用中です",
+    hotkey_none: "ショートカット未設定",
+    hotkey_set: "設定",
     note_open: "付箋を開く",
     note_new: "新しい付箋",
     note_list: "すべての付箋",
@@ -458,6 +461,53 @@ pub const STRINGS: Strings = Strings {
             "付箋ウィンドウはほかのウィンドウより常に手前に表示されます。ショートカットで表示し、付箋の中でもう一度押すと隠れます。タイトル バーをドラッグして移動し、右下の角をドラッグしてサイズを変更します。内容は Markdown で、Ctrl+E で編集とプレビューを切り替え、Ctrl+N で新しい付箋を作ります。プレビューではタスクにチェックを付けたり Web リンクを開いたりできます。付箋は 1 件ずつ .md ファイルとして {folder} に保存され、入力が止まると自動で保存されます。"
         )
     },
+
+    command_hotkey_option: |key| format!("{key} で実行"),
+    command_new: "新しいコマンド",
+    command_list: "すべてのクイックコマンド",
+    command_count: |n| format!("{n} 件"),
+    command_empty: "クイックコマンドはまだありません。「新しいコマンド」をクリックして、実行する PowerShell コマンドを入力してください。",
+    command_run: "実行",
+    command_stop: "終了",
+    command_running: |n| format!("実行中 · セッション {n} 個"),
+    command_sound_option: "クイックコマンドの実行時に効果音を鳴らす",
+    command_balloon: |n| format!("{n} 個のセッションで実行を開始しました"),
+    command_edit: "編集",
+    command_add_title: "新しいクイックコマンド",
+    command_edit_title: "クイックコマンドの編集",
+    command_name: "名前",
+    command_lines: "コマンド",
+    command_lines_hint: "1 行に 1 つの PowerShell コマンド",
+    command_sessions: "セッション",
+    command_shared: "1 つのセッションで順に実行",
+    command_separate: "コマンドごとに別のセッション",
+    command_window: "ウィンドウ",
+    command_window_option: "PowerShell ウィンドウを表示し、終了後も開いたままにする",
+    command_directory: "作業フォルダー",
+    command_directory_hint: "空欄ならユーザー フォルダーで開始",
+    command_save: "保存",
+    command_missing_name: "名前を入力してください",
+    command_missing_lines: "コマンドを 1 つ以上入力してください",
+    command_too_long: |lines, bytes| {
+        format!("コマンドが多すぎるか長すぎます（最大 {lines} 行、半角で合計約 {bytes} 文字）")
+    },
+    command_bad_directory: "このフォルダーが見つかりません。完全なパスを入力してください",
+    command_summary: |shared, lines, window| {
+        format!(
+            "{} · コマンド {lines} 個 · {}",
+            if shared {
+                "1 つのセッション"
+            } else {
+                "コマンドごとのセッション"
+            },
+            if window {
+                "ウィンドウ表示"
+            } else {
+                "バックグラウンド"
+            }
+        )
+    },
+    command_about: "クイックコマンドは Windows PowerShell で実行します。「1 つのセッションで順に実行」では、すべてのコマンドを 1 つのセッションで順番に実行するので、前のコマンドで設定した変数や現在の場所を後のコマンドでもそのまま使えます。「コマンドごとに別のセッション」では、各コマンドをそれぞれのセッションで同時に開始します。ウィンドウを表示すると、コマンドの終了後もウィンドウが開いたままになり、出力を確認したり続けて入力したりできます。表示しない場合はバックグラウンドで実行し、コマンドが終わるとセッションも終了します。セッションの実行中は、実行中のセッション数と「終了」ボタンが表示され、クリックするとすべてのセッションと、そこから起動したプログラムを終了します。実行時には効果音が鳴ります。ショートカットはほかのアプリからも使え、ウィンドウをトレイに格納したりミニバーにドッキングしたりしていても有効で、そのときはトレイのバルーンで実行結果も知らせます。コマンドの「設定」をクリックしてキーを押すと割り当てられます。",
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -578,6 +628,7 @@ fn reason(reason: &Reason) -> String {
         Reason::Declined => "操作は取り消されました".into(),
         Reason::HotkeyTaken => "ショートカットはほかのアプリが使用しています".into(),
         Reason::ClipboardBusy => "クリップボードはほかのアプリが使用中です".into(),
+        Reason::PathNotFound => "ファイルまたはフォルダーが見つかりません".into(),
     }
 }
 
@@ -617,11 +668,25 @@ fn notice(notice: &Notice) -> String {
             format!("管理者として再起動できません：{}", self::reason(reason))
         }
         Notice::InvalidHotkey => "ショートカットが無効です".into(),
+        Notice::InvalidQuickCommand => "クイックコマンドが無効です".into(),
+        Notice::CommandFailed(reason) => {
+            format!(
+                "クイックコマンドを実行できません：{}",
+                self::reason(reason)
+            )
+        }
+        Notice::CommandStopFailed(reason) => {
+            format!(
+                "クイックコマンドを終了できません：{}",
+                self::reason(reason)
+            )
+        }
         Notice::InvalidRecordLimit => "保存数が選択肢にありません".into(),
         Notice::HotkeyUnavailable(shortcut, reason) => {
             let name = match shortcut {
                 Shortcut::Screenshot => "スクリーンショット",
                 Shortcut::Note => "付箋",
+                Shortcut::Command(_) => "クイックコマンド",
             };
             format!(
                 "{name}のショートカットを登録できません：{}",

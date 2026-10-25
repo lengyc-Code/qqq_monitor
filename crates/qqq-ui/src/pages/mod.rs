@@ -1,5 +1,6 @@
 pub(super) mod alerts;
 mod clipboard;
+pub(super) mod commands;
 mod cpu;
 mod disk;
 mod frames;

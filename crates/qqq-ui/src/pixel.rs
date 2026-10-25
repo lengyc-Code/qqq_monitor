@@ -308,6 +308,18 @@ pub const ICON_NOTE: Icon = [
     "#oooo##..",
     "######...",
 ];
+/// A console window with a prompt: quick commands.
+pub const ICON_TERMINAL: Icon = [
+    "#########",
+    "#ooooooo#",
+    "#########",
+    "#.......#",
+    "#.#.....#",
+    "#..#....#",
+    "#.#.###.#",
+    "#.......#",
+    "#########",
+];
 pub const ICON_PLUS: Icon = [
     ".........",
     "...###...",

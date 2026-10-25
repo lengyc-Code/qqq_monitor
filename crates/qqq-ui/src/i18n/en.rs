@@ -395,11 +395,12 @@ pub const STRINGS: Strings = Strings {
     tools_page: PageText {
         nav: "Tools",
         title: "Tools",
-        hint: "Handy tools such as screenshots, clipboard history and notes",
+        hint: "Handy tools such as screenshots, clipboard history, notes and quick commands",
     },
     tool_screenshots: "Screenshots",
     tool_clipboard: "Clipboard",
     tool_notes: "Notes",
+    tool_commands: "Commands",
     tray_screenshot: "Take screenshot",
     hours_ago: |v| format!("{v} h ago"),
     shot_take: "Take screenshot",
@@ -451,7 +452,9 @@ pub const STRINGS: Strings = Strings {
     tray_note: "Notes",
     note_title: "QQQ Notes",
     note_hotkey_option: |key| format!("Press {key} to show or hide the notes"),
-    hotkey_taken: "The other shortcut already uses these keys",
+    hotkey_taken: "Another shortcut already uses these keys",
+    hotkey_none: "No shortcut",
+    hotkey_set: "Set",
     note_open: "Open notes",
     note_new: "New note",
     note_list: "All notes",
@@ -482,6 +485,66 @@ pub const STRINGS: Strings = Strings {
             "The note window stays above other windows. The shortcut shows it and, pressed again in the note, hides it; drag its title bar to move it and its lower right corner to resize it. Notes are Markdown: Ctrl+E switches between editing and the preview, and Ctrl+N starts a new note; in the preview, tick tasks and open web links. Each note is a .md file in {folder}, saved a moment after you stop typing."
         )
     },
+
+    command_hotkey_option: |key| format!("Press {key} to run"),
+    command_new: "New command",
+    command_list: "All commands",
+    command_count: |n| match n {
+        1 => "1 command".into(),
+        _ => format!("{n} commands"),
+    },
+    command_empty: "No quick commands yet. Click New command and enter the PowerShell commands to run.",
+    command_run: "Run",
+    command_stop: "Stop",
+    command_running: |n| match n {
+        1 => "Running · 1 session".into(),
+        _ => format!("Running · {n} sessions"),
+    },
+    command_sound_option: "Play a sound when a quick command runs",
+    command_balloon: |n| match n {
+        1 => "Started in 1 session".into(),
+        _ => format!("Started in {n} sessions"),
+    },
+    command_edit: "Edit",
+    command_add_title: "New quick command",
+    command_edit_title: "Edit quick command",
+    command_name: "Name",
+    command_lines: "Commands",
+    command_lines_hint: "One PowerShell command per line",
+    command_sessions: "Sessions",
+    command_shared: "Run in order in one session",
+    command_separate: "One session per command",
+    command_window: "Window",
+    command_window_option: "Show the PowerShell window and keep it open afterwards",
+    command_directory: "Working folder",
+    command_directory_hint: "Empty starts in your user folder",
+    command_save: "Save",
+    command_missing_name: "Enter a name",
+    command_missing_lines: "Enter at least one command",
+    command_too_long: |lines, bytes| {
+        format!("Too many or too long commands: at most {lines} lines and about {bytes} characters")
+    },
+    command_bad_directory: "This folder was not found; enter its full path",
+    command_summary: |shared, lines, window| {
+        format!(
+            "{} · {} · {}",
+            if shared {
+                "One session"
+            } else {
+                "One session per command"
+            },
+            match lines {
+                1 => "1 command".into(),
+                _ => format!("{lines} commands"),
+            },
+            if window {
+                "Window shown"
+            } else {
+                "In the background"
+            }
+        )
+    },
+    command_about: "Quick commands run in Windows PowerShell. Run in order in one session runs every command in a single session, so later commands keep the variables and location that earlier ones set; One session per command starts each command in a session of its own, all at once. A shown window stays open after the commands end, to read the output or keep typing; without a window, the commands run in the background and the session ends with them. While sessions run, the command shows how many and a Stop button, which ends all of them along with the programs they started. Each run plays a sound. Shortcuts work from any application, also while the window sits in the tray or docks as the mini bar, where a tray balloon then shows how the run went; click Set on a command and press the keys to give it one.",
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -594,6 +657,7 @@ fn reason(reason: &Reason) -> String {
         Reason::Declined => "the request was declined".into(),
         Reason::HotkeyTaken => "another application already uses the shortcut".into(),
         Reason::ClipboardBusy => "another application is using the clipboard".into(),
+        Reason::PathNotFound => "the file or folder was not found".into(),
     }
 }
 
@@ -642,11 +706,19 @@ fn notice(notice: &Notice) -> String {
             )
         }
         Notice::InvalidHotkey => "A shortcut is invalid".into(),
+        Notice::InvalidQuickCommand => "A quick command is invalid".into(),
+        Notice::CommandFailed(reason) => {
+            format!("Could not run the quick command: {}", self::reason(reason))
+        }
+        Notice::CommandStopFailed(reason) => {
+            format!("Could not stop the quick command: {}", self::reason(reason))
+        }
         Notice::InvalidRecordLimit => "The number to keep is not one of the choices".into(),
         Notice::HotkeyUnavailable(shortcut, reason) => {
             let name = match shortcut {
                 Shortcut::Screenshot => "screenshot",
                 Shortcut::Note => "notes",
+                Shortcut::Command(_) => "quick command",
             };
             format!(
                 "The {name} shortcut is unavailable: {}",

@@ -78,6 +78,13 @@ pub const SCREENSHOT_HISTORY: [usize; 4] = [10, 20, 50, 100];
 pub const CLIPBOARD_HISTORY: [usize; 4] = [20, 50, 100, 200];
 /// Smallest inner size of the note window, in points.
 pub const NOTE_MIN_SIZE: [f32; 2] = [300.0, 220.0];
+/// Most quick commands the configuration holds.
+pub const MAX_QUICK_COMMANDS: usize = 32;
+/// Most command lines of one quick command.
+pub const MAX_COMMAND_LINES: usize = 32;
+/// Most UTF-8 bytes the command lines of one quick command take together, which keeps
+/// every PowerShell command line within the system's limit.
+pub const MAX_COMMAND_BYTES: usize = 8000;
 
 /// A Linux host monitored over SSH. Passwords and passphrases stay out of the file.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -158,6 +165,103 @@ impl RemoteHost {
     }
 }
 
+/// How a quick command runs its command lines.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CommandSessions {
+    /// One PowerShell session runs the lines in order, so later lines see the variables and
+    /// location the earlier ones set.
+    #[default]
+    Shared,
+    /// Each line starts in a PowerShell session of its own, all at once.
+    Separate,
+}
+
+/// PowerShell command lines run together by a shortcut or from the tools page.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QuickCommand {
+    /// Stable identity: letters, digits, `-` and `_`, at most 32 characters.
+    pub id: String,
+    /// Display name, also the title of the session windows.
+    pub name: String,
+    /// One PowerShell command per entry, without line breaks.
+    pub commands: Vec<String>,
+    #[serde(default)]
+    pub sessions: CommandSessions,
+    /// Show each session in a console window that stays open after the commands end;
+    /// otherwise the sessions run without a window and end with their commands.
+    #[serde(default = "enabled")]
+    pub window: bool,
+    /// Working directory of the sessions; empty starts them in the user's profile folder.
+    #[serde(default)]
+    pub directory: String,
+    /// Shortcut written like `Ctrl+Alt+1`; empty when the command has none.
+    #[serde(default)]
+    pub hotkey: String,
+    /// Register the shortcut with the system.
+    #[serde(default = "enabled")]
+    pub hotkey_enabled: bool,
+}
+
+fn enabled() -> bool {
+    true
+}
+
+/// A PowerShell session a quick command starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandSession {
+    /// Title of the session's window.
+    pub title: String,
+    /// The commands, one per line.
+    pub script: String,
+}
+
+impl QuickCommand {
+    pub fn validate(&self) -> Result<(), Notice> {
+        let line = |text: &str| {
+            !text.trim().is_empty() && !text.chars().any(|c| c.is_control() && c != '\t')
+        };
+        let valid = !self.id.is_empty()
+            && self.id.len() <= 32
+            && self
+                .id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            && !self.name.trim().is_empty()
+            && self.name.chars().count() <= 64
+            && !self.name.chars().any(char::is_control)
+            && !self.commands.is_empty()
+            && self.commands.len() <= MAX_COMMAND_LINES
+            && self.commands.iter().all(|c| line(c))
+            && self.commands.iter().map(String::len).sum::<usize>() <= MAX_COMMAND_BYTES
+            && !self.directory.chars().any(char::is_control)
+            && (self.hotkey.is_empty() || Hotkey::parse(&self.hotkey).is_some());
+        if valid {
+            Ok(())
+        } else {
+            Err(Notice::InvalidQuickCommand)
+        }
+    }
+
+    /// The sessions a run starts: one with every line, or one per line.
+    pub fn sessions(&self) -> Vec<CommandSession> {
+        match self.sessions {
+            CommandSessions::Shared => vec![CommandSession {
+                title: self.name.clone(),
+                script: self.commands.join("\n"),
+            }],
+            CommandSessions::Separate => self
+                .commands
+                .iter()
+                .map(|command| CommandSession {
+                    title: format!("{} · {}", self.name, command.trim()),
+                    script: command.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppConfig {
@@ -200,11 +304,16 @@ pub struct AppConfig {
     /// Outer position of the note window, in points; `None` places it beside the main
     /// window's work area edge.
     pub note_position: Option<[f32; 2]>,
+    /// Play a sound when a quick command runs.
+    pub command_sound: bool,
     /// Linux hosts monitored over SSH, in the order the GUI lists them. Saved after the
     /// plain values, as an array of tables.
     pub remote_hosts: Vec<RemoteHost>,
-    /// Alert rules, in the order the GUI lists them. Saved last, as an array of tables.
+    /// Alert rules, in the order the GUI lists them. Saved after the plain values, as an
+    /// array of tables.
     pub alerts: Vec<AlertRule>,
+    /// Quick commands, in the order the GUI lists them. Saved last, as an array of tables.
+    pub quick_commands: Vec<QuickCommand>,
 }
 
 impl Default for AppConfig {
@@ -232,8 +341,10 @@ impl Default for AppConfig {
             note_hotkey_enabled: true,
             note_size: [360.0, 440.0],
             note_position: None,
+            command_sound: true,
             remote_hosts: Vec::new(),
             alerts: Vec::new(),
+            quick_commands: Vec::new(),
         }
     }
 }
@@ -268,7 +379,7 @@ impl AppConfig {
         {
             return Err(Notice::InvalidWindowPosition);
         }
-        if Shortcut::ALL.iter().any(|s| self.hotkey(*s).is_none()) {
+        if Shortcut::BUILT_IN.iter().any(|s| self.hotkey(*s).is_none()) {
             return Err(Notice::InvalidHotkey);
         }
         if !SCREENSHOT_HISTORY.contains(&self.screenshot_history)
@@ -294,31 +405,60 @@ impl AppConfig {
                 return Err(Notice::InvalidAlertRule);
             }
         }
+        if self.quick_commands.len() > MAX_QUICK_COMMANDS {
+            return Err(Notice::InvalidQuickCommand);
+        }
+        for (index, command) in self.quick_commands.iter().enumerate() {
+            command.validate()?;
+            if self.quick_commands[..index]
+                .iter()
+                .any(|c| c.id == command.id)
+            {
+                return Err(Notice::InvalidQuickCommand);
+            }
+        }
         Ok(())
     }
 
+    /// Every shortcut: the built-in ones, then one for each quick command.
+    pub fn shortcuts(&self) -> impl Iterator<Item = Shortcut> + use<> {
+        Shortcut::BUILT_IN
+            .into_iter()
+            .chain((0..self.quick_commands.len()).map(Shortcut::Command))
+    }
+
     /// A shortcut, whether or not it is enabled; `None` when the saved text is not a valid
-    /// shortcut.
+    /// shortcut, or a quick command has none.
     pub fn hotkey(&self, shortcut: Shortcut) -> Option<Hotkey> {
         Hotkey::parse(self.shortcut(shortcut).0)
     }
 
-    /// Written form of a shortcut and whether it is registered with the system.
+    /// Written form of a shortcut and whether it is registered with the system; empty and
+    /// off for a quick command beyond the list.
     pub fn shortcut(&self, shortcut: Shortcut) -> (&str, bool) {
         match shortcut {
             Shortcut::Screenshot => (&self.screenshot_hotkey, self.screenshot_hotkey_enabled),
             Shortcut::Note => (&self.note_hotkey, self.note_hotkey_enabled),
+            Shortcut::Command(index) => self
+                .quick_commands
+                .get(index)
+                .map_or(("", false), |c| (&c.hotkey, c.hotkey_enabled)),
         }
     }
 
-    /// The written form of a shortcut and its switch, for changing them.
-    pub fn shortcut_mut(&mut self, shortcut: Shortcut) -> (&mut String, &mut bool) {
+    /// The written form of a shortcut and its switch, for changing them; `None` for a quick
+    /// command beyond the list.
+    pub fn shortcut_mut(&mut self, shortcut: Shortcut) -> Option<(&mut String, &mut bool)> {
         match shortcut {
-            Shortcut::Screenshot => (
+            Shortcut::Screenshot => Some((
                 &mut self.screenshot_hotkey,
                 &mut self.screenshot_hotkey_enabled,
-            ),
-            Shortcut::Note => (&mut self.note_hotkey, &mut self.note_hotkey_enabled),
+            )),
+            Shortcut::Note => Some((&mut self.note_hotkey, &mut self.note_hotkey_enabled)),
+            Shortcut::Command(index) => self
+                .quick_commands
+                .get_mut(index)
+                .map(|c| (&mut c.hotkey, &mut c.hotkey_enabled)),
         }
     }
 }
@@ -395,6 +535,7 @@ impl ConfigStore {
                     field!(note_hotkey_enabled, bool);
                     field!(note_size, [f32; 2]);
                     field!(note_position, Option<[f32; 2]>);
+                    field!(command_sound, bool);
                     // Each entry recovers on its own, so one bad entry keeps the others.
                     macro_rules! entries {
                         ($name:ident, $ty:ty, $limit:expr) => {
@@ -425,6 +566,7 @@ impl ConfigStore {
                     }
                     entries!(remote_hosts, RemoteHost, MAX_REMOTE_HOSTS);
                     entries!(alerts, AlertRule, MAX_ALERT_RULES);
+                    entries!(quick_commands, QuickCommand, MAX_QUICK_COMMANDS);
                 }
                 Err(_) => {
                     protected = true;
@@ -487,6 +629,81 @@ mod tests {
         assert_eq!(Language::preferred([]), Language::English);
         for language in Language::ALL {
             assert_eq!(Language::preferred([language.tag()]), language);
+        }
+    }
+
+    fn quick_command(commands: &[&str]) -> QuickCommand {
+        QuickCommand {
+            id: "dev".into(),
+            name: "Dev".into(),
+            commands: commands.iter().map(|c| (*c).into()).collect(),
+            sessions: CommandSessions::Shared,
+            window: true,
+            directory: String::new(),
+            hotkey: String::new(),
+            hotkey_enabled: true,
+        }
+    }
+
+    #[test]
+    fn quick_commands_share_one_session_or_start_one_each() {
+        let mut command = quick_command(&["cd C:\\code", "  cargo run"]);
+        assert_eq!(
+            command.sessions(),
+            [CommandSession {
+                title: "Dev".into(),
+                script: "cd C:\\code\n  cargo run".into(),
+            }]
+        );
+        command.sessions = CommandSessions::Separate;
+        assert_eq!(
+            command.sessions(),
+            [
+                CommandSession {
+                    title: "Dev · cd C:\\code".into(),
+                    script: "cd C:\\code".into(),
+                },
+                CommandSession {
+                    title: "Dev · cargo run".into(),
+                    script: "  cargo run".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn quick_commands_fit_one_command_line_each() {
+        assert_eq!(quick_command(&["dir"]).validate(), Ok(()));
+        assert_eq!(quick_command(&["\tdir"]).validate(), Ok(()));
+        let long = "x".repeat(MAX_COMMAND_BYTES / 2);
+        assert_eq!(quick_command(&[&long, &long]).validate(), Ok(()));
+        let lines = vec!["dir"; MAX_COMMAND_LINES];
+        assert_eq!(quick_command(&lines).validate(), Ok(()));
+        let invalid = [
+            quick_command(&[]),
+            quick_command(&[" "]),
+            quick_command(&["dir\ncls"]),
+            quick_command(&[&long, &long, "x"]),
+            quick_command(&vec!["dir"; MAX_COMMAND_LINES + 1]),
+            QuickCommand {
+                name: " ".into(),
+                ..quick_command(&["dir"])
+            },
+            QuickCommand {
+                id: "a b".into(),
+                ..quick_command(&["dir"])
+            },
+            QuickCommand {
+                hotkey: "Shift+A".into(),
+                ..quick_command(&["dir"])
+            },
+        ];
+        for command in invalid {
+            assert_eq!(
+                command.validate(),
+                Err(Notice::InvalidQuickCommand),
+                "{command:?}"
+            );
         }
     }
 }

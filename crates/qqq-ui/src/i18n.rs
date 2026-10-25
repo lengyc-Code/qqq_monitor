@@ -379,6 +379,7 @@ pub struct Strings {
     pub tool_screenshots: &'static str,
     pub tool_clipboard: &'static str,
     pub tool_notes: &'static str,
+    pub tool_commands: &'static str,
 
     // Screenshots.
     /// Screenshot item of the notification-area icon menu.
@@ -432,8 +433,12 @@ pub struct Strings {
     pub note_title: &'static str,
     /// Option that registers the note shortcut, named by its keys.
     pub note_hotkey_option: fn(&str) -> String,
-    /// The pressed keys belong to the other shortcut.
+    /// The pressed keys belong to another shortcut.
     pub hotkey_taken: &'static str,
+    /// Shown in place of the switch of a quick command without a shortcut.
+    pub hotkey_none: &'static str,
+    /// Button that records the first shortcut of a quick command.
+    pub hotkey_set: &'static str,
     pub note_open: &'static str,
     pub note_new: &'static str,
     pub note_list: &'static str,
@@ -462,6 +467,51 @@ pub struct Strings {
     pub note_loading: &'static str,
     /// How the note window works, with the folder that keeps the notes.
     pub note_about: fn(&str) -> String,
+
+    // Quick commands.
+    /// Option that registers a quick command's shortcut, named by its keys.
+    pub command_hotkey_option: fn(&str) -> String,
+    pub command_new: &'static str,
+    pub command_list: &'static str,
+    /// Number of quick commands.
+    pub command_count: fn(usize) -> String,
+    pub command_empty: &'static str,
+    pub command_run: &'static str,
+    /// Button that terminates every running session of a quick command.
+    pub command_stop: &'static str,
+    /// A quick command with this many sessions still running.
+    pub command_running: fn(usize) -> String,
+    /// Option that plays a sound whenever a quick command runs.
+    pub command_sound_option: &'static str,
+    /// Balloon text once a quick command started this many sessions.
+    pub command_balloon: fn(usize) -> String,
+    pub command_edit: &'static str,
+    pub command_add_title: &'static str,
+    pub command_edit_title: &'static str,
+    pub command_name: &'static str,
+    pub command_lines: &'static str,
+    /// Placeholder of the empty command lines.
+    pub command_lines_hint: &'static str,
+    pub command_sessions: &'static str,
+    pub command_shared: &'static str,
+    pub command_separate: &'static str,
+    pub command_window: &'static str,
+    pub command_window_option: &'static str,
+    pub command_directory: &'static str,
+    /// Placeholder of the empty working directory.
+    pub command_directory_hint: &'static str,
+    pub command_save: &'static str,
+    pub command_missing_name: &'static str,
+    pub command_missing_lines: &'static str,
+    /// The command lines are more or longer than a quick command holds, with the most lines
+    /// and the most bytes, about as many ASCII characters.
+    pub command_too_long: fn(usize, usize) -> String,
+    /// The working directory is not an existing folder's full path.
+    pub command_bad_directory: &'static str,
+    /// How a quick command runs: in one shared session or not, its number of command lines,
+    /// and whether it shows a window.
+    pub command_summary: fn(bool, usize, bool) -> String,
+    pub command_about: &'static str,
 }
 
 /// Index of the active language in [`Language::ALL`].

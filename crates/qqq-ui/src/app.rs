@@ -5,7 +5,7 @@ use crate::{
     clips, components, dock, i18n, mascot, minibar, note, notes, pixel, shots, theme, tray,
 };
 use eframe::egui::{self, RichText, pos2, vec2};
-use qqq_domain::{DeviceKind, Hotkey, MetricKey};
+use qqq_domain::{DeviceKind, Hotkey, MetricKey, ShellSession, Shortcut};
 use qqq_engine::{
     AlertState, AppConfig, CommandOutcome, CommandResult, DockEdge, Language, MonitorClient,
     MonitorCommand, MonitorView, Notice, data_directory,
@@ -167,9 +167,12 @@ pub struct DesktopApp {
     snip: pages::screenshots::Snip,
     /// A new shortcut being recorded on the tools page.
     recorder: pages::tools::Recorder,
-    /// Keys of each shortcut last registered, in the order of
-    /// [`qqq_domain::Shortcut::ALL`]; `None` until the first registration.
-    hotkeys: [Option<Option<Hotkey>>; 2],
+    /// Keys each shortcut was last registered with, `None` for none; a shortcut missing
+    /// here has not been registered yet.
+    hotkeys: Vec<(Shortcut, Option<Hotkey>)>,
+    command_page: pages::commands::CommandPage,
+    /// Running PowerShell sessions of the quick commands, each with its command's ID.
+    shell_sessions: Vec<(String, Box<dyn ShellSession>)>,
     /// The note window, which paints in its own passes.
     note: note::Shared,
     /// How the note window is created, settled on the first frame.
@@ -181,7 +184,7 @@ pub struct DesktopApp {
     /// Whether the clipboard is followed; `None` until first decided.
     watching: Option<bool>,
     /// The window shows nothing, so a new view leaves the GUI asleep. The tray icon, the
-    /// screenshot shortcut, clipboard changes and saved screenshots wake it on their own.
+    /// shortcuts, clipboard changes and saved screenshots wake it on their own.
     asleep: Arc<AtomicBool>,
 }
 
@@ -242,7 +245,9 @@ impl DesktopApp {
             tool: Default::default(),
             snip: Default::default(),
             recorder: Default::default(),
-            hotkeys: [None; 2],
+            hotkeys: Vec::new(),
+            command_page: Default::default(),
+            shell_sessions: Vec::new(),
             note: Arc::new(std::sync::Mutex::new(note::NoteWindow::new(
                 notes, &desktop,
             ))),
@@ -626,6 +631,7 @@ impl eframe::App for DesktopApp {
         self.screenshot_logic(ctx);
         self.clipboard_logic(ctx);
         self.note_logic(ctx);
+        self.command_logic();
         if self.page == Page::Alerts {
             // Windows notices a new notification identity with a delay, so it is set up
             // before the first alert.
@@ -851,7 +857,7 @@ impl eframe::App for DesktopApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qqq_domain::{Reason, Shortcut};
+    use qqq_domain::Reason;
 
     fn answer(
         answers: &mut Answers,

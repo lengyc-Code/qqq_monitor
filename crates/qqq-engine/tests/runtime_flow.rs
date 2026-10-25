@@ -228,6 +228,7 @@ fn every_setting_round_trips() {
         note_hotkey_enabled: false,
         note_size: [420.0, 520.0],
         note_position: Some([1400.0, 120.0]),
+        command_sound: false,
         remote_hosts: vec![RemoteHost {
             id: "db".into(),
             name: "Database".into(),
@@ -246,6 +247,16 @@ fn every_setting_round_trips() {
             condition: AlertCondition::Below,
             threshold: 5.0,
             hold_secs: 30,
+        }],
+        quick_commands: vec![QuickCommand {
+            id: "dev".into(),
+            name: "Dev".into(),
+            commands: vec!["Set-Location C:\\".into(), "Get-ChildItem".into()],
+            sessions: CommandSessions::Separate,
+            window: false,
+            directory: "C:\\Users".into(),
+            hotkey: "Ctrl+Alt+1".into(),
+            hotkey_enabled: false,
         }],
     };
     config.validate().unwrap();
@@ -777,4 +788,49 @@ fn alert_rules_round_trip_and_recover_one_by_one() {
     let mut twice = loaded.config.clone();
     twice.alerts.push(twice.alerts[0].clone());
     assert_eq!(twice.validate(), Err(Notice::InvalidAlertRule));
+}
+
+#[test]
+fn quick_commands_recover_one_by_one_and_follow_the_built_in_shortcuts() {
+    let scratch = Scratch::new();
+    fs::write(
+        scratch.config(),
+        "[[quick_commands]]\nid = \"build\"\nname = \"Build\"\ncommands = [\"cargo build\"]\nhotkey = \"Ctrl+Alt+B\"\n\n[[quick_commands]]\nid = \"blank\"\nname = \"Blank\"\ncommands = [\"  \"]\n\n[[quick_commands]]\nid = \"keys\"\nname = \"Keys\"\ncommands = [\"dir\"]\nhotkey = \"B\"\n\n[[quick_commands]]\nid = \"shell\"\nname = \"Shell\"\ncommands = [\"dir\"]\nsessions = \"parallel\"\n\n[[quick_commands]]\nid = \"plain\"\nname = \"Plain\"\ncommands = [\"dir\"]\n",
+    )
+    .unwrap();
+    let mut loaded = ConfigStore::load(scratch.config());
+    assert!(loaded.warning.is_some());
+    let ids: Vec<_> = loaded
+        .config
+        .quick_commands
+        .iter()
+        .map(|c| c.id.as_str())
+        .collect();
+    assert_eq!(ids, ["build", "plain"]);
+    let plain = &loaded.config.quick_commands[1];
+    assert_eq!(plain.sessions, CommandSessions::Shared);
+    assert!(plain.window && plain.hotkey_enabled);
+    assert_eq!(plain.directory, "");
+    let shortcuts: Vec<_> = loaded.config.shortcuts().collect();
+    assert_eq!(
+        shortcuts,
+        [
+            Shortcut::Screenshot,
+            Shortcut::Note,
+            Shortcut::Command(0),
+            Shortcut::Command(1)
+        ]
+    );
+    assert_eq!(
+        loaded.config.shortcut(Shortcut::Command(0)),
+        ("Ctrl+Alt+B", true)
+    );
+    assert_eq!(loaded.config.hotkey(Shortcut::Command(1)), None);
+    assert_eq!(loaded.config.shortcut(Shortcut::Command(2)), ("", false));
+    assert!(loaded.config.shortcut_mut(Shortcut::Command(2)).is_none());
+    loaded.store.save(&loaded.config, true).unwrap();
+    assert_eq!(ConfigStore::load(scratch.config()).config, loaded.config);
+    let mut twice = loaded.config.clone();
+    twice.quick_commands.push(twice.quick_commands[0].clone());
+    assert_eq!(twice.validate(), Err(Notice::InvalidQuickCommand));
 }

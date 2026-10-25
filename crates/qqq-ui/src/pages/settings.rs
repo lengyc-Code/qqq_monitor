@@ -52,6 +52,7 @@ impl DesktopApp {
                         t.tool_screenshots,
                         t.tool_clipboard,
                         t.tool_notes,
+                        t.tool_commands,
                         t.autostart,
                     ],
                     14.0,
@@ -148,7 +149,11 @@ impl DesktopApp {
                         let (keys, mut on) = self.active_config.shortcut(shortcut);
                         let option = hotkey_option(shortcut, keys);
                         if ui.checkbox(&mut on, option).changed() {
-                            self.apply_now(|config| *config.shortcut_mut(shortcut).1 = on);
+                            self.apply_now(|config| {
+                                if let Some((_, enabled)) = config.shortcut_mut(shortcut) {
+                                    *enabled = on;
+                                }
+                            });
                         }
                     });
                 }
@@ -158,6 +163,14 @@ impl DesktopApp {
                     let mut on = self.active_config.clipboard_manager;
                     if ui.checkbox(&mut on, t.clip_option).changed() {
                         self.apply_now(|config| config.clipboard_manager = on);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    row_label(ui, t.tool_commands);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    let mut on = self.active_config.command_sound;
+                    if ui.checkbox(&mut on, t.command_sound_option).changed() {
+                        self.apply_now(|config| config.command_sound = on);
                     }
                 });
                 ui.horizontal(|ui| {

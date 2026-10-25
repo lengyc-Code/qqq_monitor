@@ -117,6 +117,8 @@ pub enum Reason {
     HotkeyTaken,
     /// Another application keeps the clipboard open.
     ClipboardBusy,
+    /// The file or folder does not exist.
+    PathNotFound,
 }
 
 #[derive(Clone, Debug)]

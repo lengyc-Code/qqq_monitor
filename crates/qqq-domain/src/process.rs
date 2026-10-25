@@ -1,5 +1,5 @@
-//! Processes of Windows and of running WSL distributions, and the actions the GUI can
-//! take on them.
+//! Processes of Windows and of running WSL distributions, the actions the GUI can take on
+//! them, and the PowerShell sessions that quick commands start.
 
 use crate::Reason;
 
@@ -116,6 +116,24 @@ pub trait ProcessPlatform: Send + Sync {
     fn source(&self, host: &ProcessHost) -> Box<dyn ProcessSource>;
     /// Carries out `action` once `id` still names the same running instance.
     fn act(&self, id: &ProcessId, action: ProcessAction) -> Result<(), Reason>;
+}
+
+/// A PowerShell session a quick command started. Dropping it stops following the session,
+/// which keeps running.
+pub trait ShellSession {
+    /// Whether the session's PowerShell process is still running.
+    fn running(&self) -> bool;
+    /// Ends the session's PowerShell process and every process started from it.
+    fn terminate(&self) -> Result<(), Reason>;
+}
+
+/// Sound that reports how a run of a quick command went.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandSound {
+    /// Every session started.
+    Started,
+    /// A session failed to start.
+    Failed,
 }
 
 #[cfg(test)]

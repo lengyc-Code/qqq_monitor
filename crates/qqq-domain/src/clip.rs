@@ -1,5 +1,5 @@
-//! Screenshots, clipboard contents and the keyboard shortcuts that start a screenshot or
-//! show the note window.
+//! Screenshots, clipboard contents and the keyboard shortcuts that start a screenshot, show
+//! the note window or run a quick command.
 
 use std::{fmt, sync::Arc};
 
@@ -72,10 +72,13 @@ pub enum Shortcut {
     Screenshot,
     /// Shows or hides the note window.
     Note,
+    /// Runs the quick command at this position in the configuration's list.
+    Command(usize),
 }
 
 impl Shortcut {
-    pub const ALL: [Self; 2] = [Self::Screenshot, Self::Note];
+    /// The shortcuts every configuration has.
+    pub const BUILT_IN: [Self; 2] = [Self::Screenshot, Self::Note];
 }
 
 /// A keyboard shortcut: modifier keys held with one key, written like `Ctrl+Alt+A`.

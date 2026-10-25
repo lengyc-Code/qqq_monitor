@@ -99,6 +99,11 @@ impl Tray {
         self.hidden
     }
 
+    /// Whether the icon is shown: the window is hidden or docked as the mini bar.
+    pub fn has_icon(&self) -> bool {
+        self.icon.is_some()
+    }
+
     /// Whether the user asked for the window from the icon; shows a hidden or minimized
     /// window again.
     pub fn opened(&mut self, ctx: &egui::Context, desktop: &Desktop) -> bool {

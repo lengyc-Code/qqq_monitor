@@ -13,7 +13,7 @@
 
 use crate::i18n;
 use eframe::egui::{self, Pos2, Rect, Vec2, ViewportCommand, pos2, vec2};
-use qqq_domain::{CaptureEnd, Clip, Hotkey, Reason, Shortcut};
+use qqq_domain::{CaptureEnd, Clip, CommandSound, Hotkey, Reason, ShellSession, Shortcut};
 use qqq_engine::{AppConfig, DockEdge};
 use std::time::Duration;
 
@@ -45,6 +45,10 @@ pub fn bar_size(edge: DockEdge, frames: bool) -> Vec2 {
 
 /// Rectangle edges as `[left, top, right, bottom]`.
 pub type Edges = [f32; 4];
+
+/// Starts a PowerShell session with a script, a window title, whether it shows a window, and
+/// a working directory, empty for the user's profile folder.
+pub type StartPowerShell = fn(&str, &str, bool, &str) -> Result<Box<dyn ShellSession>, Reason>;
 
 /// Monitor queries and shell integration answered by the host platform; points are in
 /// physical pixels of the virtual screen.
@@ -92,6 +96,17 @@ pub struct Desktop {
     /// Whether the user asked for the note window with the shortcut or from the icon's menu
     /// since the last call.
     pub note_requested: fn() -> bool,
+    /// Positions of the quick commands whose shortcut was pressed since the last call, in
+    /// the order they were pressed.
+    pub commands_requested: fn() -> Vec<usize>,
+    /// Starts a PowerShell session and returns it to follow and terminate. A shown window
+    /// stays open after the script ends; a hidden session ends with it.
+    pub start_powershell: StartPowerShell,
+    /// Plays a short sound without waiting for it.
+    pub play_sound: fn(CommandSound),
+    /// Shows a silent balloon from the notification-area icon with a title and a text,
+    /// marked as a warning when the flag is set; nothing while the icon is hidden.
+    pub show_balloon: fn(&str, &str, bool),
     /// Freezes the screen for the user to select a region, showing this hint.
     pub start_capture: fn(&str) -> Result<(), Reason>,
     /// How the latest region selection ended, once.

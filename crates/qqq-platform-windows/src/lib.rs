@@ -10,8 +10,10 @@ mod inventory;
 mod native;
 mod network;
 mod notify;
+mod powershell;
 mod process;
 mod secret;
+mod sound;
 mod tray;
 mod wsl;
 
@@ -39,11 +41,16 @@ pub use native::{covers_point, monitor_at, mouse_button_held};
 pub use native::{local_time, open_path, open_url};
 /// Toast notifications with the application's name and icon.
 pub use notify::{notify, prepare as prepare_notifications};
-/// Notification-area icon and taskbar button of the application window, and the
-/// screenshot and note shortcuts.
+/// PowerShell sessions that quick commands start.
+pub use powershell::start as start_powershell;
+/// Sounds that report how a quick command ran.
+pub use sound::play as play_sound;
+/// Notification-area icon with its balloons, taskbar button of the application window, and
+/// the screenshot, note and quick command shortcuts.
 pub use tray::{
-    attach as attach_tray, cloak as cloak_window, hide as hide_tray, note_requested,
-    opened as tray_opened, screenshot_requested, set_hotkey, set_taskbar_button, show as show_tray,
+    attach as attach_tray, balloon as show_balloon, cloak as cloak_window, commands_requested,
+    hide as hide_tray, note_requested, opened as tray_opened, screenshot_requested, set_hotkey,
+    set_taskbar_button, show as show_tray,
 };
 
 struct BuiltinFactory {

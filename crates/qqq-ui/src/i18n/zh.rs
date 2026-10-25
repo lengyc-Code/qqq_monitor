@@ -374,11 +374,12 @@ pub const STRINGS: Strings = Strings {
     tools_page: PageText {
         nav: "小工具",
         title: "小工具",
-        hint: "截图、剪贴板管理与便签等实用工具",
+        hint: "截图、剪贴板管理、便签与快捷指令等实用工具",
     },
     tool_screenshots: "截图",
     tool_clipboard: "剪贴板",
     tool_notes: "便签",
+    tool_commands: "快捷指令",
     tray_screenshot: "截图",
     hours_ago: |v| format!("{v} 小时前"),
     shot_take: "开始截图",
@@ -419,6 +420,8 @@ pub const STRINGS: Strings = Strings {
     note_title: "QQQ 便签",
     note_hotkey_option: |key| format!("按 {key} 显示或隐藏便签"),
     hotkey_taken: "这个组合键已用于另一个快捷键",
+    hotkey_none: "未设置快捷键",
+    hotkey_set: "设置",
     note_open: "打开便签",
     note_new: "新建便签",
     note_list: "全部便签",
@@ -443,6 +446,53 @@ pub const STRINGS: Strings = Strings {
             "便签窗口始终位于其他窗口之上：按快捷键显示，在便签中再按一次隐藏；拖动标题栏移动，拖动右下角调整大小。内容使用 Markdown，按 Ctrl+E 在编辑与预览之间切换，按 Ctrl+N 新建便签；预览中可以勾选任务、打开网页链接。每条便签是 {folder} 中的一个 .md 文件，停止输入片刻后自动保存。"
         )
     },
+
+    command_hotkey_option: |key| format!("按 {key} 运行"),
+    command_new: "新建快捷指令",
+    command_list: "全部快捷指令",
+    command_count: |n| format!("{n} 条"),
+    command_empty: "还没有快捷指令。点击「新建快捷指令」，填写要运行的 PowerShell 命令。",
+    command_run: "运行",
+    command_stop: "终止",
+    command_running: |n| format!("运行中 · {n} 个会话"),
+    command_sound_option: "运行快捷指令时播放提示音",
+    command_balloon: |n| format!("已开始运行，共 {n} 个会话"),
+    command_edit: "编辑",
+    command_add_title: "新建快捷指令",
+    command_edit_title: "编辑快捷指令",
+    command_name: "名称",
+    command_lines: "命令",
+    command_lines_hint: "每行一条 PowerShell 命令",
+    command_sessions: "会话",
+    command_shared: "在同一会话中依次运行",
+    command_separate: "每条命令一个会话",
+    command_window: "窗口",
+    command_window_option: "显示 PowerShell 窗口，运行结束后保留",
+    command_directory: "工作目录",
+    command_directory_hint: "留空则从用户文件夹开始",
+    command_save: "保存",
+    command_missing_name: "请填写名称",
+    command_missing_lines: "请至少填写一条命令",
+    command_too_long: |lines, bytes| {
+        format!("命令过多或过长：最多 {lines} 行，合计约 {bytes} 个英文字符")
+    },
+    command_bad_directory: "找不到这个文件夹，请填写完整路径",
+    command_summary: |shared, lines, window| {
+        format!(
+            "{} · {lines} 条命令 · {}",
+            if shared {
+                "同一会话"
+            } else {
+                "每条命令一个会话"
+            },
+            if window {
+                "显示窗口"
+            } else {
+                "后台运行"
+            }
+        )
+    },
+    command_about: "快捷指令用 Windows PowerShell 运行。「在同一会话中依次运行」时，全部命令在一个会话中按顺序执行，后面的命令沿用前面设置的变量与当前位置；「每条命令一个会话」时，每条命令同时在各自的会话中启动。显示窗口时，命令结束后窗口保留，便于查看输出或继续输入；不显示窗口时命令在后台运行，结束后会话随之退出。会话运行期间，快捷指令显示运行中的会话数与「终止」按钮，点击后结束它的全部会话以及会话中启动的程序。每次运行播放提示音。快捷键是全局快捷键，窗口收进托盘或吸附为迷你状态栏时同样可用，此时还会在托盘弹出气泡显示运行结果；点击快捷指令中的「设置」后按下组合键即可指定。",
 };
 
 fn detail(key: &str) -> Option<&'static str> {
@@ -546,6 +596,7 @@ fn reason(reason: &Reason) -> String {
         Reason::Declined => "操作已取消".into(),
         Reason::HotkeyTaken => "快捷键已被其他程序占用".into(),
         Reason::ClipboardBusy => "剪贴板正被其他程序占用".into(),
+        Reason::PathNotFound => "找不到文件或文件夹".into(),
     }
 }
 
@@ -581,11 +632,17 @@ fn notice(notice: &Notice) -> String {
             format!("无法以管理员身份重新启动：{}", self::reason(reason))
         }
         Notice::InvalidHotkey => "快捷键无效".into(),
+        Notice::InvalidQuickCommand => "快捷指令无效".into(),
+        Notice::CommandFailed(reason) => format!("无法运行快捷指令：{}", self::reason(reason)),
+        Notice::CommandStopFailed(reason) => {
+            format!("无法终止快捷指令：{}", self::reason(reason))
+        }
         Notice::InvalidRecordLimit => "保留数量不在可选范围内".into(),
         Notice::HotkeyUnavailable(shortcut, reason) => {
             let name = match shortcut {
                 Shortcut::Screenshot => "截图",
                 Shortcut::Note => "便签",
+                Shortcut::Command(_) => "快捷指令",
             };
             format!("无法注册{name}快捷键：{}", self::reason(reason))
         }

@@ -1,5 +1,5 @@
-//! Notification-area icon and taskbar button of the application window, and the
-//! screenshot and note shortcuts.
+//! Notification-area icon with its balloons, taskbar button of the application window, and
+//! the screenshot, note and quick command shortcuts.
 //!
 //! The icon belongs to a hidden top-level window created on the GUI thread. The message
 //! loop the GUI already runs delivers it the icon's clicks, its menu, the
@@ -33,8 +33,9 @@ use windows::{
                 MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey, UnregisterHotKey,
             },
             Shell::{
-                ITaskbarList, NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE,
-                NIM_MODIFY, NIM_SETVERSION, NIN_SELECT, NINF_KEY, NOTIFY_ICON_MESSAGE,
+                ITaskbarList, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_NOSOUND,
+                NIIF_RESPECT_QUIET_TIME, NIIF_USER, NIIF_WARNING, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+                NIM_SETVERSION, NIN_BALLOONUSERCLICK, NIN_SELECT, NINF_KEY, NOTIFY_ICON_MESSAGE,
                 NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW, TaskbarList,
             },
             WindowsAndMessaging::{
@@ -66,6 +67,8 @@ const MENU_OPEN: usize = 1;
 const MENU_EXIT: usize = 2;
 const MENU_SCREENSHOT: usize = 3;
 const MENU_NOTE: usize = 4;
+/// Shortcut identity of the first quick command; the others follow it in order.
+const COMMAND_HOTKEYS: i32 = 0x100;
 /// Timer that asks for a screenshot once the icon's menu has faded from the screen.
 const SCREENSHOT_TIMER: usize = 1;
 const MENU_FADE_MS: u32 = 250;
@@ -97,6 +100,9 @@ struct Tray {
     screenshot: Cell<bool>,
     /// The user asked for the note window since the last [`note_requested`] call.
     note: Cell<bool>,
+    /// Quick commands whose shortcut was pressed since the last [`commands_requested`]
+    /// call, by position.
+    commands: RefCell<Vec<usize>>,
     wake: Box<dyn Fn()>,
 }
 
@@ -177,6 +183,7 @@ pub fn attach(main: isize, wake: impl Fn() + 'static) -> bool {
             opened: Cell::new(false),
             screenshot: Cell::new(false),
             note: Cell::new(false),
+            commands: RefCell::new(Vec::new()),
             wake: Box::new(wake),
         });
     });
@@ -242,6 +249,35 @@ pub fn show(tip: &str, open: &str, screenshot: &str, note: &str, exit: &str) {
     });
 }
 
+/// Shows a balloon from the shown icon with a title and a text, marked as a warning when
+/// `warning` is set. The balloon is silent and waits out the user's quiet time; clicking it
+/// asks for the application window, like the icon.
+pub fn balloon(title: &str, text: &str, warning: bool) {
+    with(|tray| {
+        if tray.labels.borrow().is_none() {
+            return;
+        }
+        let mut data = tray.data();
+        data.uFlags |= NIF_INFO;
+        fill(&mut data.szInfoTitle, title);
+        fill(&mut data.szInfo, text);
+        data.dwInfoFlags =
+            if warning { NIIF_WARNING } else { NIIF_USER } | NIIF_NOSOUND | NIIF_RESPECT_QUIET_TIME;
+        // SAFETY: `data` is a fully initialized NOTIFYICONDATAW with its size set, naming
+        // this tray's live window and icon.
+        let _ = unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) };
+    });
+}
+
+/// Copies `text` into a fixed text field, cut to leave the last unit as the terminating NUL.
+fn fill(field: &mut [u16], text: &str) {
+    let room = field.len() - 1;
+    field.fill(0);
+    for (slot, unit) in field[..room].iter_mut().zip(text.encode_utf16()) {
+        *slot = unit;
+    }
+}
+
 /// Removes the icon.
 pub fn hide() {
     with(|tray| {
@@ -294,6 +330,7 @@ fn hotkey_id(shortcut: Shortcut) -> i32 {
     match shortcut {
         Shortcut::Screenshot => 1,
         Shortcut::Note => 2,
+        Shortcut::Command(index) => COMMAND_HOTKEYS + index as i32,
     }
 }
 
@@ -348,6 +385,12 @@ pub fn note_requested() -> bool {
     with(|tray| tray.note.take()).unwrap_or(false)
 }
 
+/// Positions of the quick commands whose shortcut was pressed since the last call, in the
+/// order they were pressed.
+pub fn commands_requested() -> Vec<usize> {
+    with(|tray| tray.commands.take()).unwrap_or_default()
+}
+
 /// Virtual-key code of a shortcut key.
 fn virtual_key(key: HotkeyKey) -> u32 {
     match key {
@@ -370,11 +413,7 @@ impl Tray {
             ..Default::default()
         };
         if let Some(labels) = &*self.labels.borrow() {
-            // Leaves the last unit as the terminating NUL.
-            let room = data.szTip.len() - 1;
-            for (slot, unit) in data.szTip[..room].iter_mut().zip(labels.tip.encode_utf16()) {
-                *slot = unit;
-            }
+            fill(&mut data.szTip, &labels.tip);
         }
         data
     }
@@ -437,6 +476,11 @@ impl Tray {
 
     fn request_note(&self) {
         self.note.set(true);
+        (self.wake)();
+    }
+
+    fn request_command(&self, index: usize) {
+        self.commands.borrow_mut().push(index);
         (self.wake)();
     }
 }
@@ -517,7 +561,7 @@ unsafe extern "system" fn procedure(
             // NOTIFYICON_VERSION_4 puts the event in the low word of `lparam` and the anchor
             // point, in screen coordinates, in `wparam`.
             match lparam.0 as u32 & 0xFFFF {
-                NIN_SELECT | KEY_SELECT => {
+                NIN_SELECT | KEY_SELECT | NIN_BALLOONUSERCLICK => {
                     with(Tray::open);
                 }
                 WM_CONTEXTMENU => {
@@ -543,6 +587,10 @@ unsafe extern "system" fn procedure(
         }
         WM_HOTKEY if wparam.0 == hotkey_id(Shortcut::Note) as usize => {
             with(Tray::request_note);
+            LRESULT(0)
+        }
+        WM_HOTKEY if wparam.0 >= COMMAND_HOTKEYS as usize => {
+            with(|tray| tray.request_command(wparam.0 - COMMAND_HOTKEYS as usize));
             LRESULT(0)
         }
         WM_TIMER if wparam.0 == SCREENSHOT_TIMER => {

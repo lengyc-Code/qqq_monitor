@@ -49,6 +49,13 @@ pub enum Notice {
     ElevationFailed(Reason),
     /// The screenshot or note shortcut is not a valid key combination.
     InvalidHotkey,
+    /// A quick command lacks a name or commands, has too many or too long commands, an
+    /// invalid shortcut, or repeats the identity of another quick command.
+    InvalidQuickCommand,
+    /// A quick command could not start its PowerShell sessions.
+    CommandFailed(Reason),
+    /// The running sessions of a quick command could not be terminated.
+    CommandStopFailed(Reason),
     /// The number of screenshots or clipboard entries to keep is not one of the choices.
     InvalidRecordLimit,
     /// A shortcut could not be registered.
