@@ -234,12 +234,11 @@ mod tests {
             wait(&mut shots, &ctx, |s| s.listed && s.entries.len() == 1);
             shots.load(&shots.entries[0].file.path.clone());
             let deadline = Instant::now() + Duration::from_secs(20);
-            let loaded = 'loaded: loop {
-                for event in shots.update(&ctx) {
-                    match event {
-                        Event::Loaded(picture) => break 'loaded picture,
-                        Event::Failed(error) => panic!("copying {width}x{height}: {error}"),
-                    }
+            let loaded = loop {
+                match shots.update(&ctx).into_iter().next() {
+                    Some(Event::Loaded(picture)) => break picture,
+                    Some(Event::Failed(error)) => panic!("copying {width}x{height}: {error}"),
+                    None => {}
                 }
                 assert!(
                     Instant::now() < deadline,
