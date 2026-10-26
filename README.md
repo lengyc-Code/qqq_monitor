@@ -13,7 +13,7 @@
   <b>English</b> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a>
 </p>
 
-QQQ Monitor is a multi-purpose task manager for Windows, written in Rust. Version 0.4.3 focuses on real-time performance monitoring: it collects CPU, memory, GPU, disk and network data from native Windows APIs, shows history charts and device details in a native GUI, and can dock to a screen edge as an always-on-top mini bar. Docked or minimized, it stays in the notification area. It also lists and manages the processes of Windows and of running WSL distributions, monitors one or more Linux hosts over SSH, counts the frame rate and frame time of games and other foreground apps, and sends Windows notifications when a metric crosses its threshold. A shortcut-driven screenshot tool, a clipboard history, always-on-top Markdown notes summoned with a shortcut and quick commands that run PowerShell commands from a shortcut round it off.
+QQQ Monitor is a multi-purpose task manager for Windows, written in Rust. Version 0.5.0 focuses on real-time performance monitoring: it collects CPU, memory, GPU, disk and network data from native Windows APIs, shows history charts and device details in a native GUI, and can dock to a screen edge as an always-on-top mini bar. Docked or minimized, it stays in the notification area. It also lists and manages the processes of Windows and of running WSL distributions, monitors one or more Linux hosts over SSH, counts the frame rate and frame time of games and other foreground apps, and sends Windows notifications when a metric crosses its threshold. A shortcut-driven screenshot tool, a clipboard history, always-on-top Markdown notes summoned with a shortcut and quick commands that run PowerShell commands from a shortcut round it off.
 
 ## Main window
 
@@ -168,7 +168,7 @@ MINT is a girl with long teal hair, a pink streak and fluffy white cat ears. A b
 | Bottom middle | Trouble | `mint-2` | A collector reports an error |
 | Bottom right | Waiting | `mint-6` | Waiting for the first CPU and memory readings after start |
 
-The build script `crates/qqq-ui/build.rs` generates the bust in the sidebar from the illustrations `mint-1` to `mint-6` in [`crates/qqq-ui/assets/mascot`](crates/qqq-ui/assets/mascot): the white background connected to the image border becomes transparent, and every 10 × 10 block of source pixels becomes one sprite pixel. Each sprite pixel is drawn on a whole number of physical pixels, so the edges stay crisp. Replace the illustrations and rebuild to update the mascot. `mint-0` is the project logo. The Settings page shows the same logo as the top of this file, `docs/images/logo.png`.
+The build script `crates/qqq-ui/build.rs` generates the bust in the sidebar from the illustrations `mint-1` to `mint-6` in [`crates/qqq-ui/assets/mascot`](crates/qqq-ui/assets/mascot): the white background connected to the image border becomes transparent, and every 10 × 10 block of source pixels becomes one sprite pixel. Each sprite pixel is drawn on a whole number of physical pixels, so the edges stay crisp. Replace the illustrations and rebuild to update the mascot. `mint-0` is the project logo. The Settings page shows the same logo as the top of this file, `crates/qqq-ui/assets/logo.png`.
 
 With animations on, MINT bobs gently once a second. The animation runs on scheduled repaints, so the app redraws rarely while idle.
 
