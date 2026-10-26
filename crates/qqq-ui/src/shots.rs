@@ -205,6 +205,63 @@ mod tests {
     }
 
     #[test]
+    fn saved_large_screenshots_can_be_copied_and_previewed_after_reopening() {
+        // Cover a large capture and the full pixel capacity accepted by the writer.
+        for (width, height) in [(8192, 4320), (8192, 8192)] {
+            let directory = std::env::temp_dir().join(format!(
+                "qqq-shots-large-{}-{width}x{height}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&directory);
+            let ctx = egui::Context::default();
+            let mut rgba = vec![255; width as usize * height as usize * 4];
+            rgba[..4].copy_from_slice(&[10, 20, 30, 255]);
+            let last = rgba.len() - 4;
+            rgba[last..].copy_from_slice(&[40, 50, 60, 255]);
+            let expected = Arc::new(Picture {
+                width,
+                height,
+                rgba,
+            });
+            let mut shots = Shots::new(&ctx, directory.clone(), 5, |_| None);
+            wait(&mut shots, &ctx, |s| s.listed);
+            shots.save(Arc::clone(&expected), 5);
+            wait(&mut shots, &ctx, |s| s.entries.len() == 1);
+            shots.finish(Duration::from_secs(5));
+            drop(shots);
+
+            let mut shots = Shots::new(&ctx, directory.clone(), 5, |_| None);
+            wait(&mut shots, &ctx, |s| s.listed && s.entries.len() == 1);
+            shots.load(&shots.entries[0].file.path.clone());
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let loaded = 'loaded: loop {
+                for event in shots.update(&ctx) {
+                    match event {
+                        Event::Loaded(picture) => break 'loaded picture,
+                        Event::Failed(error) => panic!("copying {width}x{height}: {error}"),
+                    }
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "copying {width}x{height} timed out"
+                );
+                thread::sleep(Duration::from_millis(10));
+            };
+            assert_eq!(loaded, *expected);
+            drop(loaded);
+            drop(expected);
+            shots.show_thumbnails();
+            wait(&mut shots, &ctx, |s| s.entries[0].thumbnail.is_some());
+            let size = shots.entries[0].thumbnail.as_ref().unwrap().size();
+            assert!(size[0] > 0 && size[0] <= THUMBNAIL[0]);
+            assert!(size[1] > 0 && size[1] <= THUMBNAIL[1]);
+            shots.finish(Duration::from_secs(5));
+            drop(shots);
+            fs::remove_dir_all(&directory).unwrap();
+        }
+    }
+
+    #[test]
     fn every_visible_tile_keeps_its_thumbnail() {
         let ctx = egui::Context::default();
         let directory =

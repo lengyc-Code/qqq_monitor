@@ -17,8 +17,9 @@ use std::{
 
 const TASKS: usize = 16;
 const RESULTS: usize = 8;
+/// Shared pixel capacity for saves and reads, so every accepted RGBA8 screenshot fits
+/// back into the library when the budget is available.
 const IMAGE_BUDGET: usize = 256 * 1024 * 1024;
-const MAX_IMAGE: usize = 128 * 1024 * 1024;
 
 pub(super) enum Job {
     List(usize),
@@ -378,11 +379,11 @@ fn read(path: &Path, used: &Arc<AtomicUsize>) -> io::Result<(Picture, Reservatio
     let bytes = (width as usize)
         .checked_mul(height as usize)
         .and_then(|n| n.checked_mul(4))
-        .filter(|bytes| *bytes <= MAX_IMAGE)
+        .filter(|bytes| *bytes <= IMAGE_BUDGET)
         .ok_or_else(|| io::Error::other(i18n::t().shot_too_large))?;
     let decoded = usize::try_from(decoder.total_bytes())
         .ok()
-        .filter(|n| *n <= MAX_IMAGE)
+        .filter(|n| *n <= IMAGE_BUDGET)
         .ok_or_else(|| io::Error::other(i18n::t().shot_too_large))?;
     let peak = if decoder.color_type() == image::ColorType::Rgba8 {
         bytes
@@ -408,7 +409,7 @@ fn read(path: &Path, used: &Arc<AtomicUsize>) -> io::Result<(Picture, Reservatio
 fn limited_reader(path: &Path) -> io::Result<image::ImageReader<io::BufReader<fs::File>>> {
     let mut reader = image::ImageReader::open(path)?;
     let mut limits = image::Limits::default();
-    limits.max_alloc = Some(MAX_IMAGE as u64);
+    limits.max_alloc = Some(IMAGE_BUDGET as u64);
     reader.limits(limits);
     Ok(reader)
 }
@@ -505,6 +506,47 @@ mod tests {
         store.send(Job::Load("excess.png".into()));
         assert!(store.error().is_some());
         assert_eq!(store.shared.pending.lock().unwrap().jobs.len(), TASKS);
+    }
+
+    #[test]
+    fn reads_reserve_conversion_memory_and_release_it_after_use() {
+        let directory =
+            std::env::temp_dir().join(format!("qqq-shots-read-budget-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let used = Arc::new(AtomicUsize::new(0));
+        let path = directory.join("pixels.png");
+        for (color, decoded, peak) in [
+            (image::ColorType::Rgba8, 16, 16),
+            (image::ColorType::Rgb8, 12, 28),
+        ] {
+            image::save_buffer_with_format(
+                &path,
+                &vec![100; decoded],
+                2,
+                2,
+                color,
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+            let occupied = IMAGE_BUDGET - peak + 1;
+            let held = reserve(&used, occupied).unwrap();
+            assert!(read(&path, &used).is_err());
+            assert_eq!(used.load(Ordering::Acquire), occupied);
+            drop(held);
+
+            let held = reserve(&used, IMAGE_BUDGET - peak).unwrap();
+            let (picture, reservation) = read(&path, &used).unwrap();
+            assert_eq!((picture.width, picture.height), (2, 2));
+            assert_eq!(picture.rgba.len(), 16);
+            assert_eq!(used.load(Ordering::Acquire), IMAGE_BUDGET - peak + 16);
+            drop(held);
+            assert_eq!(used.load(Ordering::Acquire), 16);
+            drop(picture);
+            drop(reservation);
+            assert_eq!(used.load(Ordering::Acquire), 0);
+        }
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
