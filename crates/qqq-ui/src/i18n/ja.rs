@@ -410,6 +410,10 @@ pub const STRINGS: Strings = Strings {
     shot_recent: "最近のスクリーンショット",
     shot_empty: "スクリーンショットはまだありません。ショートカットを押すか「キャプチャ開始」をクリックしてください。",
     shot_loading: "スクリーンショットを読み込み中…",
+    shot_busy: "スクリーンショットの保存が混み合っています。保存待ちの書き込み後に再試行してください",
+    shot_memory_full: "画像用メモリが上限に達しました。処理中のスクリーンショットの完了後に再試行してください",
+    shot_too_large: "スクリーンショットの画像が大きすぎます",
+    shot_storage_unavailable: "スクリーンショットの保存機能を利用できません",
     shot_note: |folder| {
         format!(
             "マウスを離すと、選択した範囲がクリップボードにコピーされ、PNG として {folder} に保存されます。保存数を超えると古いものから削除します。「キャプチャ開始」はメイン ウィンドウを隠してからキャプチャします。"
@@ -453,6 +457,7 @@ pub const STRINGS: Strings = Strings {
     note_saving: "保存中…",
     note_saved: "保存済み",
     note_save_failed: |error| format!("保存できません：{error}"),
+    note_storage_unavailable: "付箋の保存機能を利用できません",
     note_count: |n| format!("{n} 件"),
     note_empty: "付箋はまだありません。ショートカットを押すか「付箋を開く」をクリックして書き始めましょう。",
     note_loading: "付箋を読み込み中…",

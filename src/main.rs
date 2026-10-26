@@ -240,7 +240,7 @@ fn smoke_test(runtime: &mut MonitorRuntime) -> Result<(), String> {
         view.diagnostics.dropped_batches,
         view.diagnostics.history_bytes
     );
-    for (key, reading) in &view.metrics {
+    for (key, reading) in view.metrics.iter() {
         if !key.device.starts_with("core:") {
             println!(
                 "{} / {}: {:?} {:?} {:?}",

@@ -136,6 +136,8 @@ pub type AlertNotify = Arc<dyn Fn(&AlertEvent) + Send + Sync>;
 struct Tracker {
     /// Definition the progress belongs to; an edited rule starts over.
     rule: AlertRule,
+    /// Resolved device and metric of the current device directory.
+    key: Option<MetricKey>,
     /// Sample time of the last reading weighed.
     sample: Option<Instant>,
     /// Since when the reading is beyond the threshold.
@@ -150,6 +152,7 @@ impl Tracker {
     fn new(rule: AlertRule) -> Self {
         Self {
             rule,
+            key: None,
             sample: None,
             beyond: None,
             back: None,
@@ -221,6 +224,9 @@ pub(crate) struct Alerts {
     trackers: BTreeMap<String, Tracker>,
     recent: Vec<AlertEvent>,
     notify: Sender<AlertEvent>,
+    /// Rules resolved by metric key, refreshed when their definitions or devices change.
+    targets: BTreeMap<MetricKey, Vec<String>>,
+    devices: Arc<BTreeMap<String, DeviceDescriptor>>,
 }
 
 impl Alerts {
@@ -229,72 +235,159 @@ impl Alerts {
             trackers: BTreeMap::new(),
             recent: Vec::new(),
             notify,
+            targets: BTreeMap::new(),
+            devices: Arc::default(),
         }
     }
 
-    /// Weighs the current readings against the configured rules, hands fired alerts to
-    /// the notification thread and updates the view's alert states.
-    pub(crate) fn evaluate(&mut self, view: &mut MonitorView, config: &AppConfig) {
-        let rules: Vec<_> = config
-            .alerts
-            .iter()
-            .filter(|r| r.enabled)
-            .cloned()
-            .collect();
-        self.trackers
-            .retain(|id, tracker| rules.iter().any(|r| r.id == *id && *r == tracker.rule));
-        let mut states = BTreeMap::new();
-        let mut fired = Vec::new();
-        for rule in rules {
-            let tracker = self
-                .trackers
-                .entry(rule.id.clone())
-                .or_insert_with(|| Tracker::new(rule.clone()));
-            let device = alert_device(view, &rule);
-            let reading = device.and_then(|d| view.reading(&d.id, &rule.metric));
-            let current = reading.and_then(|r| {
-                (r.effective_state(view.now) == SampleState::Ready)
-                    .then(|| r.value.zip(r.last_success))
-                    .flatten()
+    /// Resolves enabled rules once per directory or rule change. Samples use this index
+    /// rather than scanning the device directory or unrelated rules.
+    pub(crate) fn prepare(&mut self, view: &MonitorView, config: &AppConfig) {
+        let rules = config.alerts.iter().filter(|rule| rule.enabled);
+        let changed = rules.clone().count() != self.trackers.len()
+            || rules.clone().any(|rule| {
+                self.trackers
+                    .get(&rule.id)
+                    .is_none_or(|tracker| tracker.rule != *rule)
             });
-            match (current, device, reading) {
-                (Some((value, at)), Some(device), Some(reading)) => {
-                    if tracker.weigh(value, at) {
-                        fired.push(AlertEvent {
-                            host: device.host.as_ref().and_then(|host| {
-                                config
-                                    .remote_hosts
-                                    .iter()
-                                    .find(|h| h.id == *host)
-                                    .map(|h| RemoteHost::label(h).to_owned())
-                            }),
-                            device: device.clone(),
-                            unit: reading.descriptor.unit,
-                            value,
-                            at,
-                            rule: rule.clone(),
-                        });
-                    }
-                }
-                _ => tracker.interrupt(),
+        if changed {
+            self.trackers.retain(|id, tracker| {
+                rules
+                    .clone()
+                    .any(|rule| rule.id == *id && *rule == tracker.rule)
+            });
+            for rule in rules {
+                self.trackers
+                    .entry(rule.id.clone())
+                    .or_insert_with(|| Tracker::new(rule.clone()));
             }
-            states.insert(rule.id, tracker.state(current.is_some()));
         }
-        view.alerts.states = states;
-        if !fired.is_empty() {
-            for event in fired {
-                match self.notify.try_send(event.clone()) {
-                    Ok(()) | Err(TrySendError::Disconnected(_)) => {}
-                    Err(TrySendError::Full(_)) => {
-                        tracing::warn!(rule = event.rule.id, "通知队列已满，跳过本次告警通知")
-                    }
+        if changed || !Arc::ptr_eq(&self.devices, &view.devices) {
+            self.devices = Arc::clone(&view.devices);
+            self.targets.clear();
+            for (id, tracker) in &mut self.trackers {
+                tracker.key = alert_device(view, &tracker.rule)
+                    .map(|device| MetricKey::new(&device.id, &tracker.rule.metric));
+                if let Some(key) = &tracker.key {
+                    self.targets
+                        .entry(key.clone())
+                        .or_default()
+                        .push(id.clone());
                 }
-                self.recent.insert(0, event);
             }
-            self.recent.truncate(RECENT);
-            view.alerts.recent = Arc::new(self.recent.clone());
         }
     }
+
+    /// Starts the hold time over before a new valid sample can hide a missing interval.
+    pub(crate) fn interrupt(&mut self, key: &MetricKey) {
+        if let Some(rules) = self.targets.get(key) {
+            for id in rules {
+                self.trackers.get_mut(id).unwrap().interrupt();
+            }
+        }
+    }
+
+    /// Advances only the rules indexed for this normalized sample. `prepare` runs after
+    /// inventory updates and before a batch's samples are applied.
+    pub(crate) fn evaluate_sample(
+        &mut self,
+        view: &mut MonitorView,
+        config: &AppConfig,
+        key: &MetricKey,
+    ) {
+        let Some(rules) = self.targets.get(key) else {
+            return;
+        };
+        let device = view.devices.get(&key.device);
+        let reading = view.metrics.get(key);
+        let mut states = Vec::with_capacity(rules.len());
+        let mut fired = Vec::new();
+        for id in rules {
+            let tracker = self.trackers.get_mut(id).unwrap();
+            let (state, event) = advance(tracker, device, reading, view.now, config);
+            states.push((id.clone(), state));
+            fired.extend(event);
+        }
+        view.alerts.states.extend(states);
+        self.record(view, fired);
+    }
+
+    /// Updates rule visibility and expiry, including rules with no device or reading.
+    pub(crate) fn evaluate(&mut self, view: &mut MonitorView, config: &AppConfig) {
+        self.prepare(view, config);
+        let mut states = BTreeMap::new();
+        let mut fired = Vec::new();
+        for (id, tracker) in &mut self.trackers {
+            let device = tracker
+                .key
+                .as_ref()
+                .and_then(|key| view.devices.get(&key.device));
+            let reading = tracker.key.as_ref().and_then(|key| view.metrics.get(key));
+            let (state, event) = advance(tracker, device, reading, view.now, config);
+            states.insert(id.clone(), state);
+            fired.extend(event);
+        }
+        view.alerts.states = states;
+        self.record(view, fired);
+    }
+
+    fn record(&mut self, view: &mut MonitorView, fired: Vec<AlertEvent>) {
+        if fired.is_empty() {
+            return;
+        }
+        for event in fired {
+            match self.notify.try_send(event.clone()) {
+                Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+                Err(TrySendError::Full(_)) => {
+                    tracing::warn!(rule = event.rule.id, "通知队列已满，跳过本次告警通知")
+                }
+            }
+            self.recent.insert(0, event);
+        }
+        self.recent.truncate(RECENT);
+        view.alerts.recent = Arc::new(self.recent.clone());
+    }
+}
+
+/// Applies one rule's timing and formats a notification when it first fires.
+fn advance(
+    tracker: &mut Tracker,
+    device: Option<&DeviceDescriptor>,
+    reading: Option<&MetricReading>,
+    now: Instant,
+    config: &AppConfig,
+) -> (AlertState, Option<AlertEvent>) {
+    let current = device
+        .filter(|device| device.online)
+        .and(reading)
+        .and_then(|reading| {
+            (reading.effective_state(now) == SampleState::Ready)
+                .then(|| reading.value.zip(reading.last_success))
+                .flatten()
+        });
+    let event = match (current, device, reading) {
+        (Some((value, at)), Some(device), Some(reading)) => {
+            tracker.weigh(value, at).then(|| AlertEvent {
+                host: device.host.as_ref().and_then(|host| {
+                    config
+                        .remote_hosts
+                        .iter()
+                        .find(|entry| entry.id == *host)
+                        .map(|entry| RemoteHost::label(entry).to_owned())
+                }),
+                device: device.clone(),
+                unit: reading.descriptor.unit,
+                value,
+                at,
+                rule: tracker.rule.clone(),
+            })
+        }
+        _ => {
+            tracker.interrupt();
+            None
+        }
+    };
+    (tracker.state(current.is_some()), event)
 }
 
 /// Shows the notifications of fired alerts until the runtime stops.

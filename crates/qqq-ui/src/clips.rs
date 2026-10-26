@@ -1,141 +1,210 @@
-//! Clipboard history: what was copied to the clipboard while the clipboard manager is on,
-//! newest first, kept in memory for this run.
+//! Clipboard history and its GUI projection. Preparation and content comparison run on a
+//! worker; the GUI shares content and uploads the small prepared previews.
 
-use crate::components::thumbnail;
+mod worker;
+
 use eframe::egui;
 use qqq_domain::Clip;
-use std::{collections::VecDeque, time::Instant};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Condvar, Mutex},
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
+};
+use worker::{Job, Pending, Request, Snapshot};
 
-/// Most memory the entries take together, in bytes; the oldest entries go first beyond it.
+/// Most content bytes the history keeps; a single newest item can stand on its own.
 pub const BUDGET: usize = 256 * 1024 * 1024;
-/// Largest picture preview, in pixels.
-const THUMBNAIL: [usize; 2] = [360, 200];
 
 pub struct ClipEntry {
     pub id: u64,
-    pub clip: Clip,
-    /// When the content was last copied.
+    pub clip: Arc<Clip>,
     pub at: Instant,
-    /// Preview of a picture.
     pub thumbnail: Option<egui::TextureHandle>,
-    /// Characters of a text, counted once.
     pub chars: usize,
+    pub preview: Arc<str>,
 }
 
 #[derive(Default)]
+struct Shared {
+    pending: Pending,
+    latest: Option<Snapshot>,
+    stop: bool,
+}
+
 pub struct Clips {
     pub entries: VecDeque<ClipEntry>,
+    shared: Arc<(Mutex<Shared>, Condvar)>,
+    worker: Option<JoinHandle<()>>,
     next: u64,
+    /// Answers older than a local clear, removal or trim cannot restore those entries.
+    minimum: u64,
 }
 
 impl Clips {
-    /// Records content copied to the clipboard as the newest entry, keeping at most `keep`.
-    /// Content already in the history moves to the top instead.
-    pub fn record(&mut self, ctx: &egui::Context, clip: Clip, keep: usize) {
-        self.next += 1;
-        let thumbnail = match self.entries.iter().position(|entry| entry.clip == clip) {
-            Some(index) => self.entries.remove(index).and_then(|entry| entry.thumbnail),
-            None => match &clip {
-                Clip::Picture(picture) => Some(ctx.load_texture(
-                    format!("clip-{}", self.next),
-                    thumbnail(picture, THUMBNAIL),
-                    egui::TextureOptions::LINEAR,
-                )),
-                _ => None,
-            },
-        };
-        let chars = match &clip {
-            Clip::Text(text) => text.chars().count(),
-            _ => 0,
-        };
-        self.entries.push_front(ClipEntry {
-            id: self.next,
-            clip,
-            at: Instant::now(),
-            thumbnail,
-            chars,
-        });
-        self.trim(keep);
-    }
-
-    /// Drops the oldest entries beyond `keep` and beyond [`BUDGET`], keeping the newest.
-    pub fn trim(&mut self, keep: usize) {
-        self.trim_to(keep, BUDGET);
-    }
-
-    fn trim_to(&mut self, keep: usize, budget: usize) {
-        self.entries.truncate(keep.max(1));
-        let mut total: usize = self.entries.iter().map(|e| e.clip.bytes()).sum();
-        while total > budget && self.entries.len() > 1 {
-            if let Some(entry) = self.entries.pop_back() {
-                total -= entry.clip.bytes();
-            }
+    pub fn new(ctx: &egui::Context) -> Self {
+        let shared = Arc::new((Mutex::new(Shared::default()), Condvar::new()));
+        let state = Arc::clone(&shared);
+        let context = ctx.clone();
+        let worker = thread::Builder::new()
+            .name("clipboard-history".into())
+            .spawn(move || worker::run(state, context))
+            .ok();
+        Self {
+            entries: VecDeque::new(),
+            shared,
+            worker,
+            next: 0,
+            minimum: 0,
         }
+    }
+
+    fn send(&mut self, job: Job, local: bool) {
+        self.next += 1;
+        if local {
+            self.minimum = self.next;
+        }
+        let (state, changed) = &*self.shared;
+        let mut state = state.lock().unwrap();
+        if self.worker.is_some() && !state.stop {
+            state.pending.push(Request {
+                sequence: self.next,
+                job,
+            });
+            changed.notify_one();
+        }
+    }
+
+    /// Hands content to the worker without comparing or scanning its bytes on the GUI.
+    pub fn record(&mut self, _: &egui::Context, clip: impl Into<Arc<Clip>>, keep: usize) {
+        self.send(
+            Job::Record {
+                clip: clip.into(),
+                keep,
+                at: Instant::now(),
+            },
+            false,
+        );
+    }
+
+    pub fn update(&mut self, ctx: &egui::Context) {
+        let latest = self.shared.0.lock().unwrap().latest.take();
+        let Some(snapshot) = latest.filter(|s| s.sequence >= self.minimum) else {
+            return;
+        };
+        let mut previous = std::mem::take(&mut self.entries);
+        self.entries = snapshot
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let texture = previous
+                    .iter_mut()
+                    .find(|old| old.id == entry.id)
+                    .and_then(|old| old.thumbnail.take())
+                    .or_else(|| {
+                        entry.thumbnail.as_ref().map(|image| {
+                            ctx.load_texture(
+                                format!("clip-{}", entry.id),
+                                image.as_ref().clone(),
+                                egui::TextureOptions::LINEAR,
+                            )
+                        })
+                    });
+                ClipEntry {
+                    id: entry.id,
+                    clip: entry.clip,
+                    at: entry.at,
+                    thumbnail: texture,
+                    chars: entry.chars,
+                    preview: entry.preview,
+                }
+            })
+            .collect();
+    }
+
+    pub fn trim(&mut self, keep: usize) {
+        self.entries.truncate(keep.max(1));
+        self.send(Job::Trim(keep), true);
     }
 
     pub fn remove(&mut self, id: u64) {
         self.entries.retain(|entry| entry.id != id);
+        self.send(Job::Remove(id), true);
     }
 
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.send(Job::Clear, true);
+    }
+
+    pub fn finish(&mut self, limit: Duration) {
+        {
+            let (state, changed) = &*self.shared;
+            let mut state = state.lock().unwrap();
+            state.stop = true;
+            state.pending = Pending::default();
+            state.latest = None;
+            changed.notify_one();
+        }
+        let deadline = Instant::now() + limit;
+        while self.worker.as_ref().is_some_and(|w| !w.is_finished()) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        // A worker still busy past the limit is detached; it stops after its current job,
+        // so a later call, such as the one on drop, has nothing left to wait for.
+        if let Some(worker) = self.worker.take()
+            && worker.is_finished()
+        {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Drop for Clips {
+    fn drop(&mut self) {
+        self.finish(Duration::from_secs(2));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qqq_domain::Picture;
-    use std::sync::Arc;
 
-    fn texts(clips: &Clips) -> Vec<String> {
-        clips
-            .entries
-            .iter()
-            .map(|e| match &e.clip {
-                Clip::Text(text) => text.clone(),
-                other => format!("{other:?}"),
-            })
-            .collect()
+    #[test]
+    fn preparation_shares_content_and_keeps_clear_from_old_answers() {
+        let ctx = egui::Context::default();
+        let mut clips = Clips::new(&ctx);
+        let content = Arc::new(Clip::Text("你好\nworld".into()));
+        clips.record(&ctx, Arc::clone(&content), 3);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while clips.entries.is_empty() && Instant::now() < deadline {
+            clips.update(&ctx);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(clips.entries.len(), 1);
+        assert!(Arc::ptr_eq(&clips.entries[0].clip, &content));
+        assert_eq!(clips.entries[0].chars, 8);
+        assert_eq!(&*clips.entries[0].preview, "你好\nworld");
+        clips.clear();
+        clips.update(&ctx);
+        assert!(clips.entries.is_empty());
+        clips.finish(Duration::from_secs(2));
+        assert!(clips.worker.is_none());
+        clips.update(&ctx);
+        assert!(clips.entries.is_empty());
     }
 
     #[test]
-    fn copies_move_to_the_top_and_the_oldest_go_first() {
+    fn a_busy_worker_is_waited_for_once() {
         let ctx = egui::Context::default();
-        let mut clips = Clips::default();
-        for text in ["a", "b", "c", "a"] {
-            clips.record(&ctx, Clip::Text(text.into()), 3);
-        }
-        assert_eq!(texts(&clips), ["a", "c", "b"]);
-        clips.record(&ctx, Clip::Text("d".into()), 3);
-        assert_eq!(texts(&clips), ["d", "a", "c"]);
-        let id = clips.entries[1].id;
-        clips.remove(id);
-        assert_eq!(texts(&clips), ["d", "c"]);
-        clips.trim(1);
-        assert_eq!(texts(&clips), ["d"]);
-    }
-
-    #[test]
-    fn pictures_stay_within_the_memory_budget() {
-        let ctx = egui::Context::default();
-        let mut clips = Clips::default();
-        for shade in 0..5_u8 {
-            let picture = Picture {
-                width: 16,
-                height: 16,
-                rgba: vec![shade; 16 * 16 * 4],
-            };
-            clips.record(&ctx, Clip::Picture(Arc::new(picture)), 50);
-        }
-        assert_eq!(clips.entries.len(), 5);
-        // Each picture takes 1 KiB, so four fit in 4 KiB.
-        clips.trim_to(50, 4 * 1024);
-        assert_eq!(clips.entries.len(), 4);
-        assert!(clips.entries.iter().all(|e| e.thumbnail.is_some()));
-        let Clip::Picture(newest) = &clips.entries[0].clip else {
-            panic!("a picture")
-        };
-        assert_eq!(newest.rgba[0], 4);
+        let mut clips = Clips::new(&ctx);
+        clips.finish(Duration::from_secs(2));
+        clips.worker = Some(thread::spawn(|| thread::sleep(Duration::from_millis(500))));
+        let start = Instant::now();
+        clips.finish(Duration::from_millis(50));
+        assert!(clips.worker.is_none());
+        // Dropping finishes again without waiting for the detached worker.
+        drop(clips);
+        assert!(start.elapsed() < Duration::from_millis(400));
     }
 }

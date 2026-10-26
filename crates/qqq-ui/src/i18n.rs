@@ -402,6 +402,14 @@ pub struct Strings {
     pub shot_recent: &'static str,
     pub shot_empty: &'static str,
     pub shot_loading: &'static str,
+    /// The screenshot queue is full while earlier files are still being written.
+    pub shot_busy: &'static str,
+    /// The pictures waiting to be written or read fill the screenshot memory budget.
+    pub shot_memory_full: &'static str,
+    /// A screenshot file has more pixels than the library reads.
+    pub shot_too_large: &'static str,
+    /// The thread that writes the screenshot files could not start.
+    pub shot_storage_unavailable: &'static str,
     /// What happens to a selected region, with the folder that keeps the files.
     pub shot_note: fn(&str) -> String,
     pub copy: &'static str,
@@ -461,6 +469,8 @@ pub struct Strings {
     pub note_saved: &'static str,
     /// A note could not be written, with the system's description.
     pub note_save_failed: fn(&str) -> String,
+    /// The thread that writes the note files has stopped.
+    pub note_storage_unavailable: &'static str,
     /// Number of notes.
     pub note_count: fn(usize) -> String,
     pub note_empty: &'static str,

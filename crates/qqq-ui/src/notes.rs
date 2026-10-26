@@ -2,15 +2,17 @@
 //! directory. A worker thread lists, reads, writes and removes the files, so the GUI never
 //! waits for the disk; an edit is written once typing has paused.
 
-use crate::shots::LocalTime;
+mod storage;
+
+use crate::{i18n, shots::LocalTime};
 use std::{
-    collections::HashMap,
-    fs, io,
-    path::{Path, PathBuf},
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
     sync::mpsc,
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime},
 };
+use storage::Worker;
 
 /// Start of the names of the files the notes keep; other files in the folder stay
 /// untouched.
@@ -30,8 +32,10 @@ pub struct Note {
     pub modified: SystemTime,
     /// File holding the note, once written.
     path: Option<PathBuf>,
-    /// Times of the first and the latest edit not yet handed to the worker.
+    /// First unsubmitted edit and latest edit awaiting a successful write.
     dirty: Option<(Instant, Instant)>,
+    /// Latest edit handed to the worker, for distinguishing later edits from its answer.
+    submitted: Option<Instant>,
 }
 
 impl Note {
@@ -42,6 +46,7 @@ impl Note {
             modified: SystemTime::now(),
             path: None,
             dirty: None,
+            submitted: None,
         }
     }
 
@@ -77,6 +82,7 @@ enum Job {
         id: u64,
         path: Option<PathBuf>,
         text: String,
+        at: Instant,
     },
     Delete {
         id: u64,
@@ -96,14 +102,29 @@ enum Done {
     Saved {
         id: u64,
         path: PathBuf,
+        at: Instant,
     },
     /// The blank note's file is gone.
     Emptied {
         id: u64,
+        at: Instant,
     },
-    Failed(String),
+    Failed {
+        id: u64,
+        at: Instant,
+        error: String,
+    },
     /// A deleted note's file is still there.
     DeleteFailed(String),
+}
+
+/// A failed write of a note, kept until a write of the same or a later edit succeeds.
+struct Failure {
+    /// Latest edit the failed write carried.
+    at: Instant,
+    /// When the failure arrived among all failures, for showing the latest one.
+    order: u64,
+    error: String,
 }
 
 /// Why the latest write or deletion of a note's file failed.
@@ -136,8 +157,14 @@ pub struct Notes {
     next_id: u64,
     /// Writes handed to the worker and not answered yet.
     writing: usize,
-    /// Why the latest write or deletion failed, until a write succeeds.
+    /// Why the latest write or deletion still standing failed.
     pub error: Option<NoteError>,
+    /// Failed writes by note.
+    save_errors: BTreeMap<u64, Failure>,
+    /// Latest failed deletion with its arrival order, until a write succeeds.
+    delete_error: Option<(u64, String)>,
+    /// Failures recorded so far; orders the save and delete errors.
+    failures: u64,
 }
 
 impl Notes {
@@ -176,16 +203,19 @@ impl Notes {
             next_id: 0,
             writing: 0,
             error: None,
+            save_errors: BTreeMap::new(),
+            delete_error: None,
+            failures: 0,
         };
         notes.send(Job::List);
         notes.current = notes.add();
         notes
     }
 
-    fn send(&self, job: Job) {
-        if let Some(jobs) = &self.jobs {
-            let _ = jobs.send(job);
-        }
+    fn send(&self, job: Job) -> bool {
+        self.jobs
+            .as_ref()
+            .is_some_and(|jobs| jobs.send(job).is_ok())
     }
 
     /// A new blank note at the top of the list.
@@ -225,7 +255,19 @@ impl Notes {
             let mut note = self.entries.remove(index);
             note.modified = SystemTime::now();
             let now = Instant::now();
-            note.dirty = Some((note.dirty.map_or(now, |(first, _)| first), now));
+            let first = note.dirty.map_or(now, |(first, _)| {
+                if note.submitted.is_some_and(|at| at >= first)
+                    || self
+                        .save_errors
+                        .get(&id)
+                        .is_some_and(|failure| failure.at >= first)
+                {
+                    now
+                } else {
+                    first
+                }
+            });
+            note.dirty = Some((first, now));
             self.entries.insert(0, note);
         }
     }
@@ -255,6 +297,8 @@ impl Notes {
             return;
         };
         let note = self.entries.remove(index);
+        self.save_errors.remove(&id);
+        self.refresh_error();
         self.send(Job::Delete {
             id,
             path: note.path,
@@ -270,7 +314,7 @@ impl Notes {
     /// Writes the current note now and drops it when blank, unless it is the only note.
     fn leave(&mut self) {
         self.write(self.current);
-        if self.current().is_blank() && self.entries.len() > 1 {
+        if self.current().is_blank() && self.current().dirty.is_none() && self.entries.len() > 1 {
             let id = self.current;
             self.entries.retain(|note| note.id != id);
         }
@@ -281,16 +325,25 @@ impl Notes {
         let Some(note) = self.entries.iter_mut().find(|note| note.id == id) else {
             return;
         };
-        if note.dirty.take().is_none() {
+        let Some((_, at)) = note.dirty else { return };
+        if note.submitted.is_some_and(|sent| sent >= at) {
             return;
         }
+        note.submitted = Some(at);
         let job = Job::Save {
             id,
             path: note.path.clone(),
             text: note.text.clone(),
+            at,
         };
-        self.writing += 1;
-        self.send(job);
+        if self.send(job) {
+            self.writing += 1;
+        } else {
+            if let Some(note) = self.entries.iter_mut().find(|note| note.id == id) {
+                note.submitted = None;
+            }
+            self.save_failed(id, at, i18n::t().note_storage_unavailable.into());
+        }
     }
 
     /// Writes the notes whose typing has paused, or with `all` every unwritten note.
@@ -302,6 +355,17 @@ impl Notes {
             .iter()
             .filter_map(|note| {
                 let (first, last) = note.dirty?;
+                if note.submitted.is_some_and(|at| at >= last) {
+                    return None;
+                }
+                if !all
+                    && self
+                        .save_errors
+                        .get(&note.id)
+                        .is_some_and(|failure| failure.at >= last)
+                {
+                    return None;
+                }
                 let left = SAVE_DELAY
                     .saturating_sub(last.elapsed())
                     .min(SAVE_WAIT.saturating_sub(first.elapsed()));
@@ -337,6 +401,7 @@ impl Notes {
                             modified: file.modified,
                             path: Some(file.path),
                             dirty: None,
+                            submitted: None,
                         });
                     }
                     self.listed = true;
@@ -352,31 +417,101 @@ impl Notes {
                         self.current = self.entries[0].id;
                     }
                 }
-                Done::Saved { id, path } => {
+                Done::Saved { id, path, at } => {
                     self.writing = self.writing.saturating_sub(1);
-                    self.error = None;
                     if let Some(note) = self.entries.iter_mut().find(|note| note.id == id) {
                         note.path = Some(path);
                     }
+                    self.acknowledge(id, at);
                 }
-                Done::Emptied { id } => {
+                Done::Emptied { id, at } => {
                     self.writing = self.writing.saturating_sub(1);
                     if let Some(note) = self.entries.iter_mut().find(|note| note.id == id) {
                         note.path = None;
                     }
+                    self.acknowledge(id, at);
+                    if id != self.current
+                        && self.entries.len() > 1
+                        && self
+                            .get(id)
+                            .is_some_and(|note| note.is_blank() && note.dirty.is_none())
+                    {
+                        self.entries.retain(|note| note.id != id);
+                    }
                 }
-                Done::Failed(error) => {
+                Done::Failed { id, at, error } => {
                     self.writing = self.writing.saturating_sub(1);
-                    self.error = Some(NoteError::Save(error));
+                    if let Some(note) = self.entries.iter_mut().find(|note| note.id == id) {
+                        if note.submitted == Some(at) {
+                            note.submitted = None;
+                        }
+                        self.save_failed(id, at, error);
+                    }
                 }
                 // A deletion is no write, so the writes under way stay counted.
-                Done::DeleteFailed(error) => self.error = Some(NoteError::Delete(error)),
+                Done::DeleteFailed(error) => self.delete_failed(error),
             }
         }
     }
 
+    /// Keeps the failed write of edit `at`, unless a later edit of the note failed already.
+    fn save_failed(&mut self, id: u64, at: Instant, error: String) {
+        if self
+            .save_errors
+            .get(&id)
+            .is_none_or(|failure| failure.at <= at)
+        {
+            self.failures += 1;
+            let order = self.failures;
+            self.save_errors.insert(id, Failure { at, order, error });
+        }
+        self.refresh_error();
+    }
+
+    fn delete_failed(&mut self, error: String) {
+        self.failures += 1;
+        self.delete_error = Some((self.failures, error));
+        self.refresh_error();
+    }
+
+    fn acknowledge(&mut self, id: u64, at: Instant) {
+        self.delete_error = None;
+        if let Some(note) = self.entries.iter_mut().find(|note| note.id == id)
+            && note.dirty.is_some_and(|(_, last)| last <= at)
+        {
+            note.dirty = None;
+        }
+        if self
+            .save_errors
+            .get(&id)
+            .is_some_and(|failure| failure.at <= at)
+        {
+            self.save_errors.remove(&id);
+        }
+        self.refresh_error();
+    }
+
+    /// Shows the failure that arrived last among those still standing.
+    fn refresh_error(&mut self) {
+        let save = self
+            .save_errors
+            .values()
+            .max_by_key(|failure| failure.order)
+            .map(|failure| (failure.order, NoteError::Save(failure.error.clone())));
+        let delete = self
+            .delete_error
+            .as_ref()
+            .map(|(order, error)| (*order, NoteError::Delete(error.clone())));
+        self.error = save
+            .into_iter()
+            .chain(delete)
+            .max_by_key(|(order, _)| *order)
+            .map(|(_, error)| error);
+    }
+
     /// Writes every unwritten note and lets the worker finish, waiting at most `limit`.
     pub fn finish(&mut self, limit: Duration) {
+        self.update();
         self.flush(true);
         self.jobs = None;
         let deadline = Instant::now() + limit;
@@ -384,155 +519,20 @@ impl Notes {
             && !worker.is_finished()
             && Instant::now() < deadline
         {
+            self.update();
             thread::sleep(Duration::from_millis(10));
         }
+        self.update();
         if let Some(worker) = self.worker.take_if(|w| w.is_finished()) {
             let _ = worker.join();
         }
     }
 }
 
-struct Worker {
-    directory: PathBuf,
-    outbox: mpsc::Sender<Done>,
-    local_time: LocalTime,
-    wake: Box<dyn Fn() + Send>,
-    /// Files this worker created, by note; a write that set out before the GUI learnt the
-    /// name still finds the file.
-    paths: HashMap<u64, PathBuf>,
-}
-
-impl Worker {
-    fn run(&mut self, job: Job) {
-        match job {
-            Job::List => {
-                let files = self.files();
-                self.send(Done::Listed(files));
-            }
-            Job::Save { id, path, text } => {
-                let path = self.paths.get(&id).cloned().or(path);
-                let done = if text.trim().is_empty() {
-                    self.paths.remove(&id);
-                    match path.map(fs::remove_file) {
-                        Some(Err(error)) if error.kind() != io::ErrorKind::NotFound => {
-                            Done::Failed(error.to_string())
-                        }
-                        _ => Done::Emptied { id },
-                    }
-                } else {
-                    match self.save(path, &text) {
-                        Ok(path) => {
-                            self.paths.insert(id, path.clone());
-                            Done::Saved { id, path }
-                        }
-                        Err(error) => Done::Failed(error.to_string()),
-                    }
-                };
-                self.send(done);
-            }
-            Job::Delete { id, path } => {
-                if let Some(path) = self.paths.remove(&id).or(path)
-                    && let Err(error) = fs::remove_file(&path)
-                    && error.kind() != io::ErrorKind::NotFound
-                {
-                    self.send(Done::DeleteFailed(error.to_string()));
-                }
-            }
-        }
-    }
-
-    fn send(&self, done: Done) {
-        let _ = self.outbox.send(done);
-        (self.wake)();
-    }
-
-    /// The notes' files, most recently changed first. Leftovers of interrupted writes are
-    /// removed.
-    fn files(&self) -> Vec<Listed> {
-        let Ok(entries) = fs::read_dir(&self.directory) else {
-            return Vec::new();
-        };
-        let mut files: Vec<_> = entries
-            .flatten()
-            .filter_map(|entry| {
-                let name = entry.file_name().into_string().ok()?;
-                if !name.starts_with(PREFIX) {
-                    return None;
-                }
-                if name.ends_with(".md.tmp") {
-                    let _ = fs::remove_file(entry.path());
-                    return None;
-                }
-                if !name.ends_with(".md") {
-                    return None;
-                }
-                let modified = entry.metadata().ok()?.modified().ok()?;
-                let text = read(&entry.path()).ok()?;
-                Some(Listed {
-                    path: entry.path(),
-                    modified,
-                    text,
-                })
-            })
-            .collect();
-        files.sort_by(|a, b| {
-            b.modified
-                .cmp(&a.modified)
-                .then_with(|| b.path.cmp(&a.path))
-        });
-        files
-    }
-
-    /// Writes the text through a temporary file, under a new name with the local time
-    /// when the note has no file yet.
-    fn save(&self, path: Option<PathBuf>, text: &str) -> io::Result<PathBuf> {
-        fs::create_dir_all(&self.directory)?;
-        let path = match path {
-            Some(path) => path,
-            None => self.new_path(),
-        };
-        let temporary = path.with_extension("md.tmp");
-        let written = fs::write(&temporary, text).and_then(|()| fs::rename(&temporary, &path));
-        if let Err(error) = written {
-            let _ = fs::remove_file(&temporary);
-            return Err(error);
-        }
-        Ok(path)
-    }
-
-    fn new_path(&self) -> PathBuf {
-        let now = SystemTime::now();
-        let stamp = match (self.local_time)(now) {
-            Some([year, month, day, hour, minute, second, _]) => {
-                format!("{year:04}-{month:02}-{day:02} {hour:02}{minute:02}{second:02}")
-            }
-            None => now
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs())
-                .to_string(),
-        };
-        (1..)
-            .map(|n| match n {
-                1 => format!("{PREFIX}{stamp}.md"),
-                _ => format!("{PREFIX}{stamp} ({n}).md"),
-            })
-            .map(|name| self.directory.join(name))
-            .find(|path| !path.exists() && !self.paths.values().any(|p| p == path))
-            .unwrap_or_default()
-    }
-}
-
-/// Text of a note file with `\n` line breaks; a byte order mark and invalid UTF-8 are
-/// tolerated.
-fn read(path: &Path) -> io::Result<String> {
-    let bytes = fs::read(path)?;
-    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
-    Ok(String::from_utf8_lossy(bytes).replace("\r\n", "\n"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, path::Path};
 
     fn wait(notes: &mut Notes, until: impl Fn(&Notes) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -555,6 +555,150 @@ mod tests {
     fn type_text(notes: &mut Notes, text: &str) {
         notes.current_mut().text = text.into();
         notes.edited();
+    }
+
+    #[test]
+    fn a_failed_save_stays_pending_and_can_be_retried_after_the_disk_recovers() {
+        let directory =
+            std::env::temp_dir().join(format!("qqq-notes-retry-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::write(&directory, "temporary directory conflict").unwrap();
+        let mut notes = Notes::new(directory.clone(), |_| None, || {});
+        wait(&mut notes, |n| n.listed);
+        type_text(&mut notes, "keep this edit");
+        notes.flush(true);
+        wait(&mut notes, |n| n.error.is_some() && n.writing == 0);
+        assert!(!notes.saved());
+        assert_eq!(notes.flush(false), None);
+        assert_eq!(
+            notes.writing, 0,
+            "automatic repaint does not retry a failing write"
+        );
+
+        // A new edit after a failed attempt gets a fresh coalescing window too.
+        notes.current_mut().dirty.as_mut().unwrap().0 =
+            Instant::now() - SAVE_WAIT - Duration::from_secs(1);
+        notes.edited();
+        assert!(notes.flush(false).is_some());
+        assert_eq!(notes.writing, 0);
+
+        fs::remove_file(&directory).unwrap();
+        fs::create_dir(&directory).unwrap();
+        notes.flush(true);
+        wait(&mut notes, |n| n.saved());
+        assert_eq!(notes.error, None);
+        assert_eq!(
+            fs::read_to_string(notes.current().path.as_ref().unwrap()).unwrap(),
+            "keep this edit"
+        );
+        notes.finish(Duration::from_secs(5));
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn an_acknowledgement_keeps_later_edits_and_another_notes_failure() {
+        let directory = std::env::temp_dir().join(format!("qqq-notes-acks-{}", std::process::id()));
+        let mut notes = Notes::new(directory.clone(), |_| None, || {});
+        wait(&mut notes, |n| n.listed);
+        let first = notes.current;
+        type_text(&mut notes, "first edit");
+        let first_at = notes.current().dirty.unwrap().1;
+        type_text(&mut notes, "later edit");
+        notes.acknowledge(first, first_at);
+        assert!(!notes.saved());
+
+        let other = notes.add();
+        notes.save_failed(other, first_at, "locked".into());
+        notes.delete_failed("denied".into());
+        let latest = notes.get(first).unwrap().dirty.unwrap().1;
+        notes.acknowledge(first, latest);
+        assert_eq!(notes.delete_error, None);
+        assert_eq!(notes.error, Some(NoteError::Save("locked".into())));
+        notes.delete(other);
+        notes.finish(Duration::from_secs(5));
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn the_latest_standing_failure_is_shown() {
+        let directory =
+            std::env::temp_dir().join(format!("qqq-notes-latest-{}", std::process::id()));
+        let mut notes = Notes::new(directory.clone(), |_| None, || {});
+        wait(&mut notes, |n| n.listed);
+        let older = notes.add();
+        let newer = notes.add();
+        let at = Instant::now();
+
+        // A failure of a note with a smaller id still shows when it arrives last.
+        notes.save_failed(newer, at, "locked".into());
+        notes.save_failed(older, at, "full".into());
+        assert_eq!(notes.error, Some(NoteError::Save("full".into())));
+        notes.delete_failed("denied".into());
+        assert_eq!(notes.error, Some(NoteError::Delete("denied".into())));
+
+        // A successful write clears the deletion error and that note's failure; the
+        // latest failure left takes its place.
+        notes.acknowledge(older, at);
+        assert_eq!(notes.error, Some(NoteError::Save("locked".into())));
+        notes.acknowledge(newer, at);
+        assert_eq!(notes.error, None);
+        notes.finish(Duration::from_secs(5));
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn edits_after_a_slow_submission_start_a_new_debounce_window() {
+        let directory =
+            std::env::temp_dir().join(format!("qqq-notes-slow-write-{}", std::process::id()));
+        let mut notes = Notes::new(directory.clone(), |_| None, || {});
+        let (jobs, inbox) = mpsc::channel();
+        let (answers, done) = mpsc::channel();
+        notes.jobs = Some(jobs);
+        notes.done = done;
+
+        // Keep the storage answers pending while the first batch reaches SAVE_WAIT.
+        let old = Instant::now() - SAVE_WAIT - Duration::from_secs(1);
+        notes.current_mut().text = "first batch".into();
+        notes.current_mut().dirty = Some((old, old));
+        notes.flush(false);
+        assert!(matches!(inbox.try_recv(), Ok(Job::Save { at, .. }) if at == old));
+        assert_eq!(notes.writing, 1);
+
+        for text in ["n", "ne", "new", "newest edit"] {
+            type_text(&mut notes, text);
+            assert!(notes.current().dirty.unwrap().0 > old);
+            assert!(notes.flush(false).is_some());
+            assert!(inbox.try_recv().is_err());
+            assert_eq!(notes.writing, 1);
+        }
+        notes.flush(true);
+        let Ok(Job::Save { id, text, at, .. }) = inbox.try_recv() else {
+            panic!("the latest edit is submitted once")
+        };
+        assert_eq!(text, "newest edit");
+        assert!(inbox.try_recv().is_err());
+        answers
+            .send(Done::Saved {
+                id,
+                path: directory.join("note.md"),
+                at: old,
+            })
+            .unwrap();
+        notes.update();
+        assert!(
+            !notes.saved(),
+            "the older acknowledgement keeps the newest edit pending"
+        );
+        answers
+            .send(Done::Saved {
+                id,
+                path: directory.join("note.md"),
+                at,
+            })
+            .unwrap();
+        notes.update();
+        assert!(notes.saved());
+        notes.finish(Duration::from_secs(5));
     }
 
     #[test]
@@ -583,10 +727,20 @@ mod tests {
         assert_eq!(notes.writing, 1);
         assert!(!notes.saved());
         assert_eq!(notes.error, Some(NoteError::Delete("denied".into())));
-        answers.send(Done::Failed("full".into())).unwrap();
+        let id = notes.current;
+        let at = Instant::now();
+        notes.entries[0].dirty = Some((at, at));
+        answers
+            .send(Done::Failed {
+                id,
+                at,
+                error: "full".into(),
+            })
+            .unwrap();
         notes.update();
         assert_eq!(notes.writing, 0);
         assert_eq!(notes.error, Some(NoteError::Save("full".into())));
+        assert!(!notes.saved());
         notes.finish(Duration::from_secs(5));
         let _ = fs::remove_dir_all(&directory);
     }

@@ -45,7 +45,7 @@ impl DesktopApp {
         for event in self.shots.update(ctx) {
             match event {
                 shots::Event::Loaded(picture) => {
-                    self.put_on_clipboard(ctx, &Clip::Picture(Arc::new(picture)))
+                    self.put_on_clipboard(ctx, Arc::new(Clip::Picture(Arc::new(picture))))
                 }
                 shots::Event::Failed(error) => self.message = Some(Notice::ScreenshotFile(error)),
             }
@@ -66,7 +66,7 @@ impl DesktopApp {
         self.snip = Snip::Idle;
         if let CaptureEnd::Taken(picture) = end {
             let picture = Arc::new(picture);
-            self.put_on_clipboard(ctx, &Clip::Picture(Arc::clone(&picture)));
+            self.put_on_clipboard(ctx, Arc::new(Clip::Picture(Arc::clone(&picture))));
             self.shots
                 .save(picture, self.active_config.screenshot_history);
         }
@@ -102,15 +102,15 @@ impl DesktopApp {
     /// Puts content on the clipboard, showing why when it fails. While the clipboard is
     /// followed, the content enters its history here: the desktop reports only what other
     /// applications put there.
-    pub(in crate::app) fn put_on_clipboard(&mut self, ctx: &egui::Context, clip: &Clip) {
-        match (self.desktop.input.set_clipboard)(clip) {
+    pub(in crate::app) fn put_on_clipboard(&mut self, ctx: &egui::Context, clip: Arc<Clip>) {
+        match (self.desktop.input.set_clipboard)(&clip) {
             Ok(()) => {
                 if matches!(self.message, Some(Notice::ClipboardFailed(_))) {
                     self.message = None;
                 }
                 if self.active_config.clipboard_manager {
                     let keep = self.active_config.clipboard_history;
-                    self.clips.record(ctx, clip.clone(), keep);
+                    self.clips.record(ctx, clip, keep);
                 }
             }
             Err(reason) => self.message = Some(Notice::ClipboardFailed(reason)),
@@ -124,7 +124,6 @@ impl DesktopApp {
 
     pub(in crate::app) fn screenshots(&mut self, ui: &mut egui::Ui) {
         let t = i18n::t();
-        self.shots.show_thumbnails();
         theme::card().show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 10.0;
             let size =
@@ -190,15 +189,21 @@ impl DesktopApp {
             .floor()
             .max(1.0) as usize;
         let mut action = None;
+        let mut visible = Vec::new();
         for row in self.shots.entries.chunks(columns) {
             ui.columns(columns, |uis| {
                 for (ui, shot) in uis.iter_mut().zip(row) {
-                    if let Some(chosen) = tile(ui, shot, self.desktop.system.local_time) {
+                    let (chosen, shown) = tile(ui, shot, self.desktop.system.local_time);
+                    if shown {
+                        visible.push(shot.file.path.clone());
+                    }
+                    if let Some(chosen) = chosen {
                         action = Some(chosen);
                     }
                 }
             });
         }
+        self.shots.show_visible_thumbnails(&visible);
         match action {
             Some(Action::Copy(path)) => self.shots.load(&path),
             Some(Action::Open(path)) => self.open(&path),
@@ -209,78 +214,80 @@ impl DesktopApp {
 }
 
 /// A screenshot's thumbnail, time, size and buttons.
-fn tile(ui: &mut egui::Ui, shot: &shots::Shot, local_time: shots::LocalTime) -> Option<Action> {
+fn tile(
+    ui: &mut egui::Ui,
+    shot: &shots::Shot,
+    local_time: shots::LocalTime,
+) -> (Option<Action>, bool) {
     let t = i18n::t();
     let file = &shot.file;
-    theme::card()
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 6.0;
-            let width = ui.available_width();
-            let (rect, response) =
-                ui.allocate_exact_size(vec2(width, width * 9.0 / 16.0), egui::Sense::click());
-            let painter = ui.painter();
-            painter.rect_filled(rect, 0.0, theme::WELL);
-            match &shot.thumbnail {
-                Some(texture) => {
-                    let size = texture.size_vec2();
-                    let scale = (rect.width() / size.x).min(rect.height() / size.y);
-                    painter.image(
-                        texture.id(),
-                        egui::Rect::from_center_size(rect.center(), size * scale),
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
-                    );
-                }
-                None => {
-                    let unit = pixel::unit(ui.ctx(), 2.0);
-                    let origin =
-                        pixel::snap(ui.ctx(), rect.center() - egui::Vec2::splat(4.5 * unit));
-                    let mut shapes = Vec::new();
-                    pixel::icon_shapes(
-                        &mut shapes,
-                        origin,
-                        unit,
-                        &pixel::ICON_CAMERA,
-                        theme::SHADOW,
-                        theme::LINE,
-                    );
-                    painter.extend(shapes);
+    let card = theme::card().show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        let width = ui.available_width();
+        let (rect, response) =
+            ui.allocate_exact_size(vec2(width, width * 9.0 / 16.0), egui::Sense::click());
+        let painter = ui.painter();
+        painter.rect_filled(rect, 0.0, theme::WELL);
+        match &shot.thumbnail {
+            Some(texture) => {
+                let size = texture.size_vec2();
+                let scale = (rect.width() / size.x).min(rect.height() / size.y);
+                painter.image(
+                    texture.id(),
+                    egui::Rect::from_center_size(rect.center(), size * scale),
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+            None => {
+                let unit = pixel::unit(ui.ctx(), 2.0);
+                let origin = pixel::snap(ui.ctx(), rect.center() - egui::Vec2::splat(4.5 * unit));
+                let mut shapes = Vec::new();
+                pixel::icon_shapes(
+                    &mut shapes,
+                    origin,
+                    unit,
+                    &pixel::ICON_CAMERA,
+                    theme::SHADOW,
+                    theme::LINE,
+                );
+                painter.extend(shapes);
+            }
+        }
+        let mut action = None;
+        if response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(t.open)
+            .clicked()
+        {
+            action = Some(Action::Open(file.path.clone()));
+        }
+        let taken = local_time(file.taken).map(timestamp).unwrap_or_default();
+        ui.label(RichText::new(taken).size(12.0).strong());
+        ui.label(
+            RichText::new(format!(
+                "{} × {} · {}",
+                file.width,
+                file.height,
+                bytes(file.bytes as f64)
+            ))
+            .size(12.0)
+            .color(theme::MUTED),
+        );
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for (label, make) in [
+                (t.copy, Action::Copy as fn(PathBuf) -> Action),
+                (t.open, Action::Open),
+                (t.delete, Action::Delete),
+            ] {
+                let size = vec2(label_width(ui, &[label], 14.0) + 26.0, 30.0);
+                if theme::pixel_button(ui, label, None, false, size).clicked() {
+                    action = Some(make(file.path.clone()));
                 }
             }
-            let mut action = None;
-            if response
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(t.open)
-                .clicked()
-            {
-                action = Some(Action::Open(file.path.clone()));
-            }
-            let taken = local_time(file.taken).map(timestamp).unwrap_or_default();
-            ui.label(RichText::new(taken).size(12.0).strong());
-            ui.label(
-                RichText::new(format!(
-                    "{} × {} · {}",
-                    file.width,
-                    file.height,
-                    bytes(file.bytes as f64)
-                ))
-                .size(12.0)
-                .color(theme::MUTED),
-            );
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                for (label, make) in [
-                    (t.copy, Action::Copy as fn(PathBuf) -> Action),
-                    (t.open, Action::Open),
-                    (t.delete, Action::Delete),
-                ] {
-                    let size = vec2(label_width(ui, &[label], 14.0) + 26.0, 30.0);
-                    if theme::pixel_button(ui, label, None, false, size).clicked() {
-                        action = Some(make(file.path.clone()));
-                    }
-                }
-            });
-            action
-        })
-        .inner
+        });
+        action
+    });
+    (card.inner, card.response.rect.intersects(ui.clip_rect()))
 }
