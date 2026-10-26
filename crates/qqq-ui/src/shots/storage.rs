@@ -1,7 +1,7 @@
 //! Bounded screenshot work: file operations keep their order ahead of optional thumbnails.
 
 use super::*;
-use crate::components::thumbnail;
+use crate::{components::thumbnail, i18n};
 use image::ImageDecoder;
 use std::{
     collections::VecDeque,
@@ -156,7 +156,7 @@ impl Store {
             })
             .ok();
         if worker.is_none() {
-            shared.fail("Screenshot storage worker is unavailable");
+            shared.fail(i18n::t().shot_storage_unavailable);
             shared.close();
         }
         Self {
@@ -169,16 +169,13 @@ impl Store {
         let mut pending = self.shared.pending.lock().unwrap();
         if pending.closing || pending.jobs.len() >= TASKS {
             drop(pending);
-            self.shared
-                .fail("Screenshot storage is busy; retry after pending files are saved");
+            self.shared.fail(i18n::t().shot_busy);
             return;
         }
         let reservation = if let Job::Save(picture, _) = &job {
             let Some(reservation) = reserve(&self.shared.used, picture.rgba.len()) else {
                 drop(pending);
-                self.shared.fail(
-                    "Screenshot image memory budget is full; retry after pending files are saved",
-                );
+                self.shared.fail(i18n::t().shot_memory_full);
                 return;
             };
             Some(reservation)
@@ -197,7 +194,7 @@ impl Store {
         if pending.closing {
             return;
         }
-        pending.wanted = paths.into_iter().take(THUMBNAIL_CACHE).collect();
+        pending.wanted = paths;
         pending.thumbnails = pending
             .wanted
             .iter()
@@ -382,18 +379,18 @@ fn read(path: &Path, used: &Arc<AtomicUsize>) -> io::Result<(Picture, Reservatio
         .checked_mul(height as usize)
         .and_then(|n| n.checked_mul(4))
         .filter(|bytes| *bytes <= MAX_IMAGE)
-        .ok_or_else(|| io::Error::other("Screenshot image is too large"))?;
+        .ok_or_else(|| io::Error::other(i18n::t().shot_too_large))?;
     let decoded = usize::try_from(decoder.total_bytes())
         .ok()
         .filter(|n| *n <= MAX_IMAGE)
-        .ok_or_else(|| io::Error::other("Screenshot image is too large"))?;
+        .ok_or_else(|| io::Error::other(i18n::t().shot_too_large))?;
     let peak = if decoder.color_type() == image::ColorType::Rgba8 {
         bytes
     } else {
         bytes + decoded
     };
-    let mut reservation = reserve(used, peak)
-        .ok_or_else(|| io::Error::other("Screenshot image memory budget is full"))?;
+    let mut reservation =
+        reserve(used, peak).ok_or_else(|| io::Error::other(i18n::t().shot_memory_full))?;
     let image = image::DynamicImage::from_decoder(decoder)
         .map_err(io::Error::other)?
         .into_rgba8();
@@ -466,6 +463,23 @@ mod tests {
         assert!(
             matches!(store.shared.next(), Some(Task::Thumbnail(path)) if path == Path::new("visible.png"))
         );
+        store.shared.close();
+        assert!(store.shared.next().is_none());
+    }
+
+    #[test]
+    fn every_requested_thumbnail_is_read() {
+        let store = paused_store();
+        let paths: Vec<PathBuf> = (0..24).map(|n| format!("shot {n}.png").into()).collect();
+        store.thumbnails(paths.clone());
+        let read: Vec<_> = paths
+            .iter()
+            .map(|_| match store.shared.next() {
+                Some(Task::Thumbnail(path)) => path,
+                _ => panic!("each visible tile queues a thumbnail read"),
+            })
+            .collect();
+        assert_eq!(read, paths);
         store.shared.close();
         assert!(store.shared.next().is_none());
     }

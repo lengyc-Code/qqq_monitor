@@ -419,6 +419,10 @@ pub const STRINGS: Strings = Strings {
     shot_recent: "Recent screenshots",
     shot_empty: "No screenshots yet. Press the shortcut or click Take screenshot.",
     shot_loading: "Reading screenshots…",
+    shot_busy: "Screenshot storage is busy; retry once the pending screenshots are saved",
+    shot_memory_full: "Screenshot memory is full; retry once the screenshots in progress finish",
+    shot_too_large: "The screenshot image is too large",
+    shot_storage_unavailable: "Screenshot storage is unavailable",
     shot_note: |folder| {
         format!(
             "When you release the mouse, the selected region is copied to the clipboard and saved as a PNG in {folder}. Beyond the number to keep, the oldest screenshots are removed first. Take screenshot hides the main window before the capture."
@@ -474,6 +478,7 @@ pub const STRINGS: Strings = Strings {
     note_saving: "Saving…",
     note_saved: "Saved",
     note_save_failed: |error| format!("Could not save: {error}"),
+    note_storage_unavailable: "Note storage is unavailable",
     note_count: |n| match n {
         1 => "1 note".into(),
         _ => format!("{n} notes"),

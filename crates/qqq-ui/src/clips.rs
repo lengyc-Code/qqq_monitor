@@ -150,7 +150,11 @@ impl Clips {
         while self.worker.as_ref().is_some_and(|w| !w.is_finished()) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(5));
         }
-        if let Some(worker) = self.worker.take_if(|w| w.is_finished()) {
+        // A worker still busy past the limit is detached; it stops after its current job,
+        // so a later call, such as the one on drop, has nothing left to wait for.
+        if let Some(worker) = self.worker.take()
+            && worker.is_finished()
+        {
             let _ = worker.join();
         }
     }
@@ -188,5 +192,19 @@ mod tests {
         assert!(clips.worker.is_none());
         clips.update(&ctx);
         assert!(clips.entries.is_empty());
+    }
+
+    #[test]
+    fn a_busy_worker_is_waited_for_once() {
+        let ctx = egui::Context::default();
+        let mut clips = Clips::new(&ctx);
+        clips.finish(Duration::from_secs(2));
+        clips.worker = Some(thread::spawn(|| thread::sleep(Duration::from_millis(500))));
+        let start = Instant::now();
+        clips.finish(Duration::from_millis(50));
+        assert!(clips.worker.is_none());
+        // Dropping finishes again without waiting for the detached worker.
+        drop(clips);
+        assert!(start.elapsed() < Duration::from_millis(400));
     }
 }

@@ -395,6 +395,10 @@ pub const STRINGS: Strings = Strings {
     shot_recent: "最近的截图",
     shot_empty: "还没有截图。按下快捷键或点击「开始截图」。",
     shot_loading: "正在读取截图…",
+    shot_busy: "截图存储正忙，请在待保存的截图写入后重试",
+    shot_memory_full: "截图图片内存已满，请在处理中的截图完成后重试",
+    shot_too_large: "截图图片过大",
+    shot_storage_unavailable: "截图存储不可用",
     shot_note: |folder| {
         format!(
             "松开鼠标后，所选区域复制到剪贴板并以 PNG 保存在 {folder}；超出保留数量时先删除最早的截图。点击「开始截图」时，主窗口先隐藏再截取。"
@@ -438,6 +442,7 @@ pub const STRINGS: Strings = Strings {
     note_saving: "正在保存…",
     note_saved: "已保存",
     note_save_failed: |error| format!("保存失败：{error}"),
+    note_storage_unavailable: "便签存储不可用",
     note_count: |n| format!("{n} 条"),
     note_empty: "还没有便签。按下快捷键或点击「打开便签」开始记录。",
     note_loading: "正在读取便签…",

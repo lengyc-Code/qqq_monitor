@@ -4,7 +4,7 @@
 
 mod storage;
 
-use crate::shots::LocalTime;
+use crate::{i18n, shots::LocalTime};
 use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
@@ -118,6 +118,15 @@ enum Done {
     DeleteFailed(String),
 }
 
+/// A failed write of a note, kept until a write of the same or a later edit succeeds.
+struct Failure {
+    /// Latest edit the failed write carried.
+    at: Instant,
+    /// When the failure arrived among all failures, for showing the latest one.
+    order: u64,
+    error: String,
+}
+
 /// Why the latest write or deletion of a note's file failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NoteError {
@@ -148,10 +157,14 @@ pub struct Notes {
     next_id: u64,
     /// Writes handed to the worker and not answered yet.
     writing: usize,
-    /// Why the latest write or deletion failed, until a write succeeds.
+    /// Why the latest write or deletion still standing failed.
     pub error: Option<NoteError>,
-    save_errors: BTreeMap<u64, (Instant, String)>,
-    delete_error: Option<String>,
+    /// Failed writes by note.
+    save_errors: BTreeMap<u64, Failure>,
+    /// Latest failed deletion with its arrival order, until a write succeeds.
+    delete_error: Option<(u64, String)>,
+    /// Failures recorded so far; orders the save and delete errors.
+    failures: u64,
 }
 
 impl Notes {
@@ -192,6 +205,7 @@ impl Notes {
             error: None,
             save_errors: BTreeMap::new(),
             delete_error: None,
+            failures: 0,
         };
         notes.send(Job::List);
         notes.current = notes.add();
@@ -246,7 +260,7 @@ impl Notes {
                     || self
                         .save_errors
                         .get(&id)
-                        .is_some_and(|(at, _)| *at >= first)
+                        .is_some_and(|failure| failure.at >= first)
                 {
                     now
                 } else {
@@ -328,9 +342,7 @@ impl Notes {
             if let Some(note) = self.entries.iter_mut().find(|note| note.id == id) {
                 note.submitted = None;
             }
-            self.save_errors
-                .insert(id, (at, "Note storage worker is unavailable".into()));
-            self.refresh_error();
+            self.save_failed(id, at, i18n::t().note_storage_unavailable.into());
         }
     }
 
@@ -350,7 +362,7 @@ impl Notes {
                     && self
                         .save_errors
                         .get(&note.id)
-                        .is_some_and(|(at, _)| *at >= last)
+                        .is_some_and(|failure| failure.at >= last)
                 {
                     return None;
                 }
@@ -433,23 +445,33 @@ impl Notes {
                         if note.submitted == Some(at) {
                             note.submitted = None;
                         }
-                        if self
-                            .save_errors
-                            .get(&id)
-                            .is_none_or(|(failed, _)| *failed <= at)
-                        {
-                            self.save_errors.insert(id, (at, error));
-                        }
+                        self.save_failed(id, at, error);
                     }
-                    self.refresh_error();
                 }
                 // A deletion is no write, so the writes under way stay counted.
-                Done::DeleteFailed(error) => {
-                    self.delete_error = Some(error);
-                    self.refresh_error();
-                }
+                Done::DeleteFailed(error) => self.delete_failed(error),
             }
         }
+    }
+
+    /// Keeps the failed write of edit `at`, unless a later edit of the note failed already.
+    fn save_failed(&mut self, id: u64, at: Instant, error: String) {
+        if self
+            .save_errors
+            .get(&id)
+            .is_none_or(|failure| failure.at <= at)
+        {
+            self.failures += 1;
+            let order = self.failures;
+            self.save_errors.insert(id, Failure { at, order, error });
+        }
+        self.refresh_error();
+    }
+
+    fn delete_failed(&mut self, error: String) {
+        self.failures += 1;
+        self.delete_error = Some((self.failures, error));
+        self.refresh_error();
     }
 
     fn acknowledge(&mut self, id: u64, at: Instant) {
@@ -462,20 +484,29 @@ impl Notes {
         if self
             .save_errors
             .get(&id)
-            .is_some_and(|(failed, _)| *failed <= at)
+            .is_some_and(|failure| failure.at <= at)
         {
             self.save_errors.remove(&id);
         }
         self.refresh_error();
     }
 
+    /// Shows the failure that arrived last among those still standing.
     fn refresh_error(&mut self) {
-        self.error = self
+        let save = self
             .save_errors
             .values()
-            .next_back()
-            .map(|(_, error)| NoteError::Save(error.clone()))
-            .or_else(|| self.delete_error.clone().map(NoteError::Delete));
+            .max_by_key(|failure| failure.order)
+            .map(|failure| (failure.order, NoteError::Save(failure.error.clone())));
+        let delete = self
+            .delete_error
+            .as_ref()
+            .map(|(order, error)| (*order, NoteError::Delete(error.clone())));
+        self.error = save
+            .into_iter()
+            .chain(delete)
+            .max_by_key(|(order, _)| *order)
+            .map(|(_, error)| error);
     }
 
     /// Writes every unwritten note and lets the worker finish, waiting at most `limit`.
@@ -577,13 +608,40 @@ mod tests {
         assert!(!notes.saved());
 
         let other = notes.add();
-        notes.save_errors.insert(other, (first_at, "locked".into()));
-        notes.delete_error = Some("denied".into());
+        notes.save_failed(other, first_at, "locked".into());
+        notes.delete_failed("denied".into());
         let latest = notes.get(first).unwrap().dirty.unwrap().1;
         notes.acknowledge(first, latest);
         assert_eq!(notes.delete_error, None);
         assert_eq!(notes.error, Some(NoteError::Save("locked".into())));
         notes.delete(other);
+        notes.finish(Duration::from_secs(5));
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn the_latest_standing_failure_is_shown() {
+        let directory =
+            std::env::temp_dir().join(format!("qqq-notes-latest-{}", std::process::id()));
+        let mut notes = Notes::new(directory.clone(), |_| None, || {});
+        wait(&mut notes, |n| n.listed);
+        let older = notes.add();
+        let newer = notes.add();
+        let at = Instant::now();
+
+        // A failure of a note with a smaller id still shows when it arrives last.
+        notes.save_failed(newer, at, "locked".into());
+        notes.save_failed(older, at, "full".into());
+        assert_eq!(notes.error, Some(NoteError::Save("full".into())));
+        notes.delete_failed("denied".into());
+        assert_eq!(notes.error, Some(NoteError::Delete("denied".into())));
+
+        // A successful write clears the deletion error and that note's failure; the
+        // latest failure left takes its place.
+        notes.acknowledge(older, at);
+        assert_eq!(notes.error, Some(NoteError::Save("locked".into())));
+        notes.acknowledge(newer, at);
+        assert_eq!(notes.error, None);
         notes.finish(Duration::from_secs(5));
         let _ = fs::remove_dir_all(&directory);
     }

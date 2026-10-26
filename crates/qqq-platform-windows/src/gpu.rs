@@ -42,19 +42,25 @@ impl Adapters {
     }
 
     /// Refreshes from the hardware directory at a fixed low frequency, independently of
-    /// which adapters currently have performance-counter instances.
+    /// which adapters currently have performance-counter instances. A failed listing keeps
+    /// the previous directory until the next refresh, so the counters keep sampling.
     fn refresh(
         &mut self,
         at: Instant,
         list: impl FnOnce() -> Result<Vec<GpuAdapter>, CollectorError>,
-    ) -> Result<(), CollectorError> {
-        if at.saturating_duration_since(self.listed) >= RELIST {
-            self.hardware = list()?.into_iter().filter(|a| !a.software).collect();
-            self.engine_types
-                .retain(|luid, _| self.hardware.iter().any(|a| a.luid == *luid));
-            self.listed = at;
+    ) {
+        if at.saturating_duration_since(self.listed) < RELIST {
+            return;
         }
-        Ok(())
+        self.listed = at;
+        match list() {
+            Ok(adapters) => {
+                self.hardware = adapters.into_iter().filter(|a| !a.software).collect();
+                self.engine_types
+                    .retain(|luid, _| self.hardware.iter().any(|a| a.luid == *luid));
+            }
+            Err(error) => tracing::warn!(reason = ?error.0, "无法刷新显卡目录，沿用上次的目录"),
+        }
     }
 }
 
@@ -137,7 +143,7 @@ impl Collector for Gpu {
     fn collect(&mut self, context: &CollectContext) -> Result<SampleBatch, CollectorError> {
         let mut batch = SampleBatch::default();
         let at = Instant::now();
-        self.adapters.refresh(at, native::gpu_adapters)?;
+        self.adapters.refresh(at, native::gpu_adapters);
         if self.adapters.hardware.is_empty() {
             self.query = None;
             self.previous = None;
@@ -344,14 +350,19 @@ mod tests {
             SampleValue::Unsupported(Reason::NoGpuCounters)
         ));
 
-        adapters
-            .refresh(at + RELIST / 2, || {
-                panic!("directory refresh is rate limited")
-            })
-            .unwrap();
-        adapters
-            .refresh(at + RELIST, || Ok(vec![adapter(0xaa)]))
-            .unwrap();
+        adapters.refresh(at + RELIST / 2, || {
+            panic!("directory refresh is rate limited")
+        });
+        // A failed listing keeps the previous directory and waits for the next refresh.
+        adapters.refresh(at + RELIST, || Err(CollectorError(Reason::TimedOut)));
+        let batch = adapters.batch(at, true, &engines, &memory, &memory);
+        assert_eq!(batch.devices.len(), 2);
+        assert!(adapters.engine_types.contains_key(&0xbb));
+        adapters.refresh(at + RELIST + RELIST / 2, || {
+            panic!("a failed refresh waits for the next interval")
+        });
+
+        adapters.refresh(at + RELIST * 2, || Ok(vec![adapter(0xaa)]));
         let batch = adapters.batch(at, true, &engines, &memory, &memory);
         assert!(batch.complete_inventory);
         assert_eq!(batch.devices.len(), 1);
@@ -364,9 +375,7 @@ mod tests {
         );
         assert!(!adapters.engine_types.contains_key(&0xbb));
 
-        adapters
-            .refresh(at + RELIST * 2, || Ok(Vec::new()))
-            .unwrap();
+        adapters.refresh(at + RELIST * 3, || Ok(Vec::new()));
         let batch = adapters.batch(at, true, &engines, &memory, &memory);
         assert!(batch.complete_inventory && batch.devices.is_empty() && batch.samples.is_empty());
         assert!(adapters.engine_types.is_empty());

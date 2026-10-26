@@ -16,8 +16,6 @@ use storage::{Done, Job, Store};
 const PREFIX: &str = "QQQ Screenshot ";
 /// Largest thumbnail, in pixels.
 pub const THUMBNAIL: [usize; 2] = [480, 270];
-/// Most visible thumbnail textures retained together.
-const THUMBNAIL_CACHE: usize = 16;
 
 /// Local date and time as year, month, day, hour, minute, second and millisecond.
 pub type LocalTime = fn(SystemTime) -> Option<[u16; 7]>;
@@ -83,10 +81,11 @@ impl Shots {
         self.storage.send(Job::Load(path.into()));
     }
 
-    /// Retains textures only for the visible tiles, and replaces pending thumbnail reads.
-    /// An empty slice releases the page's textures and cancels its queued reads.
+    /// Retains textures for every visible tile, and replaces pending thumbnail reads. The
+    /// viewport bounds how many tiles are visible. An empty slice releases the page's
+    /// textures and cancels its queued reads.
     pub fn show_visible_thumbnails(&mut self, paths: &[PathBuf]) {
-        self.visible = paths.iter().take(THUMBNAIL_CACHE).cloned().collect();
+        self.visible = paths.to_vec();
         let mut missing = Vec::new();
         for shot in &mut self.entries {
             if self.visible.contains(&shot.file.path) {
@@ -102,12 +101,7 @@ impl Shots {
 
     #[cfg(test)]
     fn show_thumbnails(&mut self) {
-        let paths: Vec<_> = self
-            .entries
-            .iter()
-            .take(THUMBNAIL_CACHE)
-            .map(|s| s.file.path.clone())
-            .collect();
+        let paths: Vec<_> = self.entries.iter().map(|s| s.file.path.clone()).collect();
         self.show_visible_thumbnails(&paths);
     }
 
@@ -208,6 +202,42 @@ mod tests {
         wait(&mut shots, &ctx, |s| s.entries[0].thumbnail.is_some());
         shots.finish(Duration::from_secs(5));
         let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn every_visible_tile_keeps_its_thumbnail() {
+        let ctx = egui::Context::default();
+        let directory =
+            std::env::temp_dir().join(format!("qqq-shots-visible-{}", std::process::id()));
+        let mut shots = Shots::new(&ctx, directory, 5, |_| None);
+        let paths: Vec<PathBuf> = (0..24).map(|n| format!("shot {n}.png").into()).collect();
+        shots.entries = paths
+            .iter()
+            .map(|path| Shot {
+                file: ShotFile {
+                    path: path.clone(),
+                    taken: SystemTime::UNIX_EPOCH,
+                    width: 1,
+                    height: 1,
+                    bytes: 4,
+                },
+                thumbnail: Some(ctx.load_texture(
+                    path.to_string_lossy(),
+                    egui::ColorImage::new([1, 1], vec![egui::Color32::WHITE]),
+                    egui::TextureOptions::LINEAR,
+                )),
+            })
+            .collect();
+        shots.show_visible_thumbnails(&paths);
+        assert!(shots.entries.iter().all(|shot| shot.thumbnail.is_some()));
+        shots.show_visible_thumbnails(&paths[..2]);
+        let kept = shots
+            .entries
+            .iter()
+            .filter(|s| s.thumbnail.is_some())
+            .count();
+        assert_eq!(kept, 2);
+        shots.finish(Duration::from_secs(5));
     }
 
     #[test]
