@@ -1,28 +1,27 @@
-//! Screenshot library: the newest screenshots as PNG files in a folder of the data
-//! directory. A worker thread writes, lists, reads and removes the files, so the GUI never
-//! waits for the disk.
+//! Screenshot library metadata and visible thumbnail textures.
+//! File operations and scheduling belong to the storage worker.
 
-use crate::components::thumbnail;
+mod storage;
+
 use eframe::egui;
 use qqq_domain::Picture;
 use std::{
-    fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, mpsc},
-    thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    sync::Arc,
+    time::{Duration, SystemTime},
 };
+use storage::{Done, Job, Store};
 
-/// Start of the names of the files the library keeps; other files in the folder stay
-/// untouched.
+/// Start of the names of files owned by the screenshot library.
 const PREFIX: &str = "QQQ Screenshot ";
 /// Largest thumbnail, in pixels.
 pub const THUMBNAIL: [usize; 2] = [480, 270];
+/// Most visible thumbnail textures retained together.
+const THUMBNAIL_CACHE: usize = 16;
 
 /// Local date and time as year, month, day, hour, minute, second and millisecond.
 pub type LocalTime = fn(SystemTime) -> Option<[u16; 7]>;
 
-/// A screenshot file.
 #[derive(Clone)]
 pub struct ShotFile {
     pub path: PathBuf,
@@ -32,143 +31,89 @@ pub struct ShotFile {
     pub bytes: u64,
 }
 
-/// A screenshot as the page shows it.
 pub struct Shot {
     pub file: ShotFile,
     pub thumbnail: Option<egui::TextureHandle>,
 }
 
-enum Job {
-    /// Lists the folder, keeping the newest `usize`.
-    List(usize),
-    /// Reads the thumbnails of these screenshots.
-    Thumbnails(Vec<PathBuf>),
-    /// Saves a screenshot, keeping the newest `usize`.
-    Save(Arc<Picture>, usize),
-    /// Keeps the newest `usize`.
-    Prune(usize),
-    Delete(PathBuf),
-    /// Reads a whole screenshot.
-    Load(PathBuf),
-}
-
-enum Done {
-    Listed(Vec<ShotFile>),
-    Added(ShotFile),
-    Thumbnail(PathBuf, egui::ColorImage),
-    Removed(Vec<PathBuf>),
-    Loaded(Picture),
-    Failed(String),
-}
-
-/// Outcome of a job that the GUI acts on.
 pub enum Event {
-    /// A screenshot read with [`Shots::load`].
     Loaded(Picture),
-    /// A file could not be written, read or removed, with the system's description.
     Failed(String),
 }
 
 pub struct Shots {
-    jobs: Option<mpsc::Sender<Job>>,
-    done: mpsc::Receiver<Done>,
-    worker: Option<thread::JoinHandle<()>>,
+    storage: Store,
     pub directory: PathBuf,
     /// Newest first.
     pub entries: Vec<Shot>,
-    /// The folder has been listed.
     pub listed: bool,
-    /// The page has shown the screenshots, so listed ones get their thumbnails.
-    shown: bool,
+    visible: Vec<PathBuf>,
 }
 
 impl Shots {
-    /// Starts the worker on `directory`, which lists the folder and keeps the newest `keep`.
     pub fn new(
         ctx: &egui::Context,
         directory: PathBuf,
         keep: usize,
         local_time: LocalTime,
     ) -> Self {
-        let (jobs, inbox) = mpsc::channel();
-        let (outbox, done) = mpsc::channel();
-        let worker = Worker {
-            directory: directory.clone(),
-            outbox,
-            local_time,
-            context: ctx.clone(),
-        };
-        let worker = thread::Builder::new()
-            .name("screenshots".into())
-            .spawn(move || {
-                for job in inbox {
-                    worker.run(job);
-                }
-            })
-            .ok();
-        let shots = Self {
-            jobs: Some(jobs),
-            done,
-            worker,
+        let storage = Store::new(ctx, directory.clone(), local_time);
+        storage.send(Job::List(keep));
+        Self {
+            storage,
             directory,
             entries: Vec::new(),
             listed: false,
-            shown: false,
-        };
-        shots.send(Job::List(keep));
-        shots
-    }
-
-    fn send(&self, job: Job) {
-        if let Some(jobs) = &self.jobs {
-            let _ = jobs.send(job);
+            visible: Vec::new(),
         }
     }
 
-    /// Saves a new screenshot and removes the oldest beyond `keep`.
+    /// Queues a screenshot, or reports capacity exhaustion through [`Self::update`].
     pub fn save(&self, picture: Arc<Picture>, keep: usize) {
-        self.send(Job::Save(picture, keep));
+        self.storage.send(Job::Save(picture, keep));
     }
 
-    /// Removes the oldest screenshots beyond `keep`.
     pub fn prune(&self, keep: usize) {
-        self.send(Job::Prune(keep));
+        self.storage.send(Job::Prune(keep));
     }
-
     pub fn delete(&self, path: &Path) {
-        self.send(Job::Delete(path.into()));
+        self.storage.send(Job::Delete(path.into()));
+    }
+    pub fn load(&self, path: &Path) {
+        self.storage.send(Job::Load(path.into()));
     }
 
-    /// Reads the thumbnails of the listed screenshots, once the page first shows them;
-    /// screenshots taken meanwhile have theirs already.
-    pub fn show_thumbnails(&mut self) {
-        if !self.shown {
-            self.shown = true;
-            self.read_thumbnails();
+    /// Retains textures only for the visible tiles, and replaces pending thumbnail reads.
+    /// An empty slice releases the page's textures and cancels its queued reads.
+    pub fn show_visible_thumbnails(&mut self, paths: &[PathBuf]) {
+        self.visible = paths.iter().take(THUMBNAIL_CACHE).cloned().collect();
+        let mut missing = Vec::new();
+        for shot in &mut self.entries {
+            if self.visible.contains(&shot.file.path) {
+                if shot.thumbnail.is_none() {
+                    missing.push(shot.file.path.clone());
+                }
+            } else {
+                shot.thumbnail = None;
+            }
         }
+        self.storage.thumbnails(missing);
     }
 
-    fn read_thumbnails(&self) {
+    #[cfg(test)]
+    fn show_thumbnails(&mut self) {
         let paths: Vec<_> = self
             .entries
             .iter()
-            .filter(|shot| shot.thumbnail.is_none())
-            .map(|shot| shot.file.path.clone())
+            .take(THUMBNAIL_CACHE)
+            .map(|s| s.file.path.clone())
             .collect();
-        if !paths.is_empty() {
-            self.send(Job::Thumbnails(paths));
-        }
+        self.show_visible_thumbnails(&paths);
     }
 
-    /// Reads a whole screenshot; it arrives as [`Event::Loaded`].
-    pub fn load(&self, path: &Path) {
-        self.send(Job::Load(path.into()));
-    }
-
-    /// Applies the worker's results and returns those the GUI acts on.
     pub fn update(&mut self, ctx: &egui::Context) -> Vec<Event> {
         let mut events = Vec::new();
-        while let Ok(done) = self.done.try_recv() {
+        for done in self.storage.take() {
             match done {
                 Done::Listed(files) => {
                     self.entries = files
@@ -179,12 +124,9 @@ impl Shots {
                         })
                         .collect();
                     self.listed = true;
-                    if self.shown {
-                        self.read_thumbnails();
-                    }
                 }
                 Done::Added(file) => {
-                    self.entries.retain(|shot| shot.file.path != file.path);
+                    self.entries.retain(|s| s.file.path != file.path);
                     self.entries.insert(
                         0,
                         Shot {
@@ -194,7 +136,9 @@ impl Shots {
                     );
                 }
                 Done::Thumbnail(path, image) => {
-                    if let Some(shot) = self.entries.iter_mut().find(|s| s.file.path == path) {
+                    if self.visible.contains(&path)
+                        && let Some(shot) = self.entries.iter_mut().find(|s| s.file.path == path)
+                    {
                         shot.thumbnail = Some(ctx.load_texture(
                             path.to_string_lossy(),
                             image,
@@ -203,197 +147,26 @@ impl Shots {
                     }
                 }
                 Done::Removed(paths) => self.entries.retain(|s| !paths.contains(&s.file.path)),
-                Done::Loaded(picture) => events.push(Event::Loaded(picture)),
+                Done::Loaded(picture, _reservation) => events.push(Event::Loaded(picture)),
                 Done::Failed(error) => events.push(Event::Failed(error)),
             }
+        }
+        if let Some(error) = self.storage.error() {
+            events.push(Event::Failed(error));
         }
         events
     }
 
-    /// Lets the worker finish the jobs it has, waiting at most `limit`.
+    /// Cancels optional thumbnail work and lets accepted file operations finish.
     pub fn finish(&mut self, limit: Duration) {
-        self.jobs = None;
-        let deadline = Instant::now() + limit;
-        while let Some(worker) = &self.worker
-            && !worker.is_finished()
-            && Instant::now() < deadline
-        {
-            thread::sleep(Duration::from_millis(10));
-        }
-        if let Some(worker) = self.worker.take_if(|w| w.is_finished()) {
-            let _ = worker.join();
-        }
+        self.storage.finish(limit);
     }
-}
-
-struct Worker {
-    directory: PathBuf,
-    outbox: mpsc::Sender<Done>,
-    local_time: LocalTime,
-    context: egui::Context,
-}
-
-impl Worker {
-    fn run(&self, job: Job) {
-        match job {
-            Job::List(keep) => {
-                let mut files = self.files();
-                self.remove(files.split_off(keep.min(files.len())));
-                self.send(Done::Listed(files));
-            }
-            Job::Thumbnails(paths) => {
-                for path in paths {
-                    if let Some(image) = read(&path) {
-                        self.send(Done::Thumbnail(path, thumbnail(&image, THUMBNAIL)));
-                    }
-                }
-            }
-            Job::Save(picture, keep) => match self.save(&picture) {
-                Ok(file) => {
-                    let path = file.path.clone();
-                    self.send(Done::Added(file));
-                    self.send(Done::Thumbnail(path, thumbnail(&picture, THUMBNAIL)));
-                    self.prune(keep);
-                }
-                Err(error) => self.send(Done::Failed(error.to_string())),
-            },
-            Job::Prune(keep) => self.prune(keep),
-            Job::Delete(path) => match fs::remove_file(&path) {
-                Ok(()) => self.send(Done::Removed(vec![path])),
-                Err(error) => self.send(Done::Failed(error.to_string())),
-            },
-            Job::Load(path) => match image::open(&path) {
-                Ok(image) => {
-                    let image = image.into_rgba8();
-                    self.send(Done::Loaded(Picture {
-                        width: image.width(),
-                        height: image.height(),
-                        rgba: image.into_raw(),
-                    }));
-                }
-                Err(error) => self.send(Done::Failed(error.to_string())),
-            },
-        }
-    }
-
-    fn send(&self, done: Done) {
-        let _ = self.outbox.send(done);
-        self.context.request_repaint();
-    }
-
-    /// The library's files, newest first. Leftovers of interrupted saves are removed.
-    fn files(&self) -> Vec<ShotFile> {
-        let Ok(entries) = fs::read_dir(&self.directory) else {
-            return Vec::new();
-        };
-        let mut files: Vec<_> = entries
-            .flatten()
-            .filter_map(|entry| {
-                let name = entry.file_name().into_string().ok()?;
-                if !name.starts_with(PREFIX) {
-                    return None;
-                }
-                if name.ends_with(".png.tmp") {
-                    let _ = fs::remove_file(entry.path());
-                    return None;
-                }
-                if !name.ends_with(".png") {
-                    return None;
-                }
-                let metadata = entry.metadata().ok()?;
-                let (width, height) = image::ImageReader::open(entry.path())
-                    .ok()?
-                    .into_dimensions()
-                    .ok()?;
-                Some(ShotFile {
-                    path: entry.path(),
-                    taken: metadata.modified().ok()?,
-                    width,
-                    height,
-                    bytes: metadata.len(),
-                })
-            })
-            .collect();
-        files.sort_by(|a, b| b.taken.cmp(&a.taken).then_with(|| b.path.cmp(&a.path)));
-        files
-    }
-
-    fn remove(&self, files: Vec<ShotFile>) {
-        let removed: Vec<_> = files
-            .into_iter()
-            .filter(|file| fs::remove_file(&file.path).is_ok())
-            .map(|file| file.path)
-            .collect();
-        if !removed.is_empty() {
-            self.send(Done::Removed(removed));
-        }
-    }
-
-    fn prune(&self, keep: usize) {
-        let mut files = self.files();
-        self.remove(files.split_off(keep.min(files.len())));
-    }
-
-    /// Writes the picture under a name with the local time, through a temporary file.
-    fn save(&self, picture: &Picture) -> io::Result<ShotFile> {
-        fs::create_dir_all(&self.directory)?;
-        let now = SystemTime::now();
-        let stamp = match (self.local_time)(now) {
-            Some([year, month, day, hour, minute, second, _]) => {
-                format!("{year:04}-{month:02}-{day:02} {hour:02}{minute:02}{second:02}")
-            }
-            None => now
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs())
-                .to_string(),
-        };
-        let path = (1..)
-            .map(|n| match n {
-                1 => format!("{PREFIX}{stamp}.png"),
-                _ => format!("{PREFIX}{stamp} ({n}).png"),
-            })
-            .map(|name| self.directory.join(name))
-            .find(|path| !path.exists())
-            .unwrap_or_default();
-        let temporary = path.with_extension("png.tmp");
-        let written = image::save_buffer_with_format(
-            &temporary,
-            &picture.rgba,
-            picture.width,
-            picture.height,
-            image::ColorType::Rgba8,
-            image::ImageFormat::Png,
-        )
-        .map_err(io::Error::other)
-        .and_then(|()| fs::rename(&temporary, &path));
-        if let Err(error) = written {
-            let _ = fs::remove_file(&temporary);
-            return Err(error);
-        }
-        let metadata = fs::metadata(&path)?;
-        Ok(ShotFile {
-            taken: metadata.modified().unwrap_or(now),
-            path,
-            width: picture.width,
-            height: picture.height,
-            bytes: metadata.len(),
-        })
-    }
-}
-
-/// The picture of a PNG file.
-fn read(path: &Path) -> Option<Picture> {
-    let image = image::open(path).ok()?.into_rgba8();
-    Some(Picture {
-        width: image.width(),
-        height: image.height(),
-        rgba: image.into_raw(),
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs, thread, time::Instant};
 
     fn picture(width: u32, height: u32) -> Picture {
         Picture {

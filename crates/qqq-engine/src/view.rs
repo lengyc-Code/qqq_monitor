@@ -17,8 +17,10 @@ pub struct MonitorView {
     pub elapsed: f64,
     /// Devices by ID; successive views share the map until a device changes.
     pub devices: Arc<BTreeMap<String, DeviceDescriptor>>,
-    pub metrics: BTreeMap<MetricKey, MetricReading>,
-    pub history: BTreeMap<MetricKey, Vec<HistoryPoint>>,
+    /// Readings shared by successive views until a batch changes them.
+    pub metrics: Arc<BTreeMap<MetricKey, MetricReading>>,
+    /// A shared projection of the requested history window.
+    pub history: Arc<BTreeMap<MetricKey, Vec<HistoryPoint>>>,
     pub save_status: SaveStatus,
     pub diagnostics: Diagnostics,
     pub processes: ProcessView,
@@ -33,8 +35,8 @@ impl MonitorView {
             now: Instant::now(),
             elapsed: 0.0,
             devices: Arc::default(),
-            metrics: BTreeMap::new(),
-            history: BTreeMap::new(),
+            metrics: Arc::default(),
+            history: Arc::default(),
             save_status: SaveStatus::Loaded,
             diagnostics: Diagnostics::default(),
             processes: ProcessView::default(),

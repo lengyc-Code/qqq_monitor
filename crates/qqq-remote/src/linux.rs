@@ -28,6 +28,14 @@ i() {
 s() {
   head -n 1000000 /proc/uptime /proc/loadavg /proc/stat /proc/meminfo /proc/net/dev \
     /proc/net/route /proc/diskstats 2>/dev/null
+  echo "@@ processes"
+  p=0
+  for d in /proc/[0-9]*; do
+    [ -d "$d" ] || continue
+    case ${d##*/} in *[!0-9]*) continue ;; esac
+    p=$((p + 1))
+  done
+  echo "$p"
   echo "@@ block"
   for b in /sys/block/*; do echo "${b##*/}"; done
   echo "@@ physical"
@@ -207,7 +215,7 @@ pub(crate) struct Raw {
     /// Seconds since boot; the clock for every rate.
     pub uptime: f64,
     pub load: Option<[f64; 3]>,
-    pub tasks: Option<u64>,
+    pub processes: Option<u64>,
     /// The total first, then each logical processor by index.
     pub cpu: CpuTimes,
     pub cores: Vec<(usize, CpuTimes)>,
@@ -272,6 +280,9 @@ pub(crate) fn parse_sample(text: &str) -> Result<Raw, Reason> {
             .first()
             .and_then(|line| line.split_whitespace().next()?.parse().ok())
             .ok_or(Reason::NotLinux)?,
+        processes: lines("processes")
+            .first()
+            .and_then(|line| line.trim().parse().ok()),
         ..Default::default()
     };
     if let Some(line) = lines("loadavg").first() {
@@ -281,10 +292,6 @@ pub(crate) fn parse_sample(text: &str) -> Result<Raw, Reason> {
             .zip(load(1))
             .zip(load(2))
             .map(|((a, b), c)| [a, b, c]);
-        raw.tasks = fields
-            .get(3)
-            .and_then(|v| v.split_once('/'))
-            .and_then(|(_, total)| total.parse().ok());
     }
     let mut total = None;
     for line in lines("stat") {
@@ -573,12 +580,12 @@ impl Sampler {
                 sample("system", metric, Unit::Count, SampleValue::Gauge(value));
             }
         }
-        if let Some(tasks) = raw.tasks {
+        if let Some(processes) = raw.processes {
             sample(
                 "system",
                 "processes",
                 Unit::Count,
-                SampleValue::Gauge(tasks as f64),
+                SampleValue::Gauge(processes as f64),
             );
         }
         for net in &raw.nets {
@@ -751,6 +758,8 @@ model name\t: AMD EPYC 7B13
 {uptime} 1000.00
 @@ loadavg
 0.52 0.61 0.70 2/312 4242
+@@ processes
+87
 @@ stat
 cpu  {cpu} 0 0 0
 cpu0 {cpu} 0 0 0
@@ -813,7 +822,7 @@ C:\\           9p         30000000  10000000  20000000      34% /mnt/c
         let raw = parse_sample(&sample("100.00", "100 0 100 700 100 0 0 0", 1000, 8)).unwrap();
         assert_eq!(raw.uptime, 100.0);
         assert_eq!(raw.load, Some([0.52, 0.61, 0.70]));
-        assert_eq!(raw.tasks, Some(312));
+        assert_eq!(raw.processes, Some(87));
         assert_eq!(raw.cpu.busy, 200);
         assert_eq!(raw.cpu.total, 1000);
         assert_eq!(
@@ -826,6 +835,44 @@ C:\\           9p         30000000  10000000  20000000      34% /mnt/c
         assert!(!raw.nets[1].physical && !raw.nets[1].default_route);
         assert_eq!(raw.disks, [("sda".to_string(), 8, 400)]);
         assert_eq!(parse_sample("@@ uptime\n@@ stat\n"), Err(Reason::NotLinux));
+    }
+
+    #[test]
+    fn process_count_comes_from_process_directories_instead_of_threads() {
+        let text = sample("100.00", "100 0 100 700 100 0 0 0", 1000, 8);
+        let raw = parse_sample(&text).unwrap();
+        assert_eq!(raw.processes, Some(87));
+        let mut sampler = Sampler::new(parse_info(INFO));
+        let at = Instant::now();
+        let batch = sampler.batch(raw, &FileSystems::Unknown, at, at);
+        let processes = batch
+            .samples
+            .iter()
+            .find(|s| s.descriptor.key == MetricKey::new("system", "processes"))
+            .unwrap();
+        assert!(matches!(processes.value, SampleValue::Gauge(value) if value == 87.0));
+
+        // A missing or invalid process count stays unavailable even if loadavg reports
+        // its scheduling-entity count. A real empty directory list is a valid zero.
+        for count in [None, Some("invalid")] {
+            let replacement =
+                count.map_or(String::new(), |count| format!("@@ processes\n{count}\n"));
+            let raw = parse_sample(&text.replace("@@ processes\n87\n", &replacement)).unwrap();
+            assert_eq!(raw.processes, None);
+            let batch = sampler.batch(raw, &FileSystems::Unknown, at, at);
+            assert!(
+                !batch
+                    .samples
+                    .iter()
+                    .any(|s| s.descriptor.key == MetricKey::new("system", "processes"))
+            );
+        }
+        assert_eq!(
+            parse_sample(&text.replace("@@ processes\n87\n", "@@ processes\n0\n"))
+                .unwrap()
+                .processes,
+            Some(0)
+        );
     }
 
     #[test]

@@ -7,30 +7,54 @@ use std::{
 
 /// UMA adapters report only a small carve-out as dedicated memory and work in shared memory.
 const DEDICATED_MINIMUM: u64 = 512 * 1024 * 1024;
-/// Shortest interval between adapter lists triggered by unknown counter instances.
+/// Interval between complete adapter lists, including hot removals.
 const RELIST: Duration = Duration::from_secs(10);
 
 pub struct Gpu {
-    query: CounterQuery,
-    adapters: Vec<GpuAdapter>,
-    listed: Instant,
+    query: Option<CounterQuery>,
+    adapters: Adapters,
     previous: Option<Instant>,
-    /// Engine types seen per adapter; idle types keep reporting zero.
-    engine_types: BTreeMap<u64, BTreeSet<String>>,
 }
 impl Gpu {
     pub fn new() -> Result<Self, CollectorError> {
         Ok(Self {
-            query: CounterQuery::new(&[
-                r"\GPU Engine(*)\Utilization Percentage",
-                r"\GPU Adapter Memory(*)\Dedicated Usage",
-                r"\GPU Adapter Memory(*)\Shared Usage",
-            ])?,
-            adapters: native::gpu_adapters()?,
-            listed: Instant::now(),
+            query: None,
+            adapters: Adapters::new(native::gpu_adapters()?, Instant::now()),
             previous: None,
-            engine_types: BTreeMap::new(),
         })
+    }
+}
+
+/// Authoritative hardware directory and the engine types seen while each adapter exists.
+struct Adapters {
+    hardware: Vec<GpuAdapter>,
+    listed: Instant,
+    engine_types: BTreeMap<u64, BTreeSet<String>>,
+}
+
+impl Adapters {
+    fn new(adapters: Vec<GpuAdapter>, at: Instant) -> Self {
+        Self {
+            hardware: adapters.into_iter().filter(|a| !a.software).collect(),
+            listed: at,
+            engine_types: BTreeMap::new(),
+        }
+    }
+
+    /// Refreshes from the hardware directory at a fixed low frequency, independently of
+    /// which adapters currently have performance-counter instances.
+    fn refresh(
+        &mut self,
+        at: Instant,
+        list: impl FnOnce() -> Result<Vec<GpuAdapter>, CollectorError>,
+    ) -> Result<(), CollectorError> {
+        if at.saturating_duration_since(self.listed) >= RELIST {
+            self.hardware = list()?.into_iter().filter(|a| !a.software).collect();
+            self.engine_types
+                .retain(|luid, _| self.hardware.iter().any(|a| a.luid == *luid));
+            self.listed = at;
+        }
+        Ok(())
     }
 }
 
@@ -85,7 +109,7 @@ fn engine_load(values: &Values) -> BTreeMap<u64, BTreeMap<String, f64>> {
 
 /// Identity of an adapter across restarts, which its LUID is not: the PCI IDs, numbered
 /// after the identical adapters `before` it.
-fn pci_identity(adapter: &GpuAdapter, before: &[&GpuAdapter]) -> String {
+fn pci_identity(adapter: &GpuAdapter, before: &[GpuAdapter]) -> String {
     let ids = |a: &GpuAdapter| (a.vendor, a.device, a.subsystem, a.revision);
     let twins = before.iter().filter(|a| ids(a) == ids(adapter)).count();
     let mut identity = format!(
@@ -113,33 +137,60 @@ impl Collector for Gpu {
     fn collect(&mut self, context: &CollectContext) -> Result<SampleBatch, CollectorError> {
         let mut batch = SampleBatch::default();
         let at = Instant::now();
-        self.query.collect()?;
+        self.adapters.refresh(at, native::gpu_adapters)?;
+        if self.adapters.hardware.is_empty() {
+            self.query = None;
+            self.previous = None;
+            batch.complete_inventory = true;
+            batch.finished_at = Instant::now();
+            return Ok(batch);
+        }
+        let query = match &mut self.query {
+            Some(query) => query,
+            query @ None => query.insert(CounterQuery::new(&[
+                r"\GPU Engine(*)\Utilization Percentage",
+                r"\GPU Adapter Memory(*)\Dedicated Usage",
+                r"\GPU Adapter Memory(*)\Shared Usage",
+            ])?),
+        };
+        query.collect()?;
         let warmed = self
             .previous
             .is_some_and(|old| at.saturating_duration_since(old) <= context.period * 3);
         self.previous = Some(at);
-        let engines = self.query.values(0);
+        let engines = query.values(0);
         if !warmed && engines.is_err() {
             batch.finished_at = Instant::now();
             return Ok(batch);
         }
         let engines = engine_load(&engines?);
-        let dedicated = per_adapter(&self.query.values(1)?);
-        let shared = per_adapter(&self.query.values(2)?);
-        let unknown = dedicated
-            .keys()
-            .any(|luid| self.adapters.iter().all(|a| a.luid != *luid));
-        if unknown && self.listed.elapsed() >= RELIST {
-            self.adapters = native::gpu_adapters()?;
-            self.listed = Instant::now();
-        }
-        let hardware: Vec<_> = self.adapters.iter().filter(|a| !a.software).collect();
-        for (index, adapter) in hardware.iter().enumerate() {
+        let dedicated = per_adapter(&query.values(1)?);
+        let shared = per_adapter(&query.values(2)?);
+        Ok(self
+            .adapters
+            .batch(at, warmed, &engines, &dedicated, &shared))
+    }
+}
+
+impl Adapters {
+    fn batch(
+        &mut self,
+        at: Instant,
+        warmed: bool,
+        engines: &BTreeMap<u64, BTreeMap<String, f64>>,
+        dedicated: &BTreeMap<u64, f64>,
+        shared: &BTreeMap<u64, f64>,
+    ) -> SampleBatch {
+        let mut batch = SampleBatch {
+            started_at: at,
+            ..Default::default()
+        };
+        for (index, adapter) in self.hardware.iter().enumerate() {
             let id = format!("gpu:{}", adapter.luid);
             let uses_dedicated = adapter.dedicated >= DEDICATED_MINIMUM;
             batch.devices.push(
                 DeviceDescriptor::new(&id, &adapter.name, DeviceKind::Gpu)
-                    .persistent_id(pci_identity(adapter, &hardware[..index]))
+                    .persistent_id(pci_identity(adapter, &self.hardware[..index]))
                     .detail("vendor", vendor(adapter.vendor))
                     .detail(
                         "memory_type",
@@ -174,7 +225,9 @@ impl Collector for Gpu {
             let types = self.engine_types.entry(adapter.luid).or_default();
             types.extend(load.into_iter().flat_map(|types| types.keys().cloned()));
             for kind in types.iter() {
-                let value = if warmed {
+                let value = if !counted {
+                    SampleValue::Unsupported(Reason::NoGpuCounters)
+                } else if warmed {
                     SampleValue::Gauge(
                         load.and_then(|types| types.get(kind))
                             .copied()
@@ -227,7 +280,7 @@ impl Collector for Gpu {
         }
         batch.complete_inventory = true;
         batch.finished_at = Instant::now();
-        Ok(batch)
+        batch
     }
 }
 
@@ -240,6 +293,83 @@ mod tests {
             .iter()
             .map(|(name, value)| (name.to_string(), Some(*value)))
             .collect()
+    }
+
+    fn adapter(luid: u64) -> GpuAdapter {
+        GpuAdapter {
+            luid,
+            name: format!("GPU {luid}"),
+            vendor: 0x10de,
+            device: luid as u32,
+            subsystem: 0,
+            revision: 1,
+            dedicated: 4 * 1024 * 1024 * 1024,
+            shared: 8 * 1024 * 1024 * 1024,
+            software: false,
+        }
+    }
+
+    #[test]
+    fn removed_adapters_leave_the_complete_directory_and_their_engine_state() {
+        let at = Instant::now();
+        let mut adapters = Adapters::new(vec![adapter(0xaa), adapter(0xbb)], at);
+        let engines = engine_load(&values(&[
+            (
+                "pid_1_luid_0x00000000_0x000000aa_phys_0_eng_0_engtype_3d",
+                30.0,
+            ),
+            (
+                "pid_2_luid_0x00000000_0x000000bb_phys_0_eng_0_engtype_3d",
+                40.0,
+            ),
+        ]));
+        let memory = BTreeMap::from([(0xaa, 1024.0), (0xbb, 2048.0)]);
+        let batch = adapters.batch(at, true, &engines, &memory, &memory);
+        assert!(batch.complete_inventory);
+        assert_eq!(batch.devices.len(), 2);
+        assert!(adapters.engine_types.contains_key(&0xbb));
+
+        // The remaining adapter's counters keep working. Missing instances of the
+        // removed adapter are unavailable while the next directory refresh is due.
+        let memory = BTreeMap::from([(0xaa, 1024.0)]);
+        let engines = BTreeMap::from([(0xaa, BTreeMap::from([("3d".into(), 20.0)]))]);
+        let batch = adapters.batch(at, true, &engines, &memory, &memory);
+        let missing = batch
+            .samples
+            .iter()
+            .find(|sample| sample.descriptor.key == MetricKey::new("gpu:187", "engine:3d"))
+            .unwrap();
+        assert!(matches!(
+            missing.value,
+            SampleValue::Unsupported(Reason::NoGpuCounters)
+        ));
+
+        adapters
+            .refresh(at + RELIST / 2, || {
+                panic!("directory refresh is rate limited")
+            })
+            .unwrap();
+        adapters
+            .refresh(at + RELIST, || Ok(vec![adapter(0xaa)]))
+            .unwrap();
+        let batch = adapters.batch(at, true, &engines, &memory, &memory);
+        assert!(batch.complete_inventory);
+        assert_eq!(batch.devices.len(), 1);
+        assert_eq!(batch.devices[0].id, "gpu:170");
+        assert!(
+            batch
+                .samples
+                .iter()
+                .all(|s| s.descriptor.key.device == "gpu:170")
+        );
+        assert!(!adapters.engine_types.contains_key(&0xbb));
+
+        adapters
+            .refresh(at + RELIST * 2, || Ok(Vec::new()))
+            .unwrap();
+        let batch = adapters.batch(at, true, &engines, &memory, &memory);
+        assert!(batch.complete_inventory && batch.devices.is_empty() && batch.samples.is_empty());
+        assert!(adapters.engine_types.is_empty());
     }
 
     #[test]

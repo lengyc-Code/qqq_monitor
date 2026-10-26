@@ -4,10 +4,6 @@ use eframe::egui::{self, RichText, vec2};
 use qqq_domain::Clip;
 use qqq_engine::{CLIPBOARD_HISTORY, Notice};
 
-/// Lines of text an entry shows.
-const TEXT_LINES: usize = 3;
-/// Characters of each text line an entry shows.
-const LINE_CHARS: usize = 200;
 /// Paths a files entry lists.
 const FILE_LINES: usize = 3;
 /// Tallest picture preview, in points.
@@ -102,7 +98,7 @@ impl DesktopApp {
             Some(Action::Copy(id)) => {
                 if let Some(entry) = self.clips.entries.iter().find(|e| e.id == id) {
                     let clip = entry.clip.clone();
-                    self.put_on_clipboard(ui.ctx(), &clip);
+                    self.put_on_clipboard(ui.ctx(), clip.clone());
                     // Without following, the entry moves to the top here as well.
                     if !on {
                         let keep = self.active_config.clipboard_history;
@@ -119,7 +115,7 @@ impl DesktopApp {
 /// Kind and size of an entry's content.
 fn kind(entry: &ClipEntry) -> (&'static pixel::Icon, String) {
     let t = i18n::t();
-    match &entry.clip {
+    match &*entry.clip {
         Clip::Text(_) => (&pixel::ICON_PROCESS, (t.clip_text)(entry.chars)),
         Clip::Picture(picture) => (
             &pixel::ICON_CAMERA,
@@ -127,29 +123,6 @@ fn kind(entry: &ClipEntry) -> (&'static pixel::Icon, String) {
         ),
         Clip::Files(paths) => (&pixel::ICON_DISK, (t.clip_files)(paths.len())),
     }
-}
-
-/// The first lines of a text, each cut to a readable length.
-fn preview(text: &str) -> String {
-    let mut lines: Vec<String> = text
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .take(TEXT_LINES + 1)
-        .map(|line| {
-            let mut shown: String = line.chars().take(LINE_CHARS).collect();
-            if shown.len() < line.len() {
-                shown.push('…');
-            }
-            shown
-        })
-        .collect();
-    if lines.len() > TEXT_LINES {
-        lines.truncate(TEXT_LINES);
-        if let Some(last) = lines.last_mut() {
-            last.push_str(" …");
-        }
-    }
-    lines.join("\n")
 }
 
 /// An entry with its kind, age, content and buttons. Clicking the content copies it too.
@@ -182,9 +155,9 @@ fn entry_card(ui: &mut egui::Ui, entry: &ClipEntry) -> Option<Action> {
                 }
             });
         });
-        let content = match &entry.clip {
-            Clip::Text(text) => ui.add(
-                egui::Label::new(RichText::new(preview(text)).size(13.0))
+        let content = match &*entry.clip {
+            Clip::Text(_) => ui.add(
+                egui::Label::new(RichText::new(entry.preview.as_ref()).size(13.0))
                     .wrap()
                     .sense(egui::Sense::click()),
             ),
@@ -222,17 +195,4 @@ fn entry_card(ui: &mut egui::Ui, entry: &ClipEntry) -> Option<Action> {
         }
     });
     action
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn previews_show_the_first_lines_cut_short() {
-        assert_eq!(preview("a\n\n  \nb"), "a\nb");
-        assert_eq!(preview("1\n2\n3\n4\n5"), "1\n2\n3 …");
-        let long = "x".repeat(LINE_CHARS + 5);
-        assert_eq!(preview(&long), format!("{}…", "x".repeat(LINE_CHARS)));
-    }
 }

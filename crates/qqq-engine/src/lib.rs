@@ -2,6 +2,7 @@
 
 mod alert;
 mod config;
+mod delivery;
 mod history;
 mod normalize;
 mod notice;

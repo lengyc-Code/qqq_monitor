@@ -3,7 +3,7 @@
 //! themselves. The engine thread starts, stops and restarts the workers as the configured
 //! hosts change, and namespaces each host's devices under its own prefix.
 
-use crate::{RemoteHost, runtime::Control};
+use crate::{RemoteHost, delivery::deliver, runtime::Control};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use qqq_domain::*;
 use std::{
@@ -258,15 +258,7 @@ fn worker(
     control: Arc<Control>,
 ) {
     let stopped = || cancel.load(Ordering::Acquire) || control.stop.load(Ordering::Acquire);
-    // A full channel only delays the state; the next batch or failure reports it again.
-    let send = |update| match updates.try_send(update) {
-        Ok(()) => {
-            control.wake_engine();
-            true
-        }
-        Err(TrySendError::Full(_)) => true,
-        Err(TrySendError::Disconnected(_)) => false,
-    };
+    let send = |update| deliver(&updates, update, stopped, || control.wake_engine());
     let mut failures = 0;
     let mut dropped = 0_u64;
     while !stopped() {
@@ -343,5 +335,72 @@ fn worker(
         if reconnect.load(Ordering::Acquire) != requested {
             failures = 0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AppConfig;
+
+    struct Rejected(Sender<()>);
+    impl RemotePlatform for Rejected {
+        fn connect(
+            &self,
+            _: &RemoteEndpoint,
+            _: Arc<AtomicBool>,
+        ) -> Result<Box<dyn RemoteSession>, Reason> {
+            self.0.send(()).unwrap();
+            Err(Reason::AuthFailed)
+        }
+        fn set_secret(&self, _: &str, _: Option<&str>) -> Result<(), Reason> {
+            Ok(())
+        }
+        fn presets(&self) -> Vec<RemotePreset> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn a_rejected_login_waits_until_its_failure_reaches_a_full_queue() {
+        let (updates, received) = bounded(1);
+        let (entered, connected) = bounded(1);
+        let control = Arc::new(Control::new(&AppConfig::default()));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let handle = thread::spawn({
+            let control = control.clone();
+            let cancel = cancel.clone();
+            move || {
+                worker(
+                    Arc::new(Rejected(entered)),
+                    RemoteEndpoint {
+                        id: "test".into(),
+                        address: "unused".into(),
+                        port: 22,
+                        user: "test".into(),
+                        auth: RemoteAuth::Password,
+                        host_key: None,
+                    },
+                    updates,
+                    cancel,
+                    Arc::new(AtomicU64::new(0)),
+                    control,
+                )
+            }
+        });
+        // The single queue slot holds Connecting when authentication fails.
+        connected.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(control.wait_for_engine_wake());
+        let waiting_for_space = control.wait_for_engine_wake();
+        assert!(matches!(received.recv().unwrap(), RemoteUpdate::Connecting));
+        let failure = received.recv_timeout(Duration::from_secs(2));
+        cancel.store(true, Ordering::Release);
+        control.changed();
+        handle.join().unwrap();
+        assert!(waiting_for_space);
+        assert!(matches!(
+            failure,
+            Ok(RemoteUpdate::Failed(Reason::AuthFailed))
+        ));
     }
 }

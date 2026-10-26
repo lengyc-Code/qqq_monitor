@@ -256,7 +256,7 @@ impl DesktopApp {
             ))),
             note_builder: None,
             note_page: Default::default(),
-            clips: Default::default(),
+            clips: clips::Clips::new(&cc.egui_ctx),
             clips_kept: config.clipboard_history,
             watching: None,
             asleep,
@@ -654,8 +654,10 @@ impl DesktopApp {
 impl eframe::App for DesktopApp {
     fn on_exit(&mut self) {
         // A screenshot taken or a note typed just before exiting is still written.
+        note::lock(&self.note).notes.flush(true);
         self.shots.finish(Duration::from_secs(2));
         note::lock(&self.note).notes.finish(Duration::from_secs(2));
+        self.clips.finish(Duration::from_secs(2));
     }
     fn logic(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         if let Some(view) = self.client.try_latest_view() {
@@ -684,7 +686,14 @@ impl eframe::App for DesktopApp {
         self.watch_processes(ctx);
         self.hotkey_logic(ctx);
         self.screenshot_logic(ctx);
+        self.clips.update(ctx);
         self.clipboard_logic();
+        if self.page != Page::Tools
+            || self.tool != pages::tools::Tool::Screenshots
+            || self.asleep(ctx)
+        {
+            self.shots.show_visible_thumbnails(&[]);
+        }
         self.note_logic();
         self.command_logic();
         if self.page == Page::Alerts {
